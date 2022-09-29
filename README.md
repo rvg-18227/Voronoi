@@ -21,7 +21,7 @@ Rohit Gopalakrishnan
 2. Rohit Gopalakrishnan
 
 ### All course projects
-Project 1: https://github.com/ja3537/polygolf22
+Project 1: https://github.com/ja3537/polygolf22  
 Project 2: https://github.com/rvg-18227/Voronoi
 
 ## Installation
