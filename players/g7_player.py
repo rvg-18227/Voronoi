@@ -13,7 +13,6 @@ class Player:
         """Initialise the player with given skill.
 
             Args:
-                skill (int): skill of your player
                 rng (np.random.Generator): numpy random number generator, use this for same player behavior across run
                 logger (logging.Logger): logger use this like logger.info("message")
                 total_days (int): total number of days, the game is played
