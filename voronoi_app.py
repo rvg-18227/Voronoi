@@ -74,8 +74,9 @@ class VoronoiApp(App):
         menuContainer.style['justify-content'] = 'center'
         menuContainer.style['align-items'] = 'center'
 
-        header_label = gui.Label("Project 2: Voronoi - (t = {}, n = {})".format(self.voronoi_game.last_day, self.voronoi_game.spawn_day), 
-                                 style={'font-size': '36px', 'font-weight': 'bold'})
+        header_label = gui.Label(
+            "Project 2: Voronoi - (t = {}, n = {})".format(self.voronoi_game.last_day, self.voronoi_game.spawn_day),
+            style={'font-size': '36px', 'font-weight': 'bold'})
         menuContainer.append(header_label)
 
         bt_hbox = gui.HBox()
