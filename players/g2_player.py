@@ -41,6 +41,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.player_idx = player_idx
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -62,5 +63,22 @@ class Player:
                 """
 
         moves = []
+        for i in range(len(unit_id[self.player_idx])):
+            if self.player_idx == 0:
+                distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
+                angle = sympy.atan2(100 - unit_pos[self.player_idx][i].y, 100 - unit_pos[self.player_idx][i].x)
+                moves.append((distance, angle))
+            elif self.player_idx == 1:
+                distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
+                angle = sympy.atan2(0.5 - unit_pos[self.player_idx][i].y, 0.5 - unit_pos[self.player_idx][i].x)
+                moves.append((distance, angle))
+            elif self.player_idx == 2:
+                distance = sympy.Min(1, self.rng.random())
+                angle = sympy.atan2(-self.rng.random(), -self.rng.random())
+                moves.append((distance, angle))
+            else:
+                distance = sympy.Min(1, 0)
+                angle = sympy.atan2(0, 1)
+                moves.append((distance, angle))
 
         return moves
