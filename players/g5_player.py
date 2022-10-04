@@ -73,6 +73,12 @@ class Player:
 
             for i in range(unit_at_homebase):
                 moves.append((0,0))
+        elif self.player_idx == 1:
+            angles = [- np.pi / 4, - np.pi / 2, 0]
+            for i in range(len(unit_id[self.player_idx])):
+                distance = 1
+                angle = angles[i % 3]
+                moves.append((distance, angle))
         else:
             for i in range(len(unit_id[self.player_idx])):
                 moves.append((0, 0))
