@@ -134,7 +134,7 @@ def get_moves(unit_pos, target_loc) -> list[tuple[float, float]]:
     cord_diff_y = cord_diff[:, 1]
 
     move_dist = np.linalg.norm(cord_diff, axis=1)
-    move_dist[move_dist > 1] = 1
+    move_dist[move_dist > 1] = 1.0
     move_angle = np.arctan2(cord_diff_y, cord_diff_x)
     
     move_arr = list(zip(move_dist, move_angle))
