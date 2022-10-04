@@ -56,8 +56,6 @@ class Player:
             self.homebase = (101, 101)
         else:
             self.homebase = (101, -1)
-        self.debug(self.homebase)
-        # self.debug(np.array((x, y)), self.homebase)
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -93,7 +91,6 @@ class Player:
         unit_vec, mag = self.force_vec(np.array((x, y)), self.homebase)
         mag *= weight
         unit_vec *= mag
-        self.debug(f"away from home force: ({unit_vec[0]}, {unit_vec[1]})")
         return unit_vec[0], unit_vec[1]
 
     def play(
@@ -131,21 +128,18 @@ class Player:
             if player != self.player_idx
         ]
 
-        self.debug("Own units:", own_units)
-        self.debug("Enemy units:", enemy_units_locations)
-
         ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 100
+        HOME_INFLUENCE = 1000
 
         moves = []
         for (unit_id, unit_pos) in own_units:
+            self.debug(f"Unit {unit_id}", unit_pos)
             enemy_cartesian_vectors = []
             for enemy_pos in enemy_units_locations:
                 dir, mag = self.force_vec(unit_pos, enemy_pos)
                 # Inverse distance contribution to enemy vector
                 dir *= 1 / (mag)
                 enemy_cartesian_vectors.append(dir)
-            self.debug("Enemy dx, dy:", enemy_cartesian_vectors)
 
             home_force = self.away_from_home_force(
                 unit_pos[0], unit_pos[1], HOME_INFLUENCE
@@ -153,10 +147,12 @@ class Player:
 
             total_enemy_vector = np.add.reduce(enemy_cartesian_vectors)
             enemy_force = self.get_dir_unit_vector(ENEMY_INFLUENCE * total_enemy_vector)
-            self.debug("Enemy force:", enemy_force)
+            self.debug("\tEnemy force:", enemy_force)
+            self.debug("\tHome force:", home_force)
 
-            total_force = self.to_polar(enemy_force + home_force)
+            total_force = enemy_force + home_force
+            self.debug("\tTotal force:", total_force)
 
-            moves.append(total_force)
+            moves.append(self.to_polar(total_force))
 
         return moves
