@@ -62,5 +62,7 @@ class Player:
                 """
 
         moves = []
-
+        distance = sympy.Min(1, 100 - unit_pos.x) # move each troop outward in the form of a circle?
+        angle = sympy.atan2(100 - unit_pos.y, 100 - unit_pos.x) # this is right for us
+        moves.append((distance, angle))
         return moves
