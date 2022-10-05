@@ -127,19 +127,16 @@ class Player:
 
         while len(unit_id[self.us]) > len(self.target_loc):
             # add new target_locations
-            self.target_loc.append([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]])
+            self.target_loc.append(
+                self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
         
-        return get_moves(unit_pos[self.us], self.order2coord(self.target_loc))
+        return get_moves(unit_pos[self.us], self.target_loc)
 
-    def order2coord(self, orders) -> list[tuple[float, float]]:
-        coord = []
-        for dist, angle in orders:
-            x = self.homebase[0] - dist * math.sin(angle)
-            y = self.homebase[1] + dist * math.cos(angle)
-            coord.append((x, y))
-        # print(orders)
-        # print(coord)
-        return coord
+    def order2coord(self, order) -> tuple[float, float]:
+        dist, angle = order
+        x = self.homebase[0] - dist * math.sin(angle)
+        y = self.homebase[1] + dist * math.cos(angle)
+        return (x, y)
 
 
 def get_moves(unit_pos, target_loc) -> list[tuple[float, float]]:
