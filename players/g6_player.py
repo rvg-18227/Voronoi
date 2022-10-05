@@ -64,18 +64,23 @@ class Player:
                 """
         self.map_states = map_states
         moves = []
-        for unit in unit_pos[self.player_idx]:
-            move = self.transform_move(np.arctan2(1, 1))
-            if self.check_move(unit, move) == self.player_idx:
-                moves.append(self.transform_move(0, 0))
-            moves.append(move)
+
+        ## Everything is in the frame of 0, 0 on a normal x, y axis. We call transform_move to transform the moves to the correct direction
+        for unit in unit_pos[self.player_idx]: #for each unit
+            move = self.transform_move(np.arctan2(1, 1)) # calculate the move up and to the right
+            if self.check_move(unit, move) != self.player_idx: #if we don't own the cell
+                moves.append(self.transform_move(0, 0)) #don't move
+            else: #otherwise move there
+                moves.append(move)
+
+                
         return moves
 
     def check_move(self, unit_pos, move) -> int:
         """Checks if the move is valid and returns the player index of the unit occupying the cell
                 Args:
-                    unit_pos (Tuple(float, float)): current position of the unit
-                    move (Tuple(float, float)): move to be made as (distance, angle)
+                    unit_pos (Point2D(float, float)): current position of the unit
+                    move (tuple(float, float)): move to be made as (distance, angle)
 
                 Returns:
                     int: player index of the player who owns the cell
