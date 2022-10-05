@@ -41,6 +41,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.player_idx = player_idx
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -62,5 +63,55 @@ class Player:
                 """
 
         moves = []
+        if self.player_idx == 0:
+            angles = [0, np.pi / 4, np.pi / 2]
+            unit_at_homebase = len(unit_id[self.player_idx]) % 3 # 2
+            for i in range(len(unit_id[self.player_idx])-unit_at_homebase): # i = 0,1,2
+                distance = 1
+                angle = angles[i % 3]
+                moves.append((distance, angle))
+
+            for i in range(unit_at_homebase):
+                moves.append((0,0))
+        elif self.player_idx == 1:
+            angles = [- np.pi / 4, - np.pi / 2, 0]
+            for i in range(len(unit_id[self.player_idx])):
+                distance = 1
+                angle = angles[i % 3]
+                moves.append((distance, angle))
+        elif self.player_idx == 2:
+            anglesEvenLayer = [- np.pi / 2, -3 * np.pi / 4, - np.pi]
+            anglesOddLayer = [ -5 * np.pi / 8, -7 * np.pi / 8]
+            n = len(unit_id[self.player_idx])
+            r = n % 5
+            for i in range(n-r):
+                if i % 5 <= 2:
+                    distance = 1
+                    angle = anglesEvenLayer[i % 5]
+                    moves.append((distance, angle))
+                else:
+                    # i % 5 > 2
+                    distance = 1
+                    angle = anglesOddLayer[(i % 5) - 3]
+                    moves.append((distance, angle))
+            if r == 1:
+                moves.append((0, 0))
+            elif r == 2:
+                moves.append((0, 0))
+                moves.append((0, 0))
+            elif r == 3:
+                distance = 1
+                for j in range(3):
+                    angle = anglesEvenLayer[j]
+                    moves.append((distance, angle))
+            elif r == 4:
+                distance = 1
+                for j in range(3):
+                    angle = anglesEvenLayer[j]
+                    moves.append((distance, angle))
+                moves.append((0, 0))
+        else:
+            for i in range(len(unit_id[self.player_idx])):
+                moves.append((0, 0))
 
         return moves
