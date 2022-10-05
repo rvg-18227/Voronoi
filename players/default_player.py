@@ -63,6 +63,8 @@ class Player:
                 """
 
         moves = []
+
+
         for i in range(len(unit_id[self.player_idx])):
             if self.player_idx == 0:
                 distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)

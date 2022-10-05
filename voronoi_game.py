@@ -1,6 +1,7 @@
 import logging
 import math
 import os
+import pickle
 import time
 import signal
 import numpy as np
@@ -137,6 +138,21 @@ class VoronoiGame:
         print("{} Unit Positions - {}".format(result["player_names"][3],
                                               [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
         print("\nTime Elapsed - {:.3f}s".format(self.end_time-self.start_time))
+
+        if args.dump_state:
+            with open("game.pkl", "wb+") as f:
+                pickle.dump(
+                    {
+                        "map_states": self.map_states,
+                        "cell_units": self.cell_units,
+                        "player_score": self.player_score,
+                        "player_total_score": self.player_total_score,
+                        "unit_id": self.unit_id,
+                        "unit_pos": self.unit_pos,
+                        "home_path": self.home_path,
+                    },
+                    f,
+                )
 
     def add_players(self, player_list):
         player_count = dict()
