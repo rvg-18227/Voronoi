@@ -66,32 +66,23 @@ class Player:
             min(self.max_dim, max(self.min_dim, y)),
         )
 
-    def get_dir_unit_vector(self, v):
-        return v / np.linalg.norm(v)
-
-    def get_force_mag(self, distance):
-        return 1 / distance**2
-
     def force_vec(self, p1, p2):
         v = p1 - p2
-        unit_vec = self.get_dir_unit_vector(v)
-        mag = self.get_force_mag(np.linalg.norm(v))
-        return unit_vec, mag
+        mag = np.linalg.norm(v)
+        unit = v / mag
+        return unit, mag
 
     def to_polar(self, p):
         x, y = p
         return np.sqrt(x**2 + y**2), np.arctan2(y, x)
 
-    def cart2pol(x, y):
-        rho = np.sqrt(x**2 + y**2)
-        phi = np.arctan2(y, x)
-        return (rho, phi)
+    def normalize(self, v):
+        return v / np.linalg.norm(v)
 
-    def away_from_home_force(self, x, y, weight=100):
-        unit_vec, mag = self.force_vec(np.array((x, y)), self.homebase)
-        mag *= weight
-        unit_vec *= mag
-        return unit_vec[0], unit_vec[1]
+    def repelling_force(self, p1, p2):
+        dir, mag = self.force_vec(p1, p2)
+        # Inverse magnitude: closer things apply greater force
+        return dir * 1 / (mag)
 
     def play(
         self, unit_id, unit_pos, map_states, current_scores, total_scores
@@ -129,28 +120,34 @@ class Player:
         ]
 
         ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 1000
+        HOME_INFLUENCE = 20
+        ALLY_INFLUENCE = 0.5
 
         moves = []
-        for (unit_id, unit_pos) in own_units:
+        for unit_id, unit_pos in own_units:
             self.debug(f"Unit {unit_id}", unit_pos)
-            enemy_cartesian_vectors = []
-            for enemy_pos in enemy_units_locations:
-                dir, mag = self.force_vec(unit_pos, enemy_pos)
-                # Inverse distance contribution to enemy vector
-                dir *= 1 / (mag)
-                enemy_cartesian_vectors.append(dir)
+            enemy_unit_forces = [
+                self.repelling_force(unit_pos, enemy_pos)
+                for enemy_pos in enemy_units_locations
+            ]
+            enemy_force = np.add.reduce(enemy_unit_forces)
 
-            home_force = self.away_from_home_force(
-                unit_pos[0], unit_pos[1], HOME_INFLUENCE
-            )
+            ally_forces = [
+                self.repelling_force(unit_pos, ally_pos)
+                for ally_id, ally_pos in own_units
+                if ally_id != unit_id
+            ]
+            ally_force = np.add.reduce(ally_forces)
 
-            total_enemy_vector = np.add.reduce(enemy_cartesian_vectors)
-            enemy_force = self.get_dir_unit_vector(ENEMY_INFLUENCE * total_enemy_vector)
+            home_force = self.repelling_force(unit_pos, self.homebase)
             self.debug("\tEnemy force:", enemy_force)
             self.debug("\tHome force:", home_force)
 
-            total_force = enemy_force + home_force
+            total_force = self.normalize(
+                (enemy_force * ENEMY_INFLUENCE)
+                + (home_force * HOME_INFLUENCE)
+                + (ally_force * ALLY_INFLUENCE)
+            )
             self.debug("\tTotal force:", total_force)
 
             moves.append(self.to_polar(total_force))
