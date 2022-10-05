@@ -3,7 +3,8 @@ import pickle
 import numpy as np
 import sympy
 import logging
-from typing import Tuple
+from typing import Tuple, List
+import math
 
 
 class Player:
@@ -43,7 +44,11 @@ class Player:
         self.logger = logger
         self.player_idx = player_idx
 
-    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
+    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+        dist, ang = dist_ang
+        return (dist, ang + (math.pi / 2 * self.player_idx))
+
+    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
                 Args:
@@ -64,21 +69,9 @@ class Player:
 
         moves = []
         for i in range(len(unit_id[self.player_idx])):
-            if self.player_idx == 0:
-                distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-                angle = sympy.atan2(100 - unit_pos[self.player_idx][i].y, 100 - unit_pos[self.player_idx][i].x)
-                moves.append((distance, angle))
-            elif self.player_idx == 1:
-                distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-                angle = sympy.atan2(0.5 - unit_pos[self.player_idx][i].y, 0.5 - unit_pos[self.player_idx][i].x)
-                moves.append((distance, angle))
-            elif self.player_idx == 2:
-                distance = sympy.Min(1, self.rng.random())
-                angle = sympy.atan2(-self.rng.random(), -self.rng.random())
-                moves.append((distance, angle))
-            else:
-                distance = sympy.Min(1, 0)
-                angle = sympy.atan2(0, 1)
-                moves.append((distance, angle))
+            distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
+            angle = ((i * (math.pi / 18)) + (math.pi / 6)) % (2 * math.pi)
+            moves.append((distance, angle))
 
+        # return [self.transform_move(move) for move in moves]
         return moves
