@@ -29,8 +29,7 @@ class VoronoiGame:
         self.use_gui = not args.no_gui
         self.do_logging = not args.disable_logging
         if not self.use_gui:
-            # self.use_timeout = not args.disable_timeout
-            self.use_timeout = False
+            self.use_timeout = not args.disable_timeout
         else:
             self.use_timeout = False
 
@@ -41,15 +40,15 @@ class VoronoiGame:
             self.log_dir = args.log_path
             if self.log_dir:
                 os.makedirs(self.log_dir, exist_ok=True)
-            fh = logging.FileHandler(os.path.join(self.log_dir, "debug.log"), mode="w")
+            fh = logging.FileHandler(os.path.join(self.log_dir, 'debug.log'), mode="w")
             fh.setLevel(logging.DEBUG)
-            fh.setFormatter(logging.Formatter("%(message)s"))
+            fh.setFormatter(logging.Formatter('%(message)s'))
             fh.addFilter(MainLoggingFilter(__name__))
             self.logger.addHandler(fh)
             result_path = os.path.join(self.log_dir, "results.log")
             rfh = logging.FileHandler(result_path, mode="w")
             rfh.setLevel(logging.INFO)
-            rfh.setFormatter(logging.Formatter("%(message)s"))
+            rfh.setFormatter(logging.Formatter('%(message)s'))
             rfh.addFilter(MainLoggingFilter(__name__))
             self.logger.addHandler(rfh)
         else:
@@ -61,7 +60,7 @@ class VoronoiGame:
                     os.makedirs(self.log_dir, exist_ok=True)
                 rfh = logging.FileHandler(result_path, mode="w")
                 rfh.setLevel(logging.INFO)
-                rfh.setFormatter(logging.Formatter("%(message)s"))
+                rfh.setFormatter(logging.Formatter('%(message)s'))
                 rfh.addFilter(MainLoggingFilter(__name__))
                 self.logger.addHandler(rfh)
             else:
@@ -72,9 +71,7 @@ class VoronoiGame:
             args.seed = None
             self.logger.info("Initialise random number generator with no seed")
         else:
-            self.logger.info(
-                "Initialise random number generator with seed {}".format(args.seed)
-            )
+            self.logger.info("Initialise random number generator with seed {}".format(args.seed))
 
         self.rng = np.random.default_rng(args.seed)
 
@@ -87,63 +84,22 @@ class VoronoiGame:
         self.players = []
         self.player_names = []
 
-        self.map_states = [
-            [
-                [
-                    [0 for z in range(constants.max_map_dim)]
-                    for k in range(constants.max_map_dim)
-                ]
-                for j in range(constants.day_states)
-            ]
-            for i in range(self.last_day)
-        ]
-        self.cell_units = [
-            [
-                [
-                    [0 for z in range(constants.max_map_dim)]
-                    for k in range(constants.max_map_dim)
-                ]
-                for j in range(constants.day_states)
-            ]
-            for i in range(self.last_day)
-        ]
+        self.map_states = [[[[0 for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j in
+                            range(constants.day_states)] for i in range(self.last_day)]
+        self.cell_units = [[[[0 for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j in
+                            range(constants.day_states)] for i in range(self.last_day)]
 
-        self.player_score = [
-            [
-                [0 for k in range(constants.no_of_players)]
-                for j in range(constants.day_states)
-            ]
-            for i in range(self.last_day)
-        ]
-        self.player_total_score = [
-            [0 for j in range(constants.no_of_players)] for i in range(self.last_day)
-        ]
+        self.player_score = [[[0 for k in range(constants.no_of_players)] for j in range(constants.day_states)] for i in
+                             range(self.last_day)]
+        self.player_total_score = [[0 for j in range(constants.no_of_players)] for i in range(self.last_day)]
 
-        self.unit_id = [
-            [
-                [[] for k in range(constants.no_of_players)]
-                for j in range(constants.day_states)
-            ]
-            for i in range(self.last_day)
-        ]
-        self.unit_pos = [
-            [
-                [[] for k in range(constants.no_of_players)]
-                for j in range(constants.day_states)
-            ]
-            for i in range(self.last_day)
-        ]
+        self.unit_id = [[[[] for k in range(constants.no_of_players)] for j in range(constants.day_states)] for i
+                        in range(self.last_day)]
+        self.unit_pos = [[[[] for k in range(constants.no_of_players)] for j in range(constants.day_states)] for i
+                         in range(self.last_day)]
 
-        self.home_path = [
-            [
-                [
-                    [False for z in range(constants.max_map_dim)]
-                    for k in range(constants.max_map_dim)
-                ]
-                for j in range(constants.no_of_players)
-            ]
-            for i in range(self.last_day)
-        ]
+        self.home_path = [[[[False for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j
+                           in range(constants.no_of_players)] for i in range(self.last_day)]
 
         self.end_message_printed = False
 
@@ -170,34 +126,19 @@ class VoronoiGame:
         print("Day Score - {}".format(result["player_score"]))
         print("Total Score - {}".format(result["player_total_score"]))
         print("{} Units - {}".format(result["player_names"][0], result["unit_id"][0]))
-        print(
-            "{} Unit Positions - {}".format(
-                result["player_names"][0],
-                [(float(i.x), float(i.y)) for i in result["unit_pos"][0]],
-            )
-        )
+        print("{} Unit Positions - {}".format(result["player_names"][0],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][0]]))
         print("{} Units - {}".format(result["player_names"][1], result["unit_id"][1]))
-        print(
-            "{} Unit Positions - {}".format(
-                result["player_names"][1],
-                [(float(i.x), float(i.y)) for i in result["unit_pos"][1]],
-            )
-        )
+        print("{} Unit Positions - {}".format(result["player_names"][1],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][1]]))
         print("{} Units - {}".format(result["player_names"][2], result["unit_id"][2]))
-        print(
-            "{} Unit Positions - {}".format(
-                result["player_names"][2],
-                [(float(i.x), float(i.y)) for i in result["unit_pos"][2]],
-            )
-        )
+        print("{} Unit Positions - {}".format(result["player_names"][2],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][2]]))
         print("{} Units - {}".format(result["player_names"][3], result["unit_id"][3]))
-        print(
-            "{} Unit Positions - {}".format(
-                result["player_names"][3],
-                [(float(i.x), float(i.y)) for i in result["unit_pos"][3]],
-            )
-        )
-        print("\nTime Elapsed - {:.3f}s".format(self.end_time - self.start_time))
+        print("{} Unit Positions - {}".format(result["player_names"][3],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
+        print("\nTime Elapsed - {:.3f}s".format(self.end_time-self.start_time))
+
         if args.dump_state:
             with open("game.pkl", "wb+") as f:
                 pickle.dump(
@@ -234,35 +175,20 @@ class VoronoiGame:
 
                 count_used[player_name] += 1
                 if player_count[player_name] == 1:
-                    self.add_player(
-                        player_class,
-                        "{}".format(base_player_name),
-                        base_player_name=base_player_name,
-                        idx=i,
-                    )
+                    self.add_player(player_class, "{}".format(base_player_name), base_player_name=base_player_name,
+                                    idx=i)
                 else:
-                    self.add_player(
-                        player_class,
-                        "{}.{}".format(base_player_name, count_used[player_name]),
-                        base_player_name=base_player_name,
-                        idx=i,
-                    )
+                    self.add_player(player_class, "{}.{}".format(base_player_name, count_used[player_name]),
+                                    base_player_name=base_player_name, idx=i)
             else:
-                self.logger.error(
-                    "Failed to insert player {} since invalid player name provided.".format(
-                        player_name
-                    )
-                )
+                self.logger.error("Failed to insert player {} since invalid player name provided.".format(player_name))
 
             i += 1
 
     def add_player(self, player_class, player_name, base_player_name, idx):
         if player_name not in self.player_names:
             self.logger.info(
-                "Adding player {} from class {}".format(
-                    player_name, player_class.__module__
-                )
-            )
+                "Adding player {} from class {}".format(player_name, player_class.__module__))
             precomp_dir = os.path.join("precomp", base_player_name)
             os.makedirs(precomp_dir, exist_ok=True)
 
@@ -273,42 +199,26 @@ class VoronoiGame:
                 signal.alarm(constants.timeout)
             try:
                 start_time = time.time()
-                player = player_class(
-                    rng=self.rng,
-                    logger=self.get_player_logger(player_name),
-                    total_days=self.last_day,
-                    spawn_days=self.spawn_day,
-                    player_idx=idx,
-                    spawn_point=self.base[idx],
-                    min_dim=constants.min_map_dim,
-                    max_dim=constants.max_map_dim,
-                    precomp_dir=precomp_dir,
-                )
+                player = player_class(rng=self.rng, logger=self.get_player_logger(player_name),
+                                      total_days=self.last_day, spawn_days=self.spawn_day, player_idx=idx,
+                                      spawn_point=self.base[idx], min_dim=constants.min_map_dim,
+                                      max_dim=constants.max_map_dim, precomp_dir=precomp_dir)
                 if self.use_timeout:
                     signal.alarm(0)  # Clear alarm
             except TimeoutException:
                 is_timeout = True
                 player = None
                 self.logger.error(
-                    "Initialization Timeout {} since {:.3f}s reached.".format(
-                        player_name, constants.timeout
-                    )
-                )
+                    "Initialization Timeout {} since {:.3f}s reached.".format(player_name, constants.timeout))
 
             init_time = time.time() - start_time
 
             if not is_timeout:
-                self.logger.info(
-                    "Initializing player {} took {:.3f}s".format(player_name, init_time)
-                )
+                self.logger.info("Initializing player {} took {:.3f}s".format(player_name, init_time))
             self.players.append(player)
             self.player_names.append(player_name)
         else:
-            self.logger.error(
-                "Failed to insert player as another player with name {} exists.".format(
-                    player_name
-                )
-            )
+            self.logger.error("Failed to insert player as another player with name {} exists.".format(player_name))
 
     def get_player_logger(self, player_name):
         player_logger = logging.getLogger("{}.{}".format(__name__, player_name))
@@ -316,11 +226,9 @@ class VoronoiGame:
         if self.do_logging:
             player_logger.setLevel(logging.INFO)
             # add handler to self.logger with filtering
-            player_fh = logging.FileHandler(
-                os.path.join(self.log_dir, "{}.log".format(player_name)), mode="w"
-            )
+            player_fh = logging.FileHandler(os.path.join(self.log_dir, '{}.log'.format(player_name)), mode="w")
             player_fh.setLevel(logging.DEBUG)
-            player_fh.setFormatter(logging.Formatter("%(message)s"))
+            player_fh.setFormatter(logging.Formatter('%(message)s'))
             player_fh.addFilter(PlayerLoggingFilter(player_name))
             self.logger.addHandler(player_fh)
         else:
@@ -332,7 +240,7 @@ class VoronoiGame:
     def play_game(self):
         for i in range(self.last_day):
             self.play_day(i)
-            print("Day {} complete".format(i + 1))
+            print("Day {} complete".format(i+1))
 
     def play_day(self, day):
         if day != 0:
@@ -362,34 +270,25 @@ class VoronoiGame:
                     unit_pos=self.unit_pos[day][0],
                     map_states=self.map_states[day][0],
                     current_scores=self.player_score[day][0],
-                    total_scores=self.player_total_score[day],
-                )
+                    total_scores=self.player_total_score[day])
 
             if self.check_action(returned_action, day, i):
                 for j in range(len(returned_action)):
                     if self.check_move(returned_action[j]):
                         distance, angle = returned_action[j]
                         self.logger.debug(
-                            "Received Distance: {:.3f}, Angle: {:.3f} from {}".format(
-                                distance, angle, self.player_names[i]
-                            )
-                        )
+                            "Received Distance: {:.3f}, Angle: {:.3f} from {}".format(distance, angle,
+                                                                                      self.player_names[i]))
                         self.move_unit(distance, angle, day, i, j)
                     else:
                         self.logger.info(
-                            "{} {} failed since provided invalid move {}".format(
-                                self.player_names[i],
-                                self.unit_id[day][0][i][j],
-                                returned_action[j],
-                            )
-                        )
+                            "{} {} failed since provided invalid move {}".format(self.player_names[i],
+                                                                                 self.unit_id[day][0][i][j],
+                                                                                 returned_action[j]))
                         self.empty_move_unit(day, i, j)
             else:
                 self.logger.info(
-                    "{} failed since provided invalid action {}".format(
-                        self.player_names[i], returned_action
-                    )
-                )
+                    "{} failed since provided invalid action {}".format(self.player_names[i], returned_action))
                 self.empty_move(day, i)
 
         self.update_occupied_cells(day, 1)
@@ -401,9 +300,7 @@ class VoronoiGame:
         self.update_occupied_cells(day, 2)
         self.player_score[day][2] = self.update_map_state(day, 2)
         for i in range(constants.no_of_players):
-            self.player_total_score[day][i] = (
-                self.player_total_score[day - 1][i] + self.player_score[day][2][i]
-            )
+            self.player_total_score[day][i] = self.player_total_score[day-1][i] + self.player_score[day][2][i]
 
     def spawn_new(self, day, id_name):
         for i in range(constants.no_of_players):
@@ -436,9 +333,7 @@ class VoronoiGame:
         for i in range(constants.max_map_dim):
             for j in range(constants.max_map_dim):
                 if self.cell_units[day][state][i][j] != 0:
-                    self.map_states[day][state][i][j] = self.cell_units[day][state][i][
-                        j
-                    ]
+                    self.map_states[day][state][i][j] = self.cell_units[day][state][i][j]
                 else:
                     a, b = occupied_cells[0]
                     min_dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
@@ -497,14 +392,14 @@ class VoronoiGame:
             new_b = b + (-a * sympy.tan(angle))
         elif new_a >= 100:
             new_a = 99.99999999
-            new_b = b + ((new_a - a) * sympy.tan(angle))
+            new_b = b + ((new_a-a) * sympy.tan(angle))
 
         if new_b < 0:
             new_b = 0
             new_a = a + (-b / sympy.tan(angle))
         elif new_b >= 100:
             new_b = 99.99999999
-            new_a = a + ((new_b - b) / sympy.tan(angle))
+            new_a = a + ((new_b-b) / sympy.tan(angle))
 
         new_pos = sympy.Point2D(new_a, new_b)
         self.unit_id[day][1][idx].append(self.unit_id[day][0][idx][unit_idx])
@@ -523,7 +418,7 @@ class VoronoiGame:
         b = math.floor(self.base[idx].y)
         if self.map_states[day][1][a][b] == -1:
             self.home_path[day][idx][a][b] = True
-        elif self.map_states[day][1][a][b] == (idx + 1):
+        elif self.map_states[day][1][a][b] == (idx+1):
             self.path_map(day, idx, a, b)
             for i in range(len(self.unit_id[day][1][idx])):
                 a = math.floor(self.unit_pos[day][1][idx][i].x)
@@ -532,11 +427,10 @@ class VoronoiGame:
                     self.unit_id[day][2][idx].append(self.unit_id[day][1][idx][i])
                     self.unit_pos[day][2][idx].append(self.unit_pos[day][1][idx][i])
                 else:
-                    self.logger.info(
-                        "{} unit {} has been cutoff from homebase".format(
-                            self.player_names[idx], self.unit_id[day][1][idx][i]
-                        )
-                    )
+                    self.logger.info("{} unit {} has been cutoff from homebase".format(self.player_names[idx],
+                                                                                       self.unit_id[day][1][idx][i]))
+
+
 
     def path_map(self, day, idx, x, y):
         stack = [(x, y)]
@@ -569,7 +463,7 @@ class VoronoiGame:
 
     def get_state(self, day, state=0):
         return_dict = dict()
-        return_dict["day"] = day + 1
+        return_dict["day"] = day+1
         return_dict["day_states"] = constants.day_state_labels[state]
         return_dict["map_states"] = self.map_states[day][state]
         return_dict["cell_units"] = self.cell_units[day][state]
@@ -579,6 +473,6 @@ class VoronoiGame:
         return_dict["unit_id"] = self.unit_id[day][state]
         return_dict["unit_pos"] = self.unit_pos[day][state]
         return return_dict
-
+    
     def set_app(self, voronoi_app):
         self.voronoi_app = voronoi_app
