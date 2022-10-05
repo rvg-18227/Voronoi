@@ -110,7 +110,6 @@ class Player:
                     angle = anglesEvenLayer[j]
                     moves.append((distance, angle))
                 moves.append((0, 0))
-            print(moves)
         else:
             for i in range(len(unit_id[self.player_idx])):
                 moves.append((0, 0))
