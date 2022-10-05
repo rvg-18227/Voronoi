@@ -61,8 +61,19 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
-        current_unit_pos = {(np.floor(x[0]), np.floor(x[1])) for x in unit_pos[self.player_idx]}
 
+        # 3 roles
+        # attackers - Identify weak enemy, how to kill a unit? where to attack? when to attack? hover at border until enough units? whats the best formation?
+        # defenders - kmeans number of units around/units in a radius
+        # space gain people - look at group 4's code or come up wiht a new generic strategy
+
+        # 3 phases
+        # in intro phase allocate X spacegain until 5 units?
+        # in main phase allocate X attackers and Y defenders and Z spacegain 2:2:1
+        # in end phase allocate X attackers and Y defenders in some proportion 
+
+
+        current_unit_pos = {(np.floor(x[0]), np.floor(x[1])) for x in unit_pos[self.player_idx]}
         self.map_states = map_states
         moves = []
 
@@ -70,11 +81,13 @@ class Player:
         for unit in unit_pos[self.player_idx]:
             move = self.transform_move(1, 1)
             new_pos = self.simulate_move(unit, move)
-            if self.check_square(new_pos) != self.player_idx:
-                moves.append(self.transform_move(0, 0, 0))
+            if self.check_square(new_pos) == self.player_idx:
+                if new_pos not in current_unit_pos:
+                    moves.append(move)
+                else:
+                    moves.append(self.transform_move(np.random.randint(-1, 1), 0))
             else:
-                moves.append(move)
-
+                moves.append(self.transform_move(0, 0, 0))
         return moves
 
     def simulate_move(self, unit_pos, move) -> tuple[float, float]:
