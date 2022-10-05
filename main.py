@@ -16,10 +16,12 @@ if __name__ == '__main__':
     parser.add_argument("--log_path", default="log", help="Directory path to dump log files, filepath if "
                                                           "disable_logging is false")
     parser.add_argument("--disable_logging", action="store_true", help="Disable Logging, log_path becomes path to file")
+    parser.add_argument("--disable_timeout", action="store_true", help="Disable timeouts for player code")
     parser.add_argument("--player1", "-p1", default="d", help="Specifying player 1 out of 4")
     parser.add_argument("--player2", "-p2", default="d", help="Specifying player 2 out of 4")
     parser.add_argument("--player3", "-p3", default="d", help="Specifying player 3 out of 4")
     parser.add_argument("--player4", "-p4", default="d", help="Specifying player 4 out of 4")
+    parser.add_argument("--dump_state", action="store_true", help="Dump game.pkl for rendering")
     args = parser.parse_args()
     player_list = tuple([args.player1, args.player2, args.player3, args.player4])
     del args.player1
