@@ -45,8 +45,8 @@ class Player:
         self.player_idx = player_idx
 
     def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
-        dist, ang = dist_ang
-        return (dist, ang + (math.pi / 2 * self.player_idx))
+        dist, rad_ang = dist_ang
+        return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -68,10 +68,14 @@ class Player:
                 """
 
         moves = []
+        angle_jump = 10
+        angle_start = 45
         for i in range(len(unit_id[self.player_idx])):
-            distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-            angle = ((i * (math.pi / 18)) + (math.pi / 6)) % (math.pi / 2)
-            moves.append((distance, angle))
+            distance = 1
 
-        # return [self.transform_move(move) for move in moves]
-        return moves
+            angle = (((i) * (angle_jump) + angle_start ))%90
+
+            moves.append((distance, angle* (math.pi / 180)))
+
+        return [self.transform_move(move) for move in moves]
+        #return moves
