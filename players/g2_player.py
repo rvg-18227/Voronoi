@@ -70,7 +70,7 @@ class Player:
         moves = []
         for i in range(len(unit_id[self.player_idx])):
             distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-            angle = ((i * (math.pi / 18)) + (math.pi / 6)) % (2 * math.pi)
+            angle = ((i * (math.pi / 18)) + (math.pi / 6)) % (math.pi / 2)
             moves.append((distance, angle))
 
         # return [self.transform_move(move) for move in moves]
