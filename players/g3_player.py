@@ -48,6 +48,7 @@ def midsort(arr: list[float]) -> list[float]:
     midsorted_arr.append(arr[-1])
 
     return midsorted_arr
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -85,6 +86,9 @@ class Player:
         self.logger = logger
         
         self.us = player_idx
+        self.homebase = np.array(spawn_point)
+
+        # print(player_idx, spawn_point)
 
         self.target_loc = []
 
@@ -123,9 +127,20 @@ class Player:
 
         while len(unit_id[self.us]) > len(self.target_loc):
             # add new target_locations
-            self.target_loc.append([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id) - 1]])
+            self.target_loc.append([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]])
         
-        return get_moves(unit_pos[self.us], self.target_loc)
+        return get_moves(unit_pos[self.us], self.order2coord(self.target_loc))
+
+    def order2coord(self, orders) -> list[tuple[float, float]]:
+        coord = []
+        for dist, angle in orders:
+            x = self.homebase[0] - dist * math.sin(angle)
+            y = self.homebase[1] + dist * math.cos(angle)
+            coord.append((x, y))
+        # print(orders)
+        # print(coord)
+        return coord
+
 
 def get_moves(unit_pos, target_loc) -> list[tuple[float, float]]:
     assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
