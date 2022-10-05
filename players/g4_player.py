@@ -122,6 +122,7 @@ class Player:
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
         ALLY_INFLUENCE = 0.5
+        WALL_INFLUENCE = 1
 
         moves = []
         for unit_id, unit_pos in own_units:
@@ -140,13 +141,23 @@ class Player:
             ally_force = np.add.reduce(ally_forces)
 
             home_force = self.repelling_force(unit_pos, self.homebase)
+
+            ux, uy = unit_pos
+            wall_normals = [(ux, self.min_dim), (ux, self.max_dim), (self.min_dim, uy), (self.max_dim, uy)]
+            wall_forces = [self.repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = np.add.reduce(wall_forces)
+
             self.debug("\tEnemy force:", enemy_force)
             self.debug("\tHome force:", home_force)
+            self.debug("\tWall force:", wall_force)
+
+            attack_sign = 1 if int(unit_id) % 2 == 0 else -1
 
             total_force = self.normalize(
-                (enemy_force * ENEMY_INFLUENCE)
+                (enemy_force * ENEMY_INFLUENCE * attack_sign)
                 + (home_force * HOME_INFLUENCE)
                 + (ally_force * ALLY_INFLUENCE)
+                + (wall_force * WALL_INFLUENCE)
             )
             self.debug("\tTotal force:", total_force)
 
