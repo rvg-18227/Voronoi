@@ -41,7 +41,6 @@ class Player:
 
         self.rng = rng
         self.logger = logger
-
         self.player_idx = player_idx
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
@@ -62,35 +61,43 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
+        current_unit_pos = {(np.floor(x[0]), np.floor(x[1])) for x in unit_pos[self.player_idx]}
+
         self.map_states = map_states
         moves = []
 
         ## Everything is in the frame of 0, 0 on a normal x, y axis. We call transform_move to transform the moves to the correct direction
-        for unit in unit_pos[self.player_idx]: #for each unit
-            move = self.transform_move(np.arctan2(1, 1)) # calculate the move up and to the right
-            if self.check_move(unit, move) != self.player_idx: #if we don't own the cell
-                moves.append(self.transform_move(0, 0)) #don't move
-            else: #otherwise move there
+        for unit in unit_pos[self.player_idx]:
+            move = self.transform_move(1, 1)
+            new_pos = self.simulate_move(unit, move)
+            if self.check_square(new_pos) != self.player_idx:
+                moves.append(self.transform_move(0, 0, 0))
+            else:
                 moves.append(move)
 
-                
         return moves
 
-    def check_move(self, unit_pos, move) -> int:
-        """Checks if the move is valid and returns the player index of the unit occupying the cell
+    def simulate_move(self, unit_pos, move) -> tuple[float, float]:
+        """Simulates the move and returns the new position
                 Args:
                     unit_pos (Point2D(float, float)): current position of the unit
                     move (tuple(float, float)): move to be made as (distance, angle)
+                Returns
+                    tuple(float, float): new position of the unit
+        """
+        distance, angle = move
+        return (unit_pos[0] + distance * np.cos(angle), unit_pos[1] + distance * np.sin(angle))
 
+    def check_square(self, pos):
+        """Checks who owns the square of a given position
+                Args:
+                    pos (Point2D(float, float)): current position
                 Returns:
                     int: player index of the player who owns the cell
         """
-        distance, angle = move
-        end_pos = (unit_pos[0] + distance * np.cos(angle), unit_pos[1] + distance * np.sin(angle))
-        return self.map_states[np.floor(end_pos[0])][np.floor(end_pos[1])]
+        return self.map_states[np.floor(pos[0])][np.floor(pos[1])] - 1 # -1 because the map states are 1 indexed
 
-
-    def transform_move(self, angle: float, distance=1) -> tuple[float, float]:
+    def transform_move(self, x: float, y: float, distance=1) -> tuple[float, float]:
         """Transforms the distance and angle to the correct format for the game engine
                 Args:
                     angle (float): angle in radians
@@ -98,6 +105,7 @@ class Player:
                 Returns
                     Tuple[float, float]: distance and angle in correct format
         """
+        angle = np.arctan2(y, x)
         if self.player_idx == 0:
             return (distance, angle)
         elif self.player_idx == 1:
