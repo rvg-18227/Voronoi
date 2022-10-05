@@ -336,11 +336,15 @@ class VoronoiGame:
                     self.map_states[day][state][i][j] = self.cell_units[day][state][i][j]
                 else:
                     a, b = occupied_cells[0]
+                    a = int(a)
+                    b = int(b)
                     min_dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
                     min_dist_cells = [(a, b)]
                     min_dist_state = self.cell_units[day][state][a][b]
                     for k in range(1, len(occupied_cells)):
                         a, b = occupied_cells[k]
+                        a = int(a)
+                        b = int(b)
                         dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
                         if dist < min_dist:
                             min_dist = dist
@@ -435,8 +439,9 @@ class VoronoiGame:
     def path_map(self, day, idx, x, y):
         stack = [(x, y)]
         while len(stack):
-            a, b = stack[-1]
-            stack.pop()
+            a, b = stack.pop()
+            a = int(a)
+            b = int(b)
             self.home_path[day][idx][a][b] = True
 
             if a == 0:
