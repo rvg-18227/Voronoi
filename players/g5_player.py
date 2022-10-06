@@ -110,9 +110,19 @@ class Player:
                     angle = anglesEvenLayer[j]
                     moves.append((distance, angle))
                 moves.append((0, 0))
-            print(moves)
         else:
-            for i in range(len(unit_id[self.player_idx])):
-                moves.append((0, 0))
+            anglesEvenLayer = [3 * np.pi / 4, np.pi / 2, np.pi]
+            anglesOddLayer = [5 * np.pi / 8, 7 * np.pi / 8]
+            n = len(unit_id[self.player_idx])
+            for i in range(n):
+                if i % 5 <= 2:
+                    distance = 1
+                    angle = anglesEvenLayer[i % 5]
+                    moves.append((distance, angle))
+                else:
+                    # i % 5 == 3 or 4
+                    distance = 1
+                    angle = anglesOddLayer[(i % 5) - 3]
+                    moves.append((distance, angle))
 
         return moves
