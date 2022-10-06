@@ -115,18 +115,21 @@ class Player:
 
         self.map_states = map_states
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
+        try:
+            for idx in spacer:
+                moves[idx] = self.transform_move(1, 1) #spacer.move_function(unit, idx, etc)
 
-        for idx in spacer:
-            moves[idx] = self.transform_move(1, 1) #spacer.move_function(unit, idx, etc)
+            for idx in attacker:
+                moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
 
-        for idx in attacker:
-            moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
-
-        for idx in defenders:
-            defender = Defender(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx])
-            x, y, dist = defender.get_move(self.map_states)
-            moves[idx] = self.transform_move(x, y, dist)
-
+            for idx in defenders:
+                defender = Defender(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx])
+                x, y, dist = defender.get_move(self.map_states)
+                moves[idx] = self.transform_move(x, y, dist)
+        except Exception as e:
+            print(unit_id[self.player_idx])
+            print(spacer, attacker, defenders)
+            print("Error in player.py")
         return moves
 
     def simulate_move(self, unit_pos, move) -> tuple[float, float]:
@@ -178,6 +181,14 @@ class Player:
                 numberDaysThisPhase = int(self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1)
                 unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
             self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
+
+        for i, unit_id in enumerate(unit_ids):
+            if unit_id in self.unit_types[UnitType.SPACER]:
+                self.unit_types[UnitType.SPACER][unit_id] = i 
+            elif unit_id in self.unit_types[UnitType.ATTACK]:
+                self.unit_types[UnitType.ATTACK][unit_id] = i
+            elif unit_id in self.unit_types[UnitType.DEFENSE]:
+                self.unit_types[UnitType.DEFENSE][unit_id] = i
 
     def get_unit_indexes(self, unit_ids):
         """Returns the indexes of the units in the unit_pos list by type
