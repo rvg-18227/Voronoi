@@ -5,6 +5,13 @@ import sympy
 import logging
 from typing import Tuple
 from sympy.geometry import Point2D
+from enum import Enum
+
+class UnitType(Enum):
+    SPACER = 0
+    ATTACK = 1
+    DEFENSE = 2
+
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -42,6 +49,27 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
+        self.total_days = total_days
+        self.spawn_days = spawn_days
+        self.spawn_point = spawn_point
+
+        self.current_turn = 0
+        self.PHASE_ONE_OUTPUT = [UnitType.SPACER]
+        self.PHASE_TWO_OUTPUT = [UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+        self.PHASE_THREE_OUTPUT = [UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+
+        self.number_units_total = total_days//spawn_days
+        self.PHASE_ONE_UNITS = 5
+        self.PHASE_TWO_UNITS = min(len(self.PHASE_TWO_OUTPUT), np.floor((self.number_units_total-5)*0.6))
+        self.PHASE_THREE_UNITS = self.number_units_total - self.PHASE_ONE_UNITS - self.PHASE_TWO_UNITS
+
+        #locations of units
+        self.unit_types = {
+            UnitType.SPACER: {},
+            UnitType.ATTACK: {},
+            UnitType.DEFENSE: {}
+        }
+
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -61,33 +89,32 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
+        self.current_turn += 1
+        self.add_spawn_units_if_needed(unit_id[self.player_idx])
+        spacer, attacker, defender = self.get_unit_indexes(unit_id[self.player_idx]) 
 
         # 3 roles
         # attackers - Identify weak enemy, how to kill a unit? where to attack? when to attack? hover at border until enough units? whats the best formation?
-        # defenders - kmeans number of units around/units in a radius
+        # defenders - kmeans number of units around/units in a radius, most important!!!, so be able to use other groups if needed
         # space gain people - look at group 4's code or come up wiht a new generic strategy
 
         # 3 phases
         # in intro phase allocate X spacegain until 5 units?
-        # in main phase allocate X attackers and Y defenders and Z spacegain 2:2:1
+        # in main phase allocate X attackers and Y defenders and Z spacegain 2:2:1, maybe change ratio based on if we're being attacked or not
         # in end phase allocate X attackers and Y defenders in some proportion 
 
-
-        current_unit_pos = {(np.floor(x[0]), np.floor(x[1])) for x in unit_pos[self.player_idx]}
         self.map_states = map_states
-        moves = []
+        moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
 
-        ## Everything is in the frame of 0, 0 on a normal x, y axis. We call transform_move to transform the moves to the correct direction
-        for unit in unit_pos[self.player_idx]:
-            move = self.transform_move(1, 1)
-            new_pos = self.simulate_move(unit, move)
-            if self.check_square(new_pos) == self.player_idx:
-                if new_pos not in current_unit_pos:
-                    moves.append(move)
-                else:
-                    moves.append(self.transform_move(np.random.randint(-1, 1), 0))
-            else:
-                moves.append(self.transform_move(0, 0, 0))
+        for idx in spacer:
+            moves[idx] = self.transform_move(1, 1) #spacer.move_function(unit, idx, etc)
+
+        for idx in attacker:
+            moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
+
+        for idx in defender:
+            moves[idx] = self.transform_move(1, 0) #defender.move_function(unit, idx, etc)
+
         return moves
 
     def simulate_move(self, unit_pos, move) -> tuple[float, float]:
@@ -127,3 +154,29 @@ class Player:
             return (distance, angle + np.pi)
         else:# self.player_idx == 3:
             return (distance, angle + np.pi / 2)
+
+    def add_spawn_units_if_needed(self, unit_ids):
+        if self.current_turn % self.spawn_days == 0:
+            if self.current_turn <= self.PHASE_ONE_UNITS * self.spawn_days:
+                unitToAdd = self.PHASE_ONE_OUTPUT[(self.current_turn//self.number_units_total )%len(self.PHASE_ONE_OUTPUT)]
+            elif self.current_turn <= (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days:
+                numberDaysThisPhase = self.current_turn - self.PHASE_ONE_UNITS * self.spawn_days - 1
+                unitToAdd = self.PHASE_TWO_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_TWO_OUTPUT)]
+            else:
+                numberDaysThisPhase = self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1
+                unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
+            self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
+
+    def get_unit_indexes(self, unit_ids):
+        """Returns the indexes of the units in the unit_pos list by type
+                Args:
+                    unit_ids (list(str)): list of unit ids
+                Returns:
+                    Tuple[list(Point2D), list(Point2D), list(Point2D))]: indexes of the units in the unit_pos list by type
+        """
+        spacer = [idx for id, idx in self.unit_types[UnitType.SPACER].items() if id in unit_ids]
+        attacker = [idx for id, idx in self.unit_types[UnitType.ATTACK].items() if id in unit_ids]
+        defender = [idx for id, idx in self.unit_types[UnitType.DEFENSE].items() if id in unit_ids]
+
+        return spacer, attacker, defender
+        
