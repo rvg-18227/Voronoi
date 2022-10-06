@@ -115,21 +115,16 @@ class Player:
 
         self.map_states = map_states
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
-        try:
-            for idx in spacer:
-                moves[idx] = self.transform_move(1, 1) #spacer.move_function(unit, idx, etc)
+        for idx in spacer:
+            moves[idx] = self.transform_move(1, 1) #spacer.move_function(unit, idx, etc)
 
-            for idx in attacker:
-                moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
+        for idx in attacker:
+            moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
 
-            for idx in defenders:
-                defender = Defender(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx])
-                x, y, dist = defender.get_move(self.map_states)
-                moves[idx] = self.transform_move(x, y, dist)
-        except Exception as e:
-            print(unit_id[self.player_idx])
-            print(spacer, attacker, defenders)
-            print("Error in player.py")
+        for idx in defenders:
+            defender = Defender(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx])
+            x, y, dist = defender.get_move(self.map_states)
+            moves[idx] = self.transform_move(x, y, dist)
         return moves
 
     def simulate_move(self, unit_pos, move) -> tuple[float, float]:
