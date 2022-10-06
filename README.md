@@ -40,6 +40,12 @@ pip install -r requirements.txt
 python main.py
 ```
 
+To generate the time lapse of the simulation, edit the run_and_render.sh file to add the necessary flags and run the command (ImageMagick needed):
+
+```bash
+bash run_and_render.sh
+```
+
 ## Debugging
 
 The code generates a `log/debug.log` (detailed), `log/results.log` (minimal) and `log\<player_name>.log` (logs from player) on every execution, detailing all the turns and steps in the game.

@@ -5,7 +5,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--spawn", type=int, default=5, help="Number of days after which a new unit spawns at the "
                                                              "homebase")
-    parser.add_argument("--last", type=int, default=50, help="Total number of days the game goes on for")
+    parser.add_argument("--last", type=int, default=100, help="Total number of days the game goes on for")
     parser.add_argument("--seed", "-s", type=int, default=2, help="Seed used by random number generator, specify 0 to "
                                                                   "use no seed and have different random behavior on "
                                                                   "each launch")
