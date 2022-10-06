@@ -70,7 +70,7 @@ class Player:
 
         self.number_units_total = total_days//spawn_days
         self.PHASE_ONE_UNITS = 5
-        self.PHASE_TWO_UNITS = min(len(self.PHASE_TWO_OUTPUT), np.floor((self.number_units_total-5)*0.6))
+        self.PHASE_TWO_UNITS = int(np.floor((self.number_units_total-5)*0.6))
         self.PHASE_THREE_UNITS = self.number_units_total - self.PHASE_ONE_UNITS - self.PHASE_TWO_UNITS
 
         #locations of units
