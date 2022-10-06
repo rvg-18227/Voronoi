@@ -1,3 +1,7 @@
 numpy
 sympy
 remi
+shapely
+matplotlib
+pyproj
+simplekml

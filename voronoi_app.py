@@ -166,8 +166,8 @@ class VoronoiApp(App):
             "Translating visualization by x={}, y={}".format(float(self.translate.x), float(self.translate.y)))
         self.logger.info("Base Scaling visualization by factors {}".format(float(self.scale.x), float(self.scale.y)))
 
-    def plot_base(self, full_refresh=False):
-        self.reset_svgplot(full_refresh)
+    def plot_base(self):
+        self.reset_svgplot()
         unit_h = [[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]
         for i in range(constants.no_of_players):
             base_off_x = self.base[i].x - 1
@@ -182,13 +182,13 @@ class VoronoiApp(App):
         p.set_stroke(1, "black")
         self.svgplot.append(p)
 
-    def display_map(self, day, state, full_refresh=False):
+    def display_map(self, day, state):
         self.prev_day = self.curr_day
         self.prev_state = self.curr_state
         self.curr_day = day
         self.curr_state = state
 
-        self.reset_svgplot(full_refresh)
+        self.reset_svgplot()
         self.plot_tiles()
         self.base_keys = list(self.svgplot.children.keys())
         self.update_table()
@@ -203,8 +203,8 @@ class VoronoiApp(App):
         else:
             self.set_label_text("End of Day")
 
-    def reset_svgplot(self, full_refresh=False):
-        if full_refresh or len(self.svgplot.children) == 0:
+    def reset_svgplot(self):
+        if len(self.svgplot.children) == 0:
             self.svgplot.empty()
         else:
             for k in list(self.svgplot.children.keys()):

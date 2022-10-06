@@ -384,8 +384,8 @@ class VoronoiGame:
 
     def move_unit(self, distance, angle, day, idx, unit_idx):
         angle = float(angle)
-        a = int(self.unit_pos[day][0][idx][unit_idx].x)
-        b = int(self.unit_pos[day][0][idx][unit_idx].y)
+        a = self.unit_pos[day][0][idx][unit_idx].x
+        b = self.unit_pos[day][0][idx][unit_idx].y
         if distance > 1.0:
             distance = 1.0
             self.logger.debug("Distance rectified to max distance of 1 km")
