@@ -12,6 +12,16 @@ class UnitType(Enum):
     ATTACK = 1
     DEFENSE = 2
 
+class Defender:
+    def __init__(self, id, position):
+        self.id = id
+        self.x = float(position[0])
+        self.y = float(position[1])
+        self.unit_type = UnitType.DEFENSE
+    def get_move(self, game):
+        return self.x, self.y, 1
+
+
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -91,7 +101,7 @@ class Player:
                 """
         self.current_turn += 1
         self.add_spawn_units_if_needed(unit_id[self.player_idx])
-        spacer, attacker, defender = self.get_unit_indexes(unit_id[self.player_idx]) 
+        spacer, attacker, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
 
         # 3 roles
         # attackers - Identify weak enemy, how to kill a unit? where to attack? when to attack? hover at border until enough units? whats the best formation?
@@ -112,8 +122,10 @@ class Player:
         for idx in attacker:
             moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
 
-        for idx in defender:
-            moves[idx] = self.transform_move(1, 0) #defender.move_function(unit, idx, etc)
+        for idx in defenders:
+            defender = Defender(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx])
+            x, y, dist = defender.get_move(self.map_states)
+            moves[idx] = self.transform_move(x, y, dist)
 
         return moves
 
@@ -163,7 +175,7 @@ class Player:
                 numberDaysThisPhase = self.current_turn - self.PHASE_ONE_UNITS * self.spawn_days - 1
                 unitToAdd = self.PHASE_TWO_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_TWO_OUTPUT)]
             else:
-                numberDaysThisPhase = self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1
+                numberDaysThisPhase = int(self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1)
                 unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
             self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
 
