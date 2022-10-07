@@ -13,8 +13,8 @@ LOG_LEVEL = logging.DEBUG
 
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
-PRESSURE_HI = 1000
-PRESSURE_LO = 100
+PRESSURE_HI = 100
+PRESSURE_LO = 2
 
 
 class Player:
@@ -70,14 +70,14 @@ class Player:
         self.logger.info(" ".join(str(a) for a in args))
 
     def push(self, unit_pos: List[List[Point]]):
-        unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
-        allies = unit_pos[self.us]
-        enemies = np.delete(unit_pos, self.us, 0).flatten()
+        allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
+        enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
+        flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
 
         k = math.ceil(len(allies) / 4)
         kmeans = KMeans(n_clusters=k).fit(allies)
 
-        repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
+        repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
         exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
         soldier_moves = [_push_radially(allies[i], self.homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
 
