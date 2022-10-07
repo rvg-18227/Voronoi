@@ -28,7 +28,6 @@ class Defense:
         self.day = 0
         self.scanner_radius = 50
 
-
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
         #rotate the map state to the bottom left
@@ -41,7 +40,7 @@ class Defense:
         hover_point = (np.array([50, 50]) - self.spawn_point)*(3/4) + self.spawn_point #TODO: where to define this? shouldnt be set ,dynamic, hover near center of land, make sure not overlapping
 
 
-        moves = [(hover_point[0] - pos.x, hover_point[1] - pos.y) for pos in self.unit_locations]
+        moves = [(1, hover_point[0] - pos.x, hover_point[1] - pos.y) for pos in self.unit_locations]
         moved = [False for _ in range(self.number_units)]
         if self.number_units == 0:
             return moves
@@ -82,34 +81,36 @@ class Defense:
         cluster_points_left = [len(cluster["points"]) for cluster in clusters]
         for i, unit in enumerate(self.unit_locations):
             distances = sorted([(idx, np.linalg.norm(np.array(unit) - cluster["centroid"])) for idx, cluster in enumerate(clusters)], key=lambda x: x[1])
+
             for j, (idx, distance) in enumerate(distances):
                 if distance > self.scanner_radius:
                     break
-                offset_weight = 2
-                if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 50:
-                    offset_weight = 3
-
-                #TODO: if we're too far up, check if convex?
-                # offset = 5 (backup)
-
+                offset_weight = 3
+                if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
+                    offset_weight = 4
 
                 if cluster_points_left[idx] > 0 or offset_weight != 2:
                     cluster_points_left[idx] -= 1
                     moved[i] = True
 
-                    target_point = clusters[idx]["points"][cluster_points_left[idx]]
+                    target_point = clusters[idx]["points"][cluster_points_left[idx] if cluster_points_left[idx] >= 0 else 0]
+                    target_point = np.floor(target_point)
+                    target_point += np.array((0.5, 0.5))
+
                     direction = target_point[0] - unit.x, target_point[1] - unit.y
-                    goal_direction = self.spawn_point[0] - unit.x, self.spawn_point[1] - unit.y
-                    offset = goal_direction/np.linalg.norm(goal_direction)
 
-                    if self.number_in_circle(self.unit_locations, unit, 10) > self.number_in_circle(self.enemy_units, unit, 10):
-                        offset = np.array((0, 0))
+                    goal_direction = 0 if unit.x < 20 else self.spawn_point[0] - unit.x, 0 if unit.y < 20 else self.spawn_point[1] - unit.y
+                    offset = (0, 0) if np.linalg.norm(goal_direction) == 0 else goal_direction/np.linalg.norm(goal_direction)
 
-                    moves[i] = direction + offset*offset_weight
+                    #TODO: if formation is ready, offset = 0
+                    if self.number_in_circle(self.unit_locations, unit, 1) > self.number_in_circle(self.enemy_units, target_point, 1):
+                        offset_weight = 0
+
+                    end_direction = direction + offset*offset_weight
+                    distance_to_goal = np.linalg.norm(end_direction)
+
+                    moves[i] = distance_to_goal, end_direction[0], end_direction[1]
                     break
-
-        # For each unit, allocate it to home unless the closest unit is ours that itn't in the cluster
-        #do some density function draw 10 radiuss circle, if I have more units, move in
 
         # go to location - some offset (maybe calc trajectory)
         # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
@@ -118,12 +119,11 @@ class Defense:
 
 
         #does any of this work for diagonal?
-
         # self.prev_state = self.map_state
         return moves
 
     def number_in_circle(self, units, center, radius):
-        return sum([1 if np.linalg.norm(np.array(unit) - center) <= radius else 0 for unit in units])
+        return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
     
     def get_clusters(self):
         """Returns a list of clusters of points"""  
@@ -273,8 +273,8 @@ class Player:
         self.defense.update(self.map_states, defenders, unit_pos[self.player_idx], enemy_units)
         defensiveMoves = self.defense.get_moves()
         for defensive_move_idx, real_idx in enumerate(defenders):
-            x, y = defensiveMoves[defensive_move_idx]
-            moves[real_idx] = (1, np.arctan2(y, x))
+            dist, x, y = defensiveMoves[defensive_move_idx]
+            moves[real_idx] = (dist if dist <= 1 else 1, np.arctan2(y, x))
 
         self.current_turn += 1
         return moves
