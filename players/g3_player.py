@@ -68,6 +68,9 @@ class Player:
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
+    
+    def get_radius(self, point: Tuple[int, int]):
+        return np.linalg.norm(np.array(point) - self.homebase)
 
     def push(self, unit_pos: List[List[Point]]):
         allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
@@ -77,8 +80,14 @@ class Player:
         k = math.ceil(len(allies) / 4)
         kmeans = KMeans(n_clusters=k).fit(allies)
 
+        ally_distances = np.array([self.get_radius(point) for point in kmeans.cluster_centers_])
+        kmeans_radius = KMeans(n_clusters=min(3, k)).fit(ally_distances.reshape(-1, 1))
+
+        max_cluster = kmeans_radius.labels_[0]
+
         repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
-        exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
+        exceed_pressure_lo = np.array([higher_than_lo(force) for force in repelling_forces])
+        exceed_pressure_lo[np.array(kmeans_radius.labels_) != max_cluster] = False # index where point is not in outer radius
         soldier_moves = [_push_radially(allies[i], self.homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
 
         self.debug([int(np.linalg.norm(force)) for force in repelling_forces])
