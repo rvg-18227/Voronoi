@@ -13,7 +13,7 @@ import sympy
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
 PRESSURE_HI = 1000
-PRESSURE_LO = 10
+PRESSURE_LO = 100
 
 
 class Player:
@@ -58,7 +58,7 @@ class Player:
 
         self.target_loc = []
 
-        self.initial_radius = 15
+        self.initial_radius = 35
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
@@ -95,7 +95,7 @@ class Player:
             return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
         
         # MID_GAME: adjust formation based on opponents' positions
-        return push(unit_pos, self.us)
+        return push(unit_pos, self.us, self.homebase)
 
 
     def order2coord(self, order) -> tuple[float, float]:
@@ -110,7 +110,7 @@ class Player:
 #   Strategies
 # -----------------------------------------------------------------------------
 
-def push(unit_pos: List[List[Point]], us: int):
+def push(unit_pos: List[List[Point]], us: int, homebase):
     unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
     allies = unit_pos[us]
     enemies = np.delete(unit_pos, us, 0).flatten()
@@ -118,28 +118,22 @@ def push(unit_pos: List[List[Point]], us: int):
     k = math.ceil(len(allies) / 4)
     kmeans = KMeans(n_clusters=k).fit(allies)
 
-    # TODO:
-    # The pressure of ALL ENEMIES on a cluster will likely result in
-    #   1. pushing our soldiers into the edge
-    #   2. squeezing our army into a line
-    #
-    # We need a better mechanism to calculaate pressure.
-    repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
-    
-    def move(force):
-        mag = np.linalg.norm(force)
-        
-        if mag > PRESSURE_LO:
+    def higher_than_lo(force):
+        return True if np.linalg.norm(force) > PRESSURE_LO else False
+
+    def _push(pt, homebase, exceed_lo=False):
+        if exceed_lo:
             # stay where we are
             return (0., 0.)
 
-        towards_x, towards_y = reactive_force(force)
+        towards_x, towards_y = np.array(pt) - np.array(homebase)
         angle = np.arctan2(towards_y, towards_x)
-
+        
         return (1, angle)
 
-    cluster_moves = [move(force) for force in repelling_forces]
-    soldier_moves = [cluster_moves[cid] for cid in kmeans.labels_]
+    repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
+    exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
+    soldier_moves = [_push(allies[i], homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
 
     return soldier_moves
 
