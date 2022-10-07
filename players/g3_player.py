@@ -6,11 +6,14 @@ from typing import Tuple, List
 
 import numpy as np
 from shapely.geometry import Point
+from sklearn.cluster import KMeans
 import sympy
 
 
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
+PRESSURE_HI = 1000
+PRESSURE_LO = 10
 
 
 class Player:
@@ -51,10 +54,11 @@ class Player:
         
         self.us = player_idx
         self.homebase = np.array(spawn_point)
+        self.day_n = 0
 
         self.target_loc = []
 
-        self.initial_radius = 25
+        self.initial_radius = 15
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
@@ -79,18 +83,65 @@ class Player:
                                                 move each unit of the player
                 """
 
-        while len(unit_id[self.us]) > len(self.target_loc):
-            # add new target_locations
-            self.target_loc.append(
-                self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
+        self.day_n += 1
+
+        # EARLY GAME: form a 2-layer wall
+        if self.day_n <= self.initial_radius:
+            while len(unit_id[self.us]) > len(self.target_loc):
+                # add new target_locations
+                self.target_loc.append(
+                    self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
         
-        return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
+            return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
+        
+        # MID_GAME: adjust formation based on opponents' positions
+        return push(unit_pos, self.us)
+
 
     def order2coord(self, order) -> tuple[float, float]:
         dist, angle = order
         x = self.homebase[0] - dist * math.sin(angle)
         y = self.homebase[1] + dist * math.cos(angle)
         return (x, y)
+
+
+
+# -----------------------------------------------------------------------------
+#   Strategies
+# -----------------------------------------------------------------------------
+
+def push(unit_pos: List[List[Point]], us: int):
+    unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
+    allies = unit_pos[us]
+    enemies = np.delete(unit_pos, us, 0).flatten()
+
+    k = math.ceil(len(allies) / 4)
+    kmeans = KMeans(n_clusters=k).fit(allies)
+
+    # TODO:
+    # The pressure of ALL ENEMIES on a cluster will likely result in
+    #   1. pushing our soldiers into the edge
+    #   2. squeezing our army into a line
+    #
+    # We need a better mechanism to calculaate pressure.
+    repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
+    
+    def move(force):
+        mag = np.linalg.norm(force)
+        
+        if mag > PRESSURE_LO:
+            # stay where we are
+            return (0., 0.)
+
+        towards_x, towards_y = reactive_force(force)
+        angle = np.arctan2(towards_y, towards_x)
+
+        return (1, angle)
+
+    cluster_moves = [move(force) for force in repelling_forces]
+    soldier_moves = [cluster_moves[cid] for cid in kmeans.labels_]
+
+    return soldier_moves
 
 
 # -----------------------------------------------------------------------------
@@ -111,6 +162,9 @@ def repelling_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[fl
 
 def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, float]) -> List[float]:
     return np.add.reduce([repelling_force(receiver, x) for x in pts])
+
+def reactive_force(fvec: List[float]) -> List[float]:
+    return fvec * (-1.)
 
 
 # -----------------------------------------------------------------------------
