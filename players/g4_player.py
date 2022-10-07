@@ -9,6 +9,7 @@ from typing import Tuple
 def sympy_p_float(p: sympy.Point2D):
     return np.array([float(p.x), float(p.y)])
 
+    
 
 class Player:
     def __init__(
@@ -57,6 +58,8 @@ class Player:
         else:
             self.homebase = (101, -1)
 
+    def attack_point(unit):
+    
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
 
