@@ -52,22 +52,12 @@ class Player:
         self.us = player_idx
         self.homebase = np.array(spawn_point)
 
-        # print(player_idx, spawn_point)
-
         self.target_loc = []
 
         self.initial_radius = 25
 
-        base_angle = (-1) * ((math.pi / 2) + (player_idx * math.pi/2))
-
-        #  (base angle + pi/2) 
-        #    ^
-        #    | 
-        #    |     
-        #    -------> (base angle): -pi/2 - pi/2 * (player_index)
-        # p3
-        outer_wall_angles = np.linspace(start=base_angle, stop=(base_angle +
-            math.pi/2), num=(total_days // spawn_days))
+        base_angles = get_base_angles(player_idx)
+        outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
@@ -103,6 +93,11 @@ class Player:
         return (x, y)
 
 
+
+# -----------------------------------------------------------------------------
+#   Helper functions
+# -----------------------------------------------------------------------------
+
 def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
     np_unit_pos = np.array(unit_pos, dtype=float)
@@ -119,11 +114,14 @@ def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float,
     move_arr = list(zip(move_dist, move_angle))
     return move_arr
 
+
 def shapely_pts_to_tuples(points: List[Point]) -> List[Tuple[float, float]]:
     return list(map(shapely_pt_to_tuple, points))
 
+
 def shapely_pt_to_tuple(point: Point) -> Tuple[float, float]:
     return ( float(point.x), float(point.y) )
+
 
 def midsort(arr: List[float]) -> List[float]:
     n = len(arr)
@@ -161,3 +159,26 @@ def midsort(arr: List[float]) -> List[float]:
     midsorted_arr.append(arr[-1])
 
     return midsorted_arr
+
+
+def get_base_angles(player_idx: int) -> Tuple[float, float]:
+    """
+    Returns the angles in radians of the two edges around player @player_idx's homebase.
+
+    Example:
+
+        The map of the voronoi game is a 100 * 100 grid. From the top left going clockwise
+        are player 0, 1, 2, 3.
+
+        Below is a visualization of player 3's base angles.
+        
+            (base angle + pi/2) 
+                ^
+                | 
+                |     
+                -------> (base angle)
+                    -pi/2 - pi/2 * (player_index: 3)
+              p3
+    """
+    base_angle = (-1) * ((math.pi / 2) + (player_idx * math.pi/2))
+    return base_angle, base_angle + math.pi/2
