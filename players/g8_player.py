@@ -1,15 +1,16 @@
+import logging
+import math
 import os
 import pickle
-import numpy as np
-import sympy
-from sympy import Point, Circle
-import logging
 from typing import List, Tuple
-import math
-from shapely.geometry import Point
+
+import numpy as np
 from pyproj import Transformer
+from shapely.geometry import Point
 from shapely.ops import transform
 import simplekml
+import sympy
+from sympy import Circle  # ,Point
 
 
 class Player:
@@ -91,7 +92,8 @@ class Player:
         moves = []
 
         # distance = sympy.Min(1, 100 - unit_pos.x)
-        # angle = sympy.atan2(100 - unit_pos.y, 100 - unit_pos.x)  # this is right for us
+        # this is right for us
+        # angle = sympy.atan2(100 - unit_pos.y, 100 - unit_pos.x)
         # moves.append((distance, angle))
         # calculate the distance between each unit, see if its within the acceptable range
         # p1.distance(p2) would return the distance between two points
@@ -121,7 +123,6 @@ class Player:
 
         # return moves
 
-###############################################################################
         points = unit_pos[self.player_idx]
         base_point = points[0]
         min_distance = 0.5
@@ -156,7 +157,7 @@ class Player:
             point1 = points[1]
             p1 = Point(point1)
             current_radius = p_b.distance(p1)
-            if (p_n.distance(p_b) == 0):
+            if p_n.distance(p_b) == 0:
                 # new point spanwed!!! time to spread :)
                 current_radius += 1
                 # some code to spread
@@ -168,7 +169,8 @@ class Player:
                     continue
                 p1, p2 = points[i - 1], points[i]
                 point_dist_list.append(p1.distance(p2))
-            if min(point_dist_list) <= min_distance or max(point_dist_list) >= max_distance:
+            if (min(point_dist_list) <= min_distance
+                    or max(point_dist_list) >= max_distance):
                 moves = self.spread_points(current_radius, points)
             else:
                 # dont move
@@ -180,7 +182,7 @@ class Player:
 
     def spread_points(self, radius: float, points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
         """Get the spread points.
-#
+
         Args:
             radius (float): The radius to be used for circular spread
             points [tuple[float, float]]: List of points for the spread
@@ -188,14 +190,14 @@ class Player:
         Returns:
 
         """
-        # how each point shoudl move so that the points are evenly spread on the edge of the circle
+        # how each point should move so that the points are evenly spread on
+        # the edge of the circle
         moves = []
         # move each troop outward in the form of a circle?
         for item in points:
             distance = sympy.Min(1, 100 - item.x)
-            angle = sympy.atan2(100 - item.y, 100 -
-                                item.x)  # this is right for us
+            angle = sympy.atan2(100 - item.y,
+                                100 - item.x)  # this is right for us
             moves.append((distance, angle))
 
         return moves
-###############################################################################
