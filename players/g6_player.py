@@ -26,6 +26,8 @@ class Defense:
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
         self.day = 0
+        self.scanner_radius = 50
+
 
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
@@ -36,7 +38,10 @@ class Defense:
         self.enemy_units = enemy_units
         self.day += 1
     def get_moves(self):
-        moves = [(pos.x, pos.y) for pos in self.unit_locations]
+        hover_point = (np.array([50, 50]) - self.spawn_point)*(3/4) + self.spawn_point #TODO: where to define this? shouldnt be set ,dynamic, hover near center of land, make sure not overlapping
+
+
+        moves = [(hover_point[0] - pos.x, hover_point[1] - pos.y) for pos in self.unit_locations]
         moved = [False for _ in range(self.number_units)]
         if self.number_units == 0:
             return moves
@@ -78,7 +83,17 @@ class Defense:
         for i, unit in enumerate(self.unit_locations):
             distances = sorted([(idx, np.linalg.norm(np.array(unit) - cluster["centroid"])) for idx, cluster in enumerate(clusters)], key=lambda x: x[1])
             for j, (idx, distance) in enumerate(distances):
-                if cluster_points_left[idx] > 0:
+                if distance > self.scanner_radius:
+                    break
+                offset_weight = 2
+                if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 50:
+                    offset_weight = 3
+
+                #TODO: if we're too far up, check if convex?
+                # offset = 5 (backup)
+
+
+                if cluster_points_left[idx] > 0 or offset_weight != 2:
                     cluster_points_left[idx] -= 1
                     moved[i] = True
 
@@ -90,9 +105,8 @@ class Defense:
                     if self.number_in_circle(self.unit_locations, unit, 10) > self.number_in_circle(self.enemy_units, unit, 10):
                         offset = np.array((0, 0))
 
-                    moves[i] = direction + offset*2
+                    moves[i] = direction + offset*offset_weight
                     break
-
 
         # For each unit, allocate it to home unless the closest unit is ours that itn't in the cluster
         #do some density function draw 10 radiuss circle, if I have more units, move in
@@ -136,15 +150,6 @@ class Defense:
 
         clusters = sorted(clusters, key=lambda x: x["distance"])
         return clusters
-
-    class Defender:
-        def __init__(self, id, position):
-            self.id = id
-            self.x = float(position[0])
-            self.y = float(position[1])
-            self.unit_type = UnitType.DEFENSE
-        def get_move(self, game):
-            return self.x, self.y, 1
 
 
 #defensive strategy
@@ -294,16 +299,6 @@ class Player:
         """
         return self.map_states[np.floor(pos[0])][np.floor(pos[1])] - 1 # -1 because the map states are 1 indexed
 
-    def angled_transform_move(self, angle: float, distance) -> tuple[float, float]:
-        if self.player_idx == 0:
-            return (distance, angle)
-        elif self.player_idx == 1:
-            return (distance, angle - np.pi/2)
-        elif self.player_idx == 2:
-            return (distance, angle + np.pi)
-        else:# self.player_idx == 3:
-            return (distance, angle + np.pi / 2)
-
     def transform_move(self, x: float, y: float, distance) -> tuple[float, float]:
         """Transforms the distance and angle to the correct format for the game engine
                 Args:
@@ -313,7 +308,14 @@ class Player:
                     Tuple[float, float]: distance and angle in correct format
         """
         angle = np.arctan2(y, x)
-        return self.angled_transform_move(angle, distance)
+        if self.player_idx == 0:
+            return (distance, angle)
+        elif self.player_idx == 1:
+            return (distance, angle - np.pi/2)
+        elif self.player_idx == 2:
+            return (distance, angle + np.pi)
+        else:# self.player_idx == 3:
+            return (distance, angle + np.pi / 2)
 
     def add_spawn_units_if_needed(self, unit_ids):
         if self.current_turn % self.spawn_days == 0:
