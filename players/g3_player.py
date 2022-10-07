@@ -60,12 +60,12 @@ class Player:
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
-    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
+    def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
                 Args:
                     unit_id (list(list(str))): contains the ids of each player's units (unit_id[player_idx][x])
-                    unit_pos (list(list(float))): contains the position of each unit currently present on the map
+                    unit_pos (list(list(shapely.geometry.Point))): contains the position of each unit currently present on the map
                                                     (unit_pos[player_idx][x])
                     map_states (list(list(int)): contains the state of each cell, using the x, y coordinate system
                                                     (map_states[x][y])
@@ -92,6 +92,25 @@ class Player:
         y = self.homebase[1] + dist * math.cos(angle)
         return (x, y)
 
+
+# -----------------------------------------------------------------------------
+#   Force
+# -----------------------------------------------------------------------------
+# NOTE: The code below are referenced from Group 4
+
+def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[float], float]:
+    v = np.array(p1) - np.array(p2)
+    mag = np.linalg.norm(v)
+    unit = v / mag
+    return unit, mag
+
+def repelling_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
+    dir, mag = force_vec(p1, p2)
+    # Inverse magnitude: closer things apply greater force
+    return dir * 1 / (mag)
+
+def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, float]) -> List[float]:
+    return np.add.reduce([repelling_force(receiver, x) for x in pts])
 
 
 # -----------------------------------------------------------------------------

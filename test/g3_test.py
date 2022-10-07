@@ -9,7 +9,8 @@ import math
 
 from players.g3_player import (
 	midsort,
-	get_moves
+	get_moves,
+	repelling_force_sum
 )
 
 
@@ -81,9 +82,37 @@ def test_get_moves():
     print("degrees: " + str(result))
 
 
+def test_repelling_force_sum():
+	cases = [
+		{
+			'name': 'simple',
+			'pts': [(0., 2.), (2., 0.)],
+			'receiver': (0., 0.),
+			'expect': [-.5, -.5]
+		}
+	]
+
+	error_count = 0
+
+	for tc in cases:
+		got = repelling_force_sum(tc['pts'], tc['receiver'])
+		 
+		if not (got == tc['expect']).all():
+			print(f'case {tc["name"]} failed:')
+			print(f'expect: {tc["expect"]}')
+			print(f'got: {got}\n')
+			error_count += 1
+    
+	if error_count == 0:
+		print("PASSED - test_repelling_force_sum")
+	else:
+		print(f"FAILED with {error_count} errors - test_repelling_force_sum")
+
+
 # -----------------------------------------------------------------------------
 # 	Running Tests...
 # -----------------------------------------------------------------------------
 
 test_midsort()
 test_get_moves()
+test_repelling_force_sum()
