@@ -1,10 +1,12 @@
+import logging
+import math
 import os
 import pickle
-import numpy as np
-import sympy
-import logging
 from typing import Tuple, List
-import math
+
+import numpy as np
+from shapely.geometry import Point
+import sympy
 
 
 WALL_DENSITY = 0.1
@@ -130,7 +132,7 @@ class Player:
             self.target_loc.append(
                 self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
         
-        return get_moves(unit_pos[self.us], self.target_loc)
+        return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
 
     def order2coord(self, order) -> tuple[float, float]:
         dist, angle = order
@@ -154,6 +156,12 @@ def get_moves(unit_pos, target_loc) -> list[tuple[float, float]]:
     
     move_arr = list(zip(move_dist, move_angle))
     return move_arr
+
+def shapely_pts_to_tuples(points: List[Point]) -> List[Tuple[float, float]]:
+    return list(map(shapely_pt_to_tuple, points))
+
+def shapely_pt_to_tuple(point: Point) -> Tuple[float, float]:
+    return ( float(point.x), float(point.y) )
 
 
 def test_midsort():
