@@ -1,8 +1,6 @@
-import logging
 import os
 import numpy as np
-import sympy
-import json
+from shapely.geometry import Point, Polygon
 import constants
 
 from remi import App, gui
@@ -14,15 +12,20 @@ class VoronoiApp(App):
         super(VoronoiApp, self).__init__(*args, static_file_path={'res': res_path})
 
     def convert_coord(self, coord):
+        if not isinstance(coord, Point):
+            coord = Point(coord)
         scale = min(self.scale.x * self.vis_width, self.scale.y * self.vis_height)
-        coord = coord.translate(self.translate.x, self.translate.y)
-        coord = coord.scale(x=scale, y=scale)
-        coord = coord.translate((self.vis_width * self.padding_factor) / 2, (self.vis_height * self.padding_factor) / 2)
-        return coord
+        # coord = coord.translate(self.translate.x, self.translate.y)
+        # coord = coord.scale(x=scale, y=scale)
+        # coord = coord.translate((self.vis_width * self.padding_factor) / 2, (self.vis_height * self.padding_factor) / 2)
+        # return coord
+        off_x = (self.vis_width * self.padding_factor) / 2
+        off_y = (self.vis_height * self.padding_factor) / 2
+        return Point((coord.x + self.translate.x) * scale + off_x, (coord.y + self.translate.y) * scale + off_y )
 
     def draw_polygon(self, poly):
-        svg_poly = gui.SvgPolygon(len(poly.vertices))
-        for p in poly.vertices:
+        svg_poly = gui.SvgPolygon(len(poly.exterior.coords))
+        for p in poly.exterior.coords:
             p = self.convert_coord(p)
             svg_poly.add_coord(float(p.x), float(p.y))
         return svg_poly
@@ -36,10 +39,10 @@ class VoronoiApp(App):
         point2 = self.convert_coord(b)
         return gui.SvgLine(float(point1.x), float(point1.y), float(point2.x), float(point2.y))
 
-    def draw_circle(self, circle):
+    def draw_circle(self, center, radius):
         scale = min(self.scale.x * self.vis_width, self.scale.y * self.vis_height)
-        center = self.convert_coord(circle.center)
-        radius = scale * circle.radius
+        center = self.convert_coord(center)
+        radius = scale * radius
         return gui.SvgCircle(float(center.x), float(center.y), float(radius))
 
     def draw_text(self, point, text):
@@ -151,25 +154,26 @@ class VoronoiApp(App):
         return mainContainer
 
     def load_map(self):
-        self.base = [sympy.geometry.Point2D(constants.base[0]), sympy.geometry.Point2D(constants.base[1]),
-                     sympy.geometry.Point2D(constants.base[2]), sympy.geometry.Point2D(constants.base[3])]
-        self.voronoi_map = sympy.Polygon([0, 0], [0, 100], [100, 100], [100, 0])
-        self.translate = sympy.geometry.Point2D(-(constants.min_map_dim + constants.max_map_dim) / 2,
+        self.base = [Point(constants.base[0]), Point(constants.base[1]),
+                     Point(constants.base[2]), Point(constants.base[3])]
+        self.voronoi_map = Polygon([[0, 0], [0, 100], [100, 100], [100, 0], [0, 0]])
+        self.translate = Point(-(constants.min_map_dim + constants.max_map_dim) / 2,
                                                 -(constants.min_map_dim + constants.max_map_dim) / 2)
-        self.scale = sympy.geometry.Point2D(1 / (constants.max_map_dim - constants.min_map_dim + 1),
+        self.scale = Point(1 / (constants.max_map_dim - constants.min_map_dim + 1),
                                             1 / (constants.max_map_dim - constants.min_map_dim + 1))
 
         self.logger.info(
             "Translating visualization by x={}, y={}".format(float(self.translate.x), float(self.translate.y)))
         self.logger.info("Base Scaling visualization by factors {}".format(float(self.scale.x), float(self.scale.y)))
 
-    def plot_base(self, full_refresh=False):
-        self.reset_svgplot(full_refresh)
-        unit_h = sympy.geometry.Polygon([0, 0], [0, 2], [2, 2], [2, 0])
+    def plot_base(self):
+        self.reset_svgplot()
+        unit_h = [[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]
         for i in range(constants.no_of_players):
-            base_marker = sympy.geometry.Polygon(
-                *list(map(lambda p: p.translate(self.base[i].x - unit_h.centroid.x,
-                                                self.base[i].y - unit_h.centroid.y), unit_h.vertices)))
+            base_off_x = self.base[i].x - 1
+            base_off_y = self.base[i].y - 1
+            base_marker = Polygon([(x + base_off_x, y + base_off_y) for x, y in unit_h])
+
             t = self.draw_polygon(base_marker)
             t.set_fill(constants.player_color[i])
             self.svgplot.append(t)
@@ -178,13 +182,13 @@ class VoronoiApp(App):
         p.set_stroke(1, "black")
         self.svgplot.append(p)
 
-    def display_map(self, day, state, full_refresh=False):
+    def display_map(self, day, state):
         self.prev_day = self.curr_day
         self.prev_state = self.curr_state
         self.curr_day = day
         self.curr_state = state
 
-        self.reset_svgplot(full_refresh)
+        self.reset_svgplot()
         self.plot_tiles()
         self.base_keys = list(self.svgplot.children.keys())
         self.update_table()
@@ -199,8 +203,8 @@ class VoronoiApp(App):
         else:
             self.set_label_text("End of Day")
 
-    def reset_svgplot(self, full_refresh=False):
-        if full_refresh or len(self.svgplot.children) == 0:
+    def reset_svgplot(self):
+        if len(self.svgplot.children) == 0:
             self.svgplot.empty()
         else:
             for k in list(self.svgplot.children.keys()):
@@ -209,26 +213,25 @@ class VoronoiApp(App):
 
     def plot_tiles(self):
         if self.curr_day == 0 and self.curr_state == 0:
-            tmp = [sympy.geometry.Point2D(25, 25), sympy.geometry.Point2D(25, 75),
-                   sympy.geometry.Point2D(75, 75), sympy.geometry.Point2D(75, 25)]
-            q_t = sympy.geometry.Polygon([0, 0], [0, 50], [50, 50], [50, 0])
+            tmp = [Point(25, 25), Point(25, 75),
+                   Point(75, 75), Point(75, 25)]
+            q_t = [[0, 0], [0, 50], [50, 50], [50, 0], [0, 0]]
             for i in range(constants.no_of_players):
-                base_marker = sympy.geometry.Polygon(
-                    *list(map(lambda p: p.translate(tmp[i].x - q_t.centroid.x,
-                                                    tmp[i].y - q_t.centroid.y), q_t.vertices)))
+                off_x = tmp[i].x - 25
+                off_y = tmp[i].y - 25
+                base_marker = Polygon([(x + off_x, y + off_y) for x, y in q_t])
+
                 t = self.draw_polygon(base_marker)
                 t.set_fill(constants.tile_color[i])
                 self.svgplot.append(t)
 
         else:
-            unit_t = sympy.geometry.Polygon([0, 0], [0, 1], [1, 1], [1, 0])
+            unit_t = [[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
                     if self.voronoi_game.map_states[self.curr_day][self.curr_state][i][j] != \
                             self.voronoi_game.map_states[self.prev_day][self.prev_state][i][j]:
-                        tile = sympy.geometry.Polygon(
-                            *list(map(lambda p: p.translate(i - unit_t.centroid.x + 0.5,
-                                                            j - unit_t.centroid.y + 0.5), unit_t.vertices)))
+                        tile = Polygon([(x + i, y + j) for x, y in unit_t])
                         t = self.draw_polygon(tile)
                         if self.voronoi_game.map_states[self.curr_day][self.curr_state][i][j] > 0:
                             t.set_fill(constants.tile_color[
@@ -240,9 +243,7 @@ class VoronoiApp(App):
     def plot_units(self):
         for i in range(constants.no_of_players):
             for j in range(len(self.voronoi_game.unit_id[self.curr_day][self.curr_state][i])):
-                player_unit = sympy.geometry.Circle(self.voronoi_game.unit_pos[self.curr_day][self.curr_state][i][j],
-                                                    0.5)
-                c = self.draw_circle(player_unit)
+                c = self.draw_circle(self.voronoi_game.unit_pos[self.curr_day][self.curr_state][i][j], 0.5)
                 c.set_fill(constants.player_color[i])
                 c.set_stroke(1, "black")
                 self.svgplot.append(c)

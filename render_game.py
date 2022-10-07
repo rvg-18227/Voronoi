@@ -47,10 +47,10 @@ for day in range(len(game_data["map_states"])):
 
     # Units
     for p in range(4):
-        for ux, uy in game_data["unit_pos"][day][DAY_STATE][p]:
+        for point in game_data["unit_pos"][day][DAY_STATE][p]:
             plt.plot(
-                ux,
-                uy,
+                point.x,
+                point.y,
                 color=player_color[p],
                 marker="o",
                 markersize=4,
