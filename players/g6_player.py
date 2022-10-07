@@ -53,7 +53,7 @@ class Defense:
         # Determine how many clusters to defend
         for i, cluster in enumerate(clusters):
             if len(cluster["points"]) < units_left_to_allocate:
-                units_left_to_allocate -= len(cluster["points"])
+                units_left_to_allocate -= (len(cluster["points"]) + 1)
                 clusters_to_defend += 1
             else:
                 break
@@ -89,7 +89,7 @@ class Defense:
                 if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
                     offset_weight = 4
 
-                if cluster_points_left[idx] > 0 or offset_weight != 2:
+                if cluster_points_left[idx] > 0 or offset_weight != 3:
                     cluster_points_left[idx] -= 1
                     moved[i] = True
 
@@ -112,6 +112,8 @@ class Defense:
                     moves[i] = distance_to_goal, end_direction[0], end_direction[1]
                     break
 
+
+        # TODO:
         # go to location - some offset (maybe calc trajectory)
         # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
         # once all units are in place - (current loc to calc place ~=, for all units in this one match)
