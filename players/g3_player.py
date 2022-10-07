@@ -9,6 +9,7 @@ from shapely.geometry import Point
 from sklearn.cluster import KMeans
 import sympy
 
+LOG_LEVEL = logging.DEBUG
 
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
@@ -51,6 +52,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.logger.setLevel(LOG_LEVEL)
         
         self.us = player_idx
         self.homebase = np.array(spawn_point)
@@ -63,6 +65,25 @@ class Player:
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
+
+    def debug(self, *args):
+        self.logger.info(" ".join(str(a) for a in args))
+
+    def push(self, unit_pos: List[List[Point]]):
+        unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
+        allies = unit_pos[self.us]
+        enemies = np.delete(unit_pos, self.us, 0).flatten()
+
+        k = math.ceil(len(allies) / 4)
+        kmeans = KMeans(n_clusters=k).fit(allies)
+
+        repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
+        exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
+        soldier_moves = [_push_radially(allies[i], self.homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
+
+        self.debug([int(np.linalg.norm(force)) for force in repelling_forces])
+
+        return soldier_moves
 
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -95,7 +116,7 @@ class Player:
             return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
         
         # MID_GAME: adjust formation based on opponents' positions
-        return push(unit_pos, self.us, self.homebase)
+        return self.push(unit_pos)
 
 
     def order2coord(self, order) -> tuple[float, float]:
@@ -110,32 +131,15 @@ class Player:
 #   Strategies
 # -----------------------------------------------------------------------------
 
-def push(unit_pos: List[List[Point]], us: int, homebase):
-    unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
-    allies = unit_pos[us]
-    enemies = np.delete(unit_pos, us, 0).flatten()
+def _push_radially(pt, homebase, exceed_lo=False):
+    if exceed_lo:
+        # stay where we are
+        return (0., 0.)
 
-    k = math.ceil(len(allies) / 4)
-    kmeans = KMeans(n_clusters=k).fit(allies)
-
-    def higher_than_lo(force):
-        return True if np.linalg.norm(force) > PRESSURE_LO else False
-
-    def _push(pt, homebase, exceed_lo=False):
-        if exceed_lo:
-            # stay where we are
-            return (0., 0.)
-
-        towards_x, towards_y = np.array(pt) - np.array(homebase)
-        angle = np.arctan2(towards_y, towards_x)
-        
-        return (1, angle)
-
-    repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
-    exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
-    soldier_moves = [_push(allies[i], homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
-
-    return soldier_moves
+    towards_x, towards_y = np.array(pt) - np.array(homebase)
+    angle = np.arctan2(towards_y, towards_x)
+    
+    return (1, angle)
 
 
 # -----------------------------------------------------------------------------
@@ -160,6 +164,8 @@ def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, f
 def reactive_force(fvec: List[float]) -> List[float]:
     return fvec * (-1.)
 
+def higher_than_lo(force):
+    return True if np.linalg.norm(force) > PRESSURE_LO else False
 
 # -----------------------------------------------------------------------------
 #   Helper functions
