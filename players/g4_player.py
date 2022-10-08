@@ -3,6 +3,7 @@ from shapely.geometry import Point
 import logging
 from typing import Tuple
 from abc import ABC, abstractmethod
+from enum import Enum
 import pdb
 
 
@@ -57,6 +58,11 @@ def repelling_force(p1, p2) -> tuple[float, float]:
 
 def linear_attracting_force(p1, p2):
     return force_vec(p2, p1)
+
+
+class RoleType(Enum):
+    DEFENDER = 1
+    ATTACKER = 2
 
 
 class Role(ABC):
@@ -135,10 +141,12 @@ class Role(ABC):
     def _turn_moves(
         self, update: StateUpdate, dead_units: set[str]
     ) -> dict[str, tuple[float, float]]:
+        """Returns the moves this turn for the units allocated to this role."""
         pass
 
     @abstractmethod
     def deallocation_candidate(self, target_point: tuple[float, float]) -> str:
+        """Returns a suitable allocated unit to be de-allocated and used for other roles."""
         pass
 
 
@@ -196,10 +204,55 @@ class Defender(Role):
 
 
 class NaiveAttacker(Role):
-    def update(self, unit_id, unit_pos):
-        pass
+    def _turn_moves(self, update, dead_units):
+        ENEMY_INFLUENCE = -1
+        HOME_INFLUENCE = 20
+        ALLY_INFLUENCE = 0.5
+        WALL_INFLUENCE = 1
 
-    def get_unit_move(self, unit_id):
+        moves = {}
+        own_units = self._own_units(update)
+        enemy_units = self._all_enemy_units(update)
+
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+
+            enemy_unit_forces = [
+                repelling_force(unit_pos, enemy_pos) for _, enemy_pos in enemy_units
+            ]
+            enemy_force = np.add.reduce(enemy_unit_forces)
+
+            ally_forces = [
+                repelling_force(unit_pos, ally_pos)
+                for ally_id, ally_pos in own_units.items()
+                if ally_id != unit_id
+            ]
+            ally_force = np.add.reduce(ally_forces)
+
+            home_force = repelling_force(unit_pos, self.params.home_base)
+
+            ux, uy = unit_pos
+            wall_normals = [
+                (ux, self.params.min_dim),
+                (ux, self.params.max_dim),
+                (self.params.min_dim, uy),
+                (self.params.max_dim, uy),
+            ]
+            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = np.add.reduce(wall_forces)
+
+            total_force = normalize(
+                (enemy_force * ENEMY_INFLUENCE)
+                + (home_force * HOME_INFLUENCE)
+                + (ally_force * ALLY_INFLUENCE)
+                + (wall_force * WALL_INFLUENCE)
+            )
+
+            moves[unit_id] = to_polar(total_force)
+
+        return moves
+
+    def deallocation_candidate(self, target_point):
         pass
 
 
@@ -245,7 +298,11 @@ class Player:
         self.params.max_dim = max_dim
         self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
 
-        self.defenders = Defender(self.logger, self.params)
+        self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
+        self.role_groups[RoleType.DEFENDER].append(Defender(self.logger, self.params))
+        self.role_groups[RoleType.ATTACKER].append(
+            NaiveAttacker(self.logger, self.params)
+        )
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -282,6 +339,31 @@ class Player:
         ALLY_INFLUENCE = 0.5
         WALL_INFLUENCE = 1
 
+        # Calculate free units (just spawned)
+        own_units = set(uid for uid in unit_id[self.params.player_idx])
+        allocated_units = set(
+            uid
+            for role_group in self.role_groups.values()
+            for role in role_group
+            for uid in role.units
+        )
+        free_units = own_units - allocated_units
+
+        # Naive split allocation between attackers and defenders
+        for uid in free_units:
+            total_defenders = sum(
+                len(defenders.units)
+                for defenders in self.role_groups[RoleType.DEFENDER]
+            )
+            total_attackers = sum(
+                len(attackers.units)
+                for attackers in self.role_groups[RoleType.ATTACKER]
+            )
+            if total_defenders >= total_attackers:
+                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+            else:
+                self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+
         # Convert unit positions to floats
         unit_pos = [
             [point_to_floats(player_unit_pos) for player_unit_pos in player_units]
@@ -292,13 +374,11 @@ class Player:
         update.unit_id = unit_id
         update.unit_pos = unit_pos
 
-        # For now, allocate all units as "defenders"
-        for uid in unit_id[self.params.player_idx]:
-            if not uid in self.defenders.units:
-                self.defenders.allocate_unit(uid)
-
         moves: list[tuple[float, float]] = []
-        defender_moves = self.defenders.turn_moves(update)
+        role_moves = {}
+        for role in RoleType:
+            for role_group in self.role_groups[role]:
+                role_moves.update(role_group.turn_moves(update))
         for unit_id in unit_id[self.params.player_idx]:
-            moves.append(defender_moves[unit_id])
+            moves.append(role_moves[unit_id])
         return moves
