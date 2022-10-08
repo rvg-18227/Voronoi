@@ -64,9 +64,14 @@ class Player:
         
     
     def attack_point(self, units, target, homebase_mode=True):
-        '''
-        Given a list of unit, attack the target point in a line formation.
-        Return: A list of attack move using units for the target.
+        '''Given a list of unit, attack the target point in a line formation.
+        
+        Args:
+            units: attack units
+            target: attack target
+            homebase_mode: attack from homebase
+        Return:
+            a list of attack move using units for the target.
         '''
         # Intuition:
         #    We want to form an line first before attacking
@@ -76,14 +81,22 @@ class Player:
         #    We also dont want to shove all attack unit toward the target
         #    Since that would most likely to be suicidal
         #    So we want to leverage between forming a formation and moving towards the target
-        #    SCALE BY DISTANCE:
-        #        Unit further away from the expected line foramtion should move closer to line
-        #        Unit closer to the line should move toward the target
+        #    Solution:
+        #       SCALE BY DISTANCE:
+        #           Unit further away from the expected line foramtion should move closer to line
+        #           Unit closer to the line should move toward the target
         #    Problem FOR NOW:
-        #        How to space our our unit in a more even/tight manner
+        #        How to space our our unit in a more even/tight manner when points are further away
+        #        Add-on:
+        #           Perhaps grouping point further away from each other to form an attack formation is not a good idea
+        #           The points in the front need to wait for points in the back
+        #           During which enemy formation might change
+        #           We can assume all attack unit are close to each other for now
+        #           Hence the line formation they form would be tight
         #    Its is better to attack from homebase.
         #       Forming line that deviate from homebase is suspectiable from side attack from another players
-        #       But attack from the centroid of the units is more effective
+        #    But attack from the centroid of the units is more effective
+        #    Thus, homebase mode provide the option to attack from centroi or from homebase
         def get_centroid(units):
             '''
             Find centroid on a cluster of points
@@ -96,28 +109,33 @@ class Player:
             '''
             return nearest_points(line, point)[0]
         
-        def compute_vector(units, closest_point, target_point):
-            # given units, their corresponding cloest point in the attack line, and a target
-            # compute unit vector for attacking
-            move = []
+        def compute_attack_vector(units, closest_point, target_point):
+            '''Given units, their corresponding cloest point in the attack line, and a target
+            Compute unit vector to attack target in a straight line formation
+            
+            Args:
+                units: attack units
+                cloest_point: point in line formation thats cloest to units (1 to 1 mapping)
+                target_point: where to attack
+            
+            Return:
+                list of attack move in unit vector form for each units
+            '''
+            attack_move = []
             for i in range(len(units)):
                 unit_vec_closest, mag_closest = self.force_vec(units[i], closest_point[i].coords)
                 unit_vec_target, mag_target = self.force_vec(units[i], target_point)
-                # When magnitude to target is large, it mean it is close to target
-                # So move toward the closet point to line
+                # Calculate weight for cloest point and target point
                 total_mag = mag_target + mag_closest
                 weight_target = mag_target/total_mag
-                # Same as 
                 weight_closest = mag_closest/total_mag
-                #pdb.set_trace()
-                move_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
-                move_vec = move_vec/np.linalg.norm(move_vec)
-                move_vec *= -1
-                move.append(move_vec)
-                #pdb.set_trace()
-                self.debug("unit has move vector", move_vec)
-            #pdb.set_trace()
-            return move
+                # Calculate move vec for each units
+                attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
+                attack_vec = attack_vec/np.linalg.norm(attack_vec)
+                attack_vec *= -1
+                attack_move.append(attack_vec)
+                self.debug("\Attach force:", attack_vec)
+            return attack_move
             
         if homebase_mode:# attack from homebase
             start_point = self.spawn_point
@@ -128,9 +146,9 @@ class Player:
         for i in units:
             closest_pt_to_line = find_closest_point(line, Point(i))
             cloest_points.append(closest_pt_to_line)
-        move = compute_vector(units, cloest_points, target)
-        move = [self.to_polar((x[0][0], x[0][1])) for x in move]
-        return move
+        attack_vec = compute_attack_vector(units, cloest_points, target)
+        attack_vec = [self.to_polar((x[0][0], x[0][1])) for x in attack_vec]
+        return attack_vec
             
     def find_weak_points(self, num_weak_pts, enemy_units):
         '''
@@ -215,15 +233,15 @@ class Player:
             if player != self.player_idx
         ]
         
-        #if len(unit_id[0]) > 1:
-        #pdb.set_trace()
-        # assume we are always player 1
-        # assume we are attacking player 2 with all we have (singular enemy)
-        enemy2 = self.get_enemy_unit(1, unit_pos)
-        weak_pt_player_2 = self.find_weak_points(2, enemy2)
-        my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
-        attack_move = self.attack_point(my_point, weak_pt_player_2[0])
-        return attack_move
+        if len(unit_id[0]) > 10:
+            #pdb.set_trace()
+            # assume we are always player 1
+            # assume we are attacking player 2 with all we have (singular enemy)
+            enemy2 = self.get_enemy_unit(1, unit_pos)
+            weak_pt_player_2 = self.find_weak_points(2, enemy2)
+            my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
+            attack_move = self.attack_point(my_point, weak_pt_player_2[0], False)
+            return attack_move
 
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
