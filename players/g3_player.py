@@ -14,12 +14,12 @@ LOG_LEVEL = logging.DEBUG
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
 PRESSURE_HI = 100
-PRESSURE_LO = 2
+PRESSURE_LO = 1.5
 
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
-                 player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
+                 player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
             -> None:
         """Initialise the player with given skill.
 
@@ -64,6 +64,7 @@ class Player:
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
+        self.counter = 0
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
     def debug(self, *args):
@@ -88,11 +89,27 @@ class Player:
         repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
         exceed_pressure_lo = np.array([higher_than_lo(force) for force in repelling_forces])
         exceed_pressure_lo[np.array(kmeans_radius.labels_) != max_cluster] = False # index where point is not in outer radius
-        soldier_moves = [_push_radially(allies[i], self.homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
+        soldier_moves = [self._push_radially(allies[i], exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
 
-        self.debug([int(np.linalg.norm(force)) for force in repelling_forces])
+        self.debug(f'pressure: {[int(np.linalg.norm(force)) for force in repelling_forces]}')
+        self.debug(f'moves: {soldier_moves}')
 
         return soldier_moves
+
+    def _push_radially(self, pt, exceed_lo=False):
+        if exceed_lo:
+            # stay where we are
+            return (0., 0.)
+
+        if (pt == self.homebase).all():
+            angle = self.midsorted_outer_wall_angles[self.counter % len(self.midsorted_outer_wall_angles)]
+            self.counter += 1
+            return (1, angle)
+        else:
+            towards_x, towards_y = np.array(pt) - np.array(self.homebase)
+            angle = np.arctan2(towards_y, towards_x)
+        
+            return (1, angle)
 
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -130,7 +147,7 @@ class Player:
 
     def order2coord(self, order) -> tuple[float, float]:
         dist, angle = order
-        x = self.homebase[0] - dist * math.sin(angle)
+        x = self.homebase[0] + dist * math.sin(angle)
         y = self.homebase[1] + dist * math.cos(angle)
         return (x, y)
 
@@ -140,15 +157,6 @@ class Player:
 #   Strategies
 # -----------------------------------------------------------------------------
 
-def _push_radially(pt, homebase, exceed_lo=False):
-    if exceed_lo:
-        # stay where we are
-        return (0., 0.)
-
-    towards_x, towards_y = np.array(pt) - np.array(homebase)
-    angle = np.arctan2(towards_y, towards_x)
-    
-    return (1, angle)
 
 
 # -----------------------------------------------------------------------------
@@ -249,18 +257,18 @@ def get_base_angles(player_idx: int) -> Tuple[float, float]:
 
     Example:
 
-        The map of the voronoi game is a 100 * 100 grid. From the top left going clockwise
-        are player 0, 1, 2, 3.
+        The map of the voronoi game is a 100 * 100 grid. From the top left going
+        counter-clockwise are player p1 (index: 0), p2 (1), p3 (2), p4 (3).
 
         Below is a visualization of player 3's base angles.
         
-            (base angle + pi/2) 
+            (base angle - pi/2) 
                 ^
                 | 
                 |     
                 -------> (base angle)
-                    -pi/2 - pi/2 * (player_index: 3)
-              p3
+                    pi/2 * (1 - player_index)
+              p2
     """
-    base_angle = (-1) * ((math.pi / 2) + (player_idx * math.pi/2))
-    return base_angle, base_angle + math.pi/2
+    base_angle = (math.pi/2) * (1 - player_idx)
+    return base_angle, base_angle - math.pi/2

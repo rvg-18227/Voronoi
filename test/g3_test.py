@@ -10,7 +10,8 @@ import math
 from players.g3_player import (
 	midsort,
 	get_moves,
-	repelling_force_sum
+	repelling_force_sum,
+    get_base_angles
 )
 
 
@@ -109,6 +110,45 @@ def test_repelling_force_sum():
 		print(f"FAILED with {error_count} errors - test_repelling_force_sum")
 
 
+def test_get_base_angles():
+    cases = [
+		{
+			'name': 'player_1',
+            'player_idx': 0,
+			'expect': (math.pi/2, 0)
+		},
+		{
+			'name': 'player_2',
+            'player_idx': 1,
+			'expect': (0, -math.pi/2)
+		},
+		{
+			'name': 'player_3',
+            'player_idx': 2,
+			'expect': (-math.pi/2, -math.pi)
+		},
+		{
+			'name': 'player_4',
+            'player_idx': 3,
+			'expect': (-math.pi, -math.pi*3/2)
+		}
+	]
+
+    error_count = 0
+    for tc in cases:
+        got = get_base_angles(tc['player_idx'])
+		 
+        if not got == tc['expect']:
+            print(f'case {tc["name"]} failed:')
+            print(f'expect: {tc["expect"]}')
+            print(f'got: {got}\n')
+            error_count += 1
+    
+    if error_count == 0:
+        print("PASSED - test_get_base_angles")
+    else:
+        print(f"FAILED with {error_count} errors - test_get_base_angles")
+
 # -----------------------------------------------------------------------------
 # 	Running Tests...
 # -----------------------------------------------------------------------------
@@ -116,3 +156,4 @@ def test_repelling_force_sum():
 test_midsort()
 test_get_moves()
 test_repelling_force_sum()
+test_get_base_angles()
