@@ -1,16 +1,211 @@
-import os
-import pickle
 import numpy as np
-import sympy
+from shapely.geometry import Point
 import logging
 from typing import Tuple
+from abc import ABC, abstractmethod
+import pdb
 
 
-def sympy_p_float(p: sympy.Point2D):
+def point_to_floats(p: Point):
     return np.array([float(p.x), float(p.y)])
 
 
+class GameParameters:
+    """Represents constant game parameters that don't change."""
+
+    total_days: int
+    spawn_days: int
+    player_idx: int
+    spawn_point: tuple[float, float]
+    min_dim: int
+    max_dim: int
+    home_base: tuple[float, float]
+
+
+class StateUpdate:
+    """Represents all of the data that changes between turns."""
+
+    unit_id: list[list[str]]
+    unit_pos: list[list[Point]]
+
+
+# =======================
+# Force Utility Functions
+# =======================
+def force_vec(p1, p2):
+    """Vector direction and magnitude pointing from `p2` to `p1`"""
+    v = p1 - p2
+    mag = np.linalg.norm(v)
+    unit = v / mag
+    return unit, mag
+
+
+def to_polar(p):
+    x, y = p
+    return np.sqrt(x**2 + y**2), np.arctan2(y, x)
+
+
+def normalize(v):
+    return v / np.linalg.norm(v)
+
+
+def repelling_force(p1, p2) -> tuple[float, float]:
+    dir, mag = force_vec(p1, p2)
+    # Inverse magnitude: closer things apply greater force
+    return dir * 1 / (mag)
+
+
+def linear_attracting_force(p1, p2):
+    return force_vec(p2, p1)
+
+
+class Role(ABC):
+    _logger: logging.Logger
+    _params: GameParameters
+    _allocated_units: list[str]
+
+    def __init__(self, logger, params):
+        self._logger = logger
+        self._params = params
+        self.__allocated_units = []
+
+    def _debug(self, *args):
+        self._logger.info(" ".join(str(a) for a in args))
+
+    # ===========
+    # Role Common
+    # ===========
+
+    def allocate_unit(self, unit_id: str):
+        self.__allocated_units.append(unit_id)
+
+    def deallocate_unit(self, unit_id: str):
+        self.__allocated_units = [
+            unit for unit in self.__allocated_units if unit != unit_id
+        ]
+
+    @property
+    def units(self):
+        return self.__allocated_units.copy()
+
+    @property
+    def params(self):
+        return self._params
+
+    def turn_moves(self, update: StateUpdate):
+        alive_units = set(self._own_units(update).keys())
+        allocated_set = set(self.__allocated_units)
+        dead_units = allocated_set - alive_units
+        self.__allocated_units = list(allocated_set - dead_units)
+
+        return self._turn_moves(update, dead_units)
+
+    # =============================
+    # Role Update Utility Functions
+    # =============================
+
+    def _own_units(self, update: StateUpdate):
+        return {
+            unit_id: unit_pos
+            for unit_id, unit_pos in zip(
+                update.unit_id[self.params.player_idx],
+                [pos for pos in update.unit_pos[self.params.player_idx]],
+            )
+        }
+
+    def _enemy_units(self, update: StateUpdate):
+        return {
+            enemy_id: list(zip(update.unit_id[enemy_id], update.unit_pos[enemy_id]))
+            for enemy_id in range(4)
+            if enemy_id != self.params.player_idx
+        }
+
+    def _all_enemy_units(self, update: StateUpdate):
+        return [
+            unit
+            for enemy_units in self._enemy_units(update).values()
+            for unit in enemy_units
+        ]
+
+    # ===================
+    # Role Specialization
+    # ===================
+
+    @abstractmethod
+    def _turn_moves(
+        self, update: StateUpdate, dead_units: set[str]
+    ) -> dict[str, tuple[float, float]]:
+        pass
+
+    @abstractmethod
+    def deallocation_candidate(self, target_point: tuple[float, float]) -> str:
+        pass
+
+
+class Defender(Role):
+    def _turn_moves(self, update, dead_units):
+        ENEMY_INFLUENCE = 1
+        HOME_INFLUENCE = 20
+        ALLY_INFLUENCE = 0.5
+        WALL_INFLUENCE = 1
+
+        moves = {}
+        own_units = self._own_units(update)
+        enemy_units = self._all_enemy_units(update)
+
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+
+            enemy_unit_forces = [
+                repelling_force(unit_pos, enemy_pos) for _, enemy_pos in enemy_units
+            ]
+            enemy_force = np.add.reduce(enemy_unit_forces)
+
+            ally_forces = [
+                repelling_force(unit_pos, ally_pos)
+                for ally_id, ally_pos in own_units.items()
+                if ally_id != unit_id
+            ]
+            ally_force = np.add.reduce(ally_forces)
+
+            home_force = repelling_force(unit_pos, self.params.home_base)
+
+            ux, uy = unit_pos
+            wall_normals = [
+                (ux, self.params.min_dim),
+                (ux, self.params.max_dim),
+                (self.params.min_dim, uy),
+                (self.params.max_dim, uy),
+            ]
+            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = np.add.reduce(wall_forces)
+
+            total_force = normalize(
+                (enemy_force * ENEMY_INFLUENCE)
+                + (home_force * HOME_INFLUENCE)
+                + (ally_force * ALLY_INFLUENCE)
+                + (wall_force * WALL_INFLUENCE)
+            )
+
+            moves[unit_id] = to_polar(total_force)
+
+        return moves
+
+    def deallocation_candidate(self, target_point):
+        pass
+
+
+class NaiveAttacker(Role):
+    def update(self, unit_id, unit_pos):
+        pass
+
+    def get_unit_move(self, unit_id):
+        pass
+
+
 class Player:
+    params: GameParameters
+
     def __init__(
         self,
         rng: np.random.Generator,
@@ -18,7 +213,7 @@ class Player:
         total_days: int,
         spawn_days: int,
         player_idx: int,
-        spawn_point: sympy.geometry.Point2D,
+        spawn_point: Point,
         min_dim: int,
         max_dim: int,
         precomp_dir: str,
@@ -41,21 +236,16 @@ class Player:
         self.logger = logger
 
         # Game fundamentals
-        self.total_days = total_days
-        self.spawn_days = spawn_days
-        self.player_idx = player_idx
-        self.spawn_point = spawn_point
-        self.min_dim = min_dim
-        self.max_dim = max_dim
+        self.params = GameParameters()
+        self.params.total_days = total_days
+        self.params.spawn_days = spawn_days
+        self.params.player_idx = player_idx
+        self.params.spawn_point = (float(spawn_point.x), float(spawn_point.y))
+        self.params.min_dim = min_dim
+        self.params.max_dim = max_dim
+        self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
 
-        if self.player_idx == 0:
-            self.homebase = (-1, -1)
-        elif self.player_idx == 1:
-            self.homebase = (-1, 101)
-        elif self.player_idx == 2:
-            self.homebase = (101, 101)
-        else:
-            self.homebase = (101, -1)
+        self.defenders = Defender(self.logger, self.params)
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -66,27 +256,9 @@ class Player:
             min(self.max_dim, max(self.min_dim, y)),
         )
 
-    def force_vec(self, p1, p2):
-        v = p1 - p2
-        mag = np.linalg.norm(v)
-        unit = v / mag
-        return unit, mag
-
-    def to_polar(self, p):
-        x, y = p
-        return np.sqrt(x**2 + y**2), np.arctan2(y, x)
-
-    def normalize(self, v):
-        return v / np.linalg.norm(v)
-
-    def repelling_force(self, p1, p2):
-        dir, mag = self.force_vec(p1, p2)
-        # Inverse magnitude: closer things apply greater force
-        return dir * 1 / (mag)
-
     def play(
         self, unit_id, unit_pos, map_states, current_scores, total_scores
-    ) -> [tuple[float, float]]:
+    ) -> list[tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
         Args:
@@ -105,62 +277,28 @@ class Player:
                                         move each unit of the player
         """
 
-        # (id, (x, y))
-        own_units = list(
-            zip(
-                unit_id[self.player_idx],
-                [sympy_p_float(pos) for pos in unit_pos[self.player_idx]],
-            )
-        )
-        enemy_units_locations = [
-            sympy_p_float(unit_pos[player][i])
-            for player in range(len(unit_pos))
-            for i in range(len(unit_pos[player]))
-            if player != self.player_idx
-        ]
-
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
         ALLY_INFLUENCE = 0.5
         WALL_INFLUENCE = 1
 
-        moves = []
-        for unit_id, unit_pos in own_units:
-            self.debug(f"Unit {unit_id}", unit_pos)
-            enemy_unit_forces = [
-                self.repelling_force(unit_pos, enemy_pos)
-                for enemy_pos in enemy_units_locations
-            ]
-            enemy_force = np.add.reduce(enemy_unit_forces)
+        # Convert unit positions to floats
+        unit_pos = [
+            [point_to_floats(player_unit_pos) for player_unit_pos in player_units]
+            for player_units in unit_pos
+        ]
 
-            ally_forces = [
-                self.repelling_force(unit_pos, ally_pos)
-                for ally_id, ally_pos in own_units
-                if ally_id != unit_id
-            ]
-            ally_force = np.add.reduce(ally_forces)
+        update = StateUpdate()
+        update.unit_id = unit_id
+        update.unit_pos = unit_pos
 
-            home_force = self.repelling_force(unit_pos, self.homebase)
+        # For now, allocate all units as "defenders"
+        for uid in unit_id[self.params.player_idx]:
+            if not uid in self.defenders.units:
+                self.defenders.allocate_unit(uid)
 
-            ux, uy = unit_pos
-            wall_normals = [(ux, self.min_dim), (ux, self.max_dim), (self.min_dim, uy), (self.max_dim, uy)]
-            wall_forces = [self.repelling_force(unit_pos, wall) for wall in wall_normals]
-            wall_force = np.add.reduce(wall_forces)
-
-            self.debug("\tEnemy force:", enemy_force)
-            self.debug("\tHome force:", home_force)
-            self.debug("\tWall force:", wall_force)
-
-            attack_sign = 1 if int(unit_id) % 2 == 0 else -1
-
-            total_force = self.normalize(
-                (enemy_force * ENEMY_INFLUENCE * attack_sign)
-                + (home_force * HOME_INFLUENCE)
-                + (ally_force * ALLY_INFLUENCE)
-                + (wall_force * WALL_INFLUENCE)
-            )
-            self.debug("\tTotal force:", total_force)
-
-            moves.append(self.to_polar(total_force))
-
+        moves: list[tuple[float, float]] = []
+        defender_moves = self.defenders.turn_moves(update)
+        for unit_id in unit_id[self.params.player_idx]:
+            moves.append(defender_moves[unit_id])
         return moves
