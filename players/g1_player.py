@@ -1,5 +1,6 @@
 import os
 import pickle
+from turtle import distance
 import numpy as np
 import sympy
 import logging
@@ -134,8 +135,10 @@ class Player:
         #   When a cell is disputed, it no longer contributes to the voronoi diagram. All the units within that cell must
         #   be removed.
         units = []
-        for id in unit_id[self.player_idx]:
-            units.append((self.player_idx, unit_pos[self.player_idx][id]))
+        for player in range(len(unit_pos)):
+            for id in unit_id[player]:
+                id = int(id) 
+                units.append((player, unit_pos[player][id]))
 
         pts_hash = {}
         for u in units:
@@ -258,6 +261,27 @@ class Player:
 
         # TODO: From each home base, traverse the full graph
 
+
+        #######################################################################
+
+        # For each friendly unit, find the direction toward the farthest nearest enemy
+        for pt in pt_to_poly:
+            current_poly = pt_to_poly[pt]
+            if poly_idx_to_player[current_poly] == self.player_idx:
+                neighboring_enemies = []
+                for army in graph_p[pts[pt]]:
+                    if poly_idx_to_player[pt_to_poly[army]] != self.player_idx:
+                        neighboring_enemies.append(army)
+
+                target = min(neighboring_enemies, key = lambda x,y: (x - pts[pt][0])**2 + (y - pts[pt][1])**2)
+
+                distance_to_target = np.sqrt((target[0] - pts[pt][0])**2 + (target[1] - pts[pt][1])**2)
+                angle_toward_target = np.arctan2(target[1] - pts[pt][1], target[0] - pts[pt][0])
+
+                moves.append((max(1.0, distance_to_target), angle_toward_target))
+                # TODO: figure out the right order in which to append to moves
+
+        #######################################################################
 
 
         self.current_day += 1
