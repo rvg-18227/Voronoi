@@ -1,3 +1,4 @@
+"""Player module for Group 8 - Voronoi."""
 import logging
 import math
 import os
@@ -10,10 +11,12 @@ from shapely.geometry import Point
 from shapely.ops import transform
 import simplekml
 import sympy
-from sympy import Circle  # ,Point
+from sympy import Circle  # , Point
 
 
 class Player:
+    """A class to represent a player in a 4-person battlefield."""
+
     def __init__(
             self,
             rng: np.random.Generator,
@@ -24,15 +27,18 @@ class Player:
             spawn_point: sympy.geometry.Point2D,
             min_dim: int,
             max_dim: int,
-            precomp_dir: str) -> None:
+            precomp_dir: str
+    ) -> None:
         """Initialise the player with given skill.
 
         Args:
-            rng (np.random.Generator): numpy random number generator, use this for same player behavior across run
-            logger (logging.Logger): logger use this like logger.info("message")
+            rng (np.random.Generator): numpy random number generator, use this
+                                       for same player behavior across run
+            logger (logging.Logger): logger use this like logger.info("msg")
             total_days (int): total number of days, the game is played
             spawn_days (int): number of days after which new units spawn
-            player_idx (int): index used to identify the player among the four possible players
+            player_idx (int): index used to identify the player among the four
+                              possible players
             spawn_point (sympy.geometry.Point2D): Homebase of the player
             min_dim (int): Minimum boundary of the square map
             max_dim (int): Maximum boundary of the square map
@@ -70,36 +76,34 @@ class Player:
             unit_pos,
             map_states,
             current_scores,
-            total_scores) -> List[Tuple[float, float]]:
-        """Function which based on current game state returns the distance and angle of each unit active on the board
+            total_scores
+    ) -> List[Tuple[float, float]]:
+        """Function which based on current game state returns the distance and
+           angle of each unit active on the board.
 
         Args:
-            unit_id (list(list(str))): contains the ids of each player's units (unit_id[player_idx][x])
-            unit_pos (list(list(float))): contains the position of each unit currently present on the map
-                                            (unit_pos[player_idx][x])
-            map_states (list(list(int)): contains the state of each cell, using the x, y coordinate system
-                                            (map_states[x][y])
-            current_scores (list(int)): contains the number of cells currently occupied by each player
-                                            (current_scores[player_idx])
-            total_scores (list(int)): contains the cumulative scores up until the current day
-                                            (total_scores[player_idx]
+            unit_id (list(list(str))): contains the ids of each player's units
+                                                (unit_id[player_idx][x])
+            unit_pos (list(list(float))): contains the position of each unit
+                                          currently present on the map
+                                                (unit_pos[player_idx][x])
+            map_states (list(list(int)): contains the state of each cell, using
+                                         the x, y coordinate system
+                                                (map_states[x][y])
+            current_scores (list(int)): contains the number of cells currently
+                                        occupied by each player
+                                                (current_scores[player_idx])
+            total_scores (list(int)): contains the cumulative scores up until
+                                      the current day (total_scores[player_idx]
 
         Returns:
-            List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
-                                        move each unit of the player
+            List[Tuple[float, float]]: Return a list of tuples consisting of
+                                       distance and angle in radians to move
+                                       each unit of the player
         """
 
         moves = []
 
-        # distance = sympy.Min(1, 100 - unit_pos.x)
-        # this is right for us
-        # angle = sympy.atan2(100 - unit_pos.y, 100 - unit_pos.x)
-        # moves.append((distance, angle))
-        # calculate the distance between each unit, see if its within the acceptable range
-        # p1.distance(p2) would return the distance between two points
-        # if distance is within a set range ( due to roudning error), do nothing
-        # if too big, shrink
-        # if too small, expand
 
         # for i in range(len(unit_id[self.player_idx])):
         #     if self.player_idx == 0:
@@ -127,9 +131,9 @@ class Player:
         base_point = points[0]
         min_distance = 0.5
         f = 3
-        t = self.total_days//self.spawn_days
-        r = (f * self.max_dim ** 2 * 4 / math.pi)**(0.5)
-        max_distance = math.pi * r / 2 * t
+        time = self.total_days//self.spawn_days
+        radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
+        max_distance = math.pi * radius / 2 * time
         if len(points) == 1:  # the day when we first spawn dont move
             distance = sympy.Min(1, 0)
             angle = sympy.atan2(0, 1)
@@ -137,27 +141,27 @@ class Player:
         elif len(points) == 2:
             # we have two units now!
 
-            t = self.total_days//self.spawn_days
+            time = self.total_days//self.spawn_days
             # in this case 3 is just we are taking 1/3 of the area
-            r = self.spawn_days * (self.max_dim ** 2) * \
-                f / (6 * t * math.pi ** 2)-0.5
+            radius = self.spawn_days * (self.max_dim ** 2) * \
+                f / (6 * time * math.pi ** 2)-0.5
             # move each troop outward in the form of a circle?
-            distance = sympy.Min(r)
-            angle1 = sympy.atan2(100 - points[0].y, 100 -
-                                 points[0].x)
-            angle2 = sympy.atan2(100 - points[1].y, 100 -
-                                 points[1].x)
+            distance = sympy.Min(radius)
+            angle1 = sympy.atan2(100 - points[0].y,
+                                 100 - points[0].x)
+            angle2 = sympy.atan2(100 - points[1].y,
+                                 100 - points[1].x)
             moves.append((distance, angle1))
             moves.append((distance, angle2))
         else:
             # start spreading to other places
 
             newest_point = points[-1]
-            p_n, p_b = Point(newest_point), Point(base_point)
+            p_new, p_base = Point(newest_point), Point(base_point)
             point1 = points[1]
             p1 = Point(point1)
-            current_radius = p_b.distance(p1)
-            if p_n.distance(p_b) == 0:
+            current_radius = p_base.distance(p1)
+            if p_new.distance(p_base) == 0:
                 # new point spanwed!!! time to spread :)
                 current_radius += 1
                 # some code to spread
@@ -180,7 +184,11 @@ class Player:
 
         return moves
 
-    def spread_points(self, radius: float, points: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    def spread_points(
+                self,
+                radius: float,
+                points: List[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
         """Get the spread points.
 
         Args:
