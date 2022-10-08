@@ -1,15 +1,19 @@
 import os
 import pickle
+from re import L
+from xml.dom.minidom import parseString
 import numpy as np
 import sympy
 import logging
+import pdb
 from typing import Tuple
+from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points
 
+EPSILON = 0.0001
 
 def sympy_p_float(p: sympy.Point2D):
     return np.array([float(p.x), float(p.y)])
-
-    
 
 class Player:
     def __init__(
@@ -57,8 +61,91 @@ class Player:
             self.homebase = (101, 101)
         else:
             self.homebase = (101, -1)
-
-    def attack_point(unit):
+        
+    
+    def attack_point(self, units, target, homebase_mode=True):
+        '''
+        Given a list of unit, attack the target point in a line formation.
+        Return: A list of attack move using units for the target.
+        '''
+        # Intuition:
+        #    We want to form an line first before attacking
+        #    But it is not always the optimal move
+        #    Since it takes time to form a line, during which enemy might change formation
+        #    Which might make our attack useless
+        #    We also dont want to shove all attack unit toward the target
+        #    Since that would most likely to be suicidal
+        #    So we want to leverage between forming a formation and moving towards the target
+        #    SCALE BY DISTANCE:
+        #        Unit further away from the expected line foramtion should move closer to line
+        #        Unit closer to the line should move toward the target
+        #    Problem FOR NOW:
+        #        How to space our our unit in a more even/tight manner
+        #    Its is better to attack from homebase.
+        #       Forming line that deviate from homebase is suspectiable from side attack from another players
+        #       But attack from the centroid of the units is more effective
+        def get_centroid(units):
+            '''
+            Find centroid on a cluster of points
+            '''
+            return units.mean(axis=0)
+        
+        def find_closest_point(line, point):
+            '''
+            Find closest point on line segment given a point
+            '''
+            return nearest_points(line, point)[0]
+        
+        def compute_vector(units, closest_point, target_point):
+            # given units, their corresponding cloest point in the attack line, and a target
+            # compute unit vector for attacking
+            move = []
+            for i in range(len(units)):
+                unit_vec_cloest, mag_closest = self.force_vec(units[i], closest_point[i].coords)
+                unit_vec_target, mag_target = self.force_vec(units[i], target_point)
+                weight_target = 1/(mag_target + EPSILON)
+                weight_closest = 1/(mag_closest + EPSILON)
+                #pdb.set_trace()
+                move_vec = unit_vec_cloest * weight_closest + unit_vec_target * weight_target
+                move_vec = move_vec/np.linalg.norm(move_vec)
+                move_vec *= -1
+                move.append(move_vec)
+            #pdb.set_trace()
+            return move
+            
+        if homebase_mode:# attack from homebase
+            start_point = self.spawn_point
+        else:
+            start_point = get_centroid(units)
+        line = LineString([start_point, target])
+        cloest_points = []
+        for i in units:
+            closest_pt_to_line = find_closest_point(line, Point(i))
+            cloest_points.append(closest_pt_to_line)
+        move = compute_vector(units, cloest_points, target)
+        move = [self.to_polar((x[0][0], x[0][1])) for x in move]
+        return move
+            
+    def find_weak_points(self, num_weak_pts, enemy_units):
+        '''
+        Given an enemy player and their unit, find weak points = num_weak_pts
+        '''
+        # TODO implement heuristic
+        # Right now we are using the two most sparse point in enemy units as "weak point"
+        # Using rectangular sampling region for now
+        # How to measure "weakness" given enemy formation?
+        # TODO
+        # How to make the sampling region "smarter"?
+        # Random sampling? What about spacing?
+        # NEED HEAT MAP
+        # Given heat map and map state, we can find weak point.
+        return [40, 40], [75, 50]
+    
+    def get_enemy_unit(self, enemy_idx, unit_pos):
+        '''
+        Given an enemy player index, return the unit location of enemy player i.
+        '''
+        return unit_pos[enemy_idx]
     
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -72,7 +159,7 @@ class Player:
     def force_vec(self, p1, p2):
         v = p1 - p2
         mag = np.linalg.norm(v)
-        unit = v / mag
+        unit = v / (mag + EPSILON)
         return unit, mag
 
     def to_polar(self, p):
@@ -121,6 +208,16 @@ class Player:
             for i in range(len(unit_pos[player]))
             if player != self.player_idx
         ]
+        
+        if len(unit_id[0]) > 5:
+            #pdb.set_trace()
+            # assume we are always player 1
+            # assume we are attacking player 2 with all we have (singular enemy)
+            enemy2 = self.get_enemy_unit(1, unit_pos)
+            weak_pt_player_2 = self.find_weak_points(2, enemy2)
+            my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
+            attack_move = self.attack_point(my_point, weak_pt_player_2[0])
+            return attack_move
 
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
