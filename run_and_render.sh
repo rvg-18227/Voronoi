@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python main.py --no_gui --dump_state --last 60 -p1 4 -p2 4 -p3 4 -p4 4 --spawn 3
+python main.py --no_gui --dump_state --last 20 -p1 4 --spawn 2
 echo "Rendering frames..."
 python render_game.py
 #echo "Creating video..."

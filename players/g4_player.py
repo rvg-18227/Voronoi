@@ -10,7 +10,7 @@ from typing import Tuple
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
 
-EPSILON = 0.0001
+EPSILON = 0.0000001
 
 def sympy_p_float(p: sympy.Point2D):
     return np.array([float(p.x), float(p.y)])
@@ -101,15 +101,21 @@ class Player:
             # compute unit vector for attacking
             move = []
             for i in range(len(units)):
-                unit_vec_cloest, mag_closest = self.force_vec(units[i], closest_point[i].coords)
+                unit_vec_closest, mag_closest = self.force_vec(units[i], closest_point[i].coords)
                 unit_vec_target, mag_target = self.force_vec(units[i], target_point)
-                weight_target = 1/(mag_target + EPSILON)
-                weight_closest = 1/(mag_closest + EPSILON)
+                # When magnitude to target is large, it mean it is close to target
+                # So move toward the closet point to line
+                total_mag = mag_target + mag_closest
+                weight_target = mag_target/total_mag
+                # Same as 
+                weight_closest = mag_closest/total_mag
                 #pdb.set_trace()
-                move_vec = unit_vec_cloest * weight_closest + unit_vec_target * weight_target
+                move_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
                 move_vec = move_vec/np.linalg.norm(move_vec)
                 move_vec *= -1
                 move.append(move_vec)
+                #pdb.set_trace()
+                self.debug("unit has move vector", move_vec)
             #pdb.set_trace()
             return move
             
@@ -139,7 +145,7 @@ class Player:
         # Random sampling? What about spacing?
         # NEED HEAT MAP
         # Given heat map and map state, we can find weak point.
-        return [40, 40], [75, 50]
+        return [25, 75], [75, 50]
     
     def get_enemy_unit(self, enemy_idx, unit_pos):
         '''
@@ -209,15 +215,15 @@ class Player:
             if player != self.player_idx
         ]
         
-        if len(unit_id[0]) > 5:
-            #pdb.set_trace()
-            # assume we are always player 1
-            # assume we are attacking player 2 with all we have (singular enemy)
-            enemy2 = self.get_enemy_unit(1, unit_pos)
-            weak_pt_player_2 = self.find_weak_points(2, enemy2)
-            my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
-            attack_move = self.attack_point(my_point, weak_pt_player_2[0])
-            return attack_move
+        #if len(unit_id[0]) > 1:
+        #pdb.set_trace()
+        # assume we are always player 1
+        # assume we are attacking player 2 with all we have (singular enemy)
+        enemy2 = self.get_enemy_unit(1, unit_pos)
+        weak_pt_player_2 = self.find_weak_points(2, enemy2)
+        my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
+        attack_move = self.attack_point(my_point, weak_pt_player_2[0])
+        return attack_move
 
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
