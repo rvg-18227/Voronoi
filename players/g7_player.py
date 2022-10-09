@@ -106,24 +106,83 @@ class Player:
                 """
 
         moves = []
+        locx = 0
+        locy = 0
+        if self.player_idx == 0:
+            locx = 0
+            locy = 0
+        elif self.player_idx == 1:
+            locx = 0
+            locy = 75
+        elif self.player_idx == 2:
+            locx = 75
+            locy = 75
+        elif self.player_idx == 3:
+            locx = 75
+            locy = 0
+            
+        attackers = []
+            
+        for i in range(25-1):
+            for j in range(25-1):
+                if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0 and map_states[i + locx][j + locy] not in attackers:
+                    attackers.append(map_states[i + locx][j + locy])
         
         if self.player_idx == 0: # Top left orange
-            angles = [2*pi/8, 4*pi/8, 0, 3*pi/8, pi/8]
+            if len(attackers) != 0:
+                for i in attackers:
+                    if len(attackers) > 1:
+                        angles = [pi/2, pi/2, pi/4, 2*pi, 2*pi]
+                    if i == 2:
+                        angles = [pi/2, pi/2, pi/2, pi/2, pi/2]
+                    elif i == 4:
+                        angles = [2*pi, 2*pi, 2*pi, 2*pi, 2*pi]
+            else:
+                angles = [(2*pi/8), (4*pi/8), 0, (3*pi/8), (pi/8) ]
         elif self.player_idx == 1: # Bottom left pink
-            angles = [7*pi/4, 3*pi/2, 0, 13*pi/8, 15*pi/8] 
+            if len(attackers) != 0:
+                for i in attackers:
+                    if len(attackers) > 1:
+                        angles = [2*pi, 2*pi, (7*pi)/4, (3*pi)/2, (3*pi)/2]
+                    if i == 1:
+                        angles = [2*pi, 2*pi, 2*pi, 2*pi, 2*pi]
+                    elif i == 3:
+                        angles = [(3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2]
+            else:
+                angles = [7*pi/4, 3*pi/2, 0, 13*pi/8, 15*pi/8] 
         elif self.player_idx == 2: # Bottom right blue
-            angles = [5*pi/4, 3*pi/2, pi, 11*pi/8, 9*pi/8]
+            if len(attackers) != 0:
+                for i in attackers:
+                    if len(attackers) > 1:
+                        angles = [(3*pi)/2, (3*pi)/2, (5*pi)/4 , pi, pi]
+                    if i == 4:
+                        angles = [(3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2]
+                    elif i == 2:
+                        angles = [pi, pi, pi, pi, pi]
+            else:
+                angles = [5*pi/4, 3*pi/2, pi, 11*pi/8, 9*pi/8] 
         else: # Top right yellow
-             angles = [3*pi/4, pi, pi/2, 7*pi/8, 5*pi/8]
+            if len(attackers) != 0:
+                for i in attackers:
+                    if len(attackers) > 1:
+                        angles = [pi, pi, (3*pi)/4 , pi/2, pi/2]
+                    if i == 1:
+                        angles = [pi, pi, pi, pi, pi]
+                    elif i == 3:
+                        angles = [pi/2, pi/2, pi/2, pi/2, pi/2]
+            else:
+                angles = [3*pi/4, pi, pi/2, 7*pi/8, 5*pi/8]
         
         total_units = len(unit_id[self.player_idx])
 
         # Find aggressivness of other players maybe use this to adjust angles of units to be defensive
+        
         for other_player in self.other_players:
-            if len(self.last_n_days_positions[other_player]) == self.n:
-                change = self.basic_aggressiveness(self.last_n_days_positions[other_player].pop(0), unit_pos[other_player])
-                self.hostility_registry[other_player] = change
-            self.last_n_days_positions[other_player].append(unit_pos[other_player])
+            if len(unit_pos[other_player]) != 0:
+                if len(self.last_n_days_positions[other_player]) == self.n:
+                    change = self.basic_aggressiveness(self.last_n_days_positions[other_player].pop(0), unit_pos[other_player])
+                    self.hostility_registry[other_player] = change
+                self.last_n_days_positions[other_player].append(unit_pos[other_player])
 
         for i in range(total_units):
             moves.append((1, angles[i % len(angles)]))
