@@ -209,7 +209,7 @@ def border_repulsion(curr_pt, xmax, ymax, scale=SCOUT_BORDER_REPULSION_SCALE):
     return scale * inverse_force(border_v)
 
 def inverse_force(v):
-    mag = np.sqrt((v ** 2)).sum(axis=1, keepdims=True)
+    mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True))
     force = (v / mag / mag).sum(axis=0)
     return force
     
