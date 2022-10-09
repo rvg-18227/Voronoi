@@ -1,5 +1,6 @@
 import os
 import pickle
+import py_compile
 from turtle import distance
 import numpy as np
 import sympy
@@ -119,8 +120,6 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
-
-        moves = []
 
         map_size = 100
         home_offset = 0.5
@@ -261,8 +260,38 @@ class Player:
 
         # TODO: From each home base, traverse the full graph
 
-
         #######################################################################
+
+        if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
+            moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
+        else:
+            moves = self.play_cautious(unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts)
+        
+        self.current_day += 1
+        return moves
+
+    def move_toward_position(current, target):
+            distance_to_target = np.sqrt((target[0] - current[0])**2 + (target[1] - current[1])**2)
+
+            if distance_to_target == 0:
+                angle_toward_target = 0.0
+            else:
+                angle_toward_target = np.arctan2(target[1] - current[1], target[0] - current[0])
+            
+            return max(1.0, distance_to_target), angle_toward_target
+
+    def play_cautions(self, unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts):
+        moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
+        fort_unit_ids = unit_id[self.player_idx][-4:-1]
+        fort_positions = [(0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]
+
+        for i in range(len(fort_positions)):
+            moves[fort_unit_ids[i]] = self.move_toward_position(unit_pos[self.player_idx][fort_unit_ids[i]], fort_positions[i])
+
+        return moves
+
+    def play_aggressive(self, pt_to_poly, poly_idx_to_player, graph_p, pts):
+        moves = []
 
         # For each friendly unit, find the direction toward the farthest nearest enemy
         for pt in pt_to_poly:
@@ -275,14 +304,8 @@ class Player:
 
                 target = min(neighboring_enemies, key = lambda x,y: (x - pts[pt][0])**2 + (y - pts[pt][1])**2)
 
-                distance_to_target = np.sqrt((target[0] - pts[pt][0])**2 + (target[1] - pts[pt][1])**2)
-                angle_toward_target = np.arctan2(target[1] - pts[pt][1], target[0] - pts[pt][0])
+                moves.append(self.move_toward_position(pts[pt], target))
 
-                moves.append((max(1.0, distance_to_target), angle_toward_target))
                 # TODO: figure out the right order in which to append to moves
 
-        #######################################################################
-
-
-        self.current_day += 1
         return moves
