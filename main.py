@@ -32,5 +32,7 @@ if __name__ == '__main__':
     if args.disable_logging:
         if args.log_path == "log":
             args.log_path = "results.log"
+    
+    player_list = tuple(["1", "d", "d", "d"])
 
     voronoi_game = VoronoiGame(player_list, args)
