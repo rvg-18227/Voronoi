@@ -4,7 +4,10 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
-
+import matplotlib.pyplot as plt
+from constants import player_color, tile_color, dispute_color, base
+from matplotlib import colors
+import pandas as pd
 
 def sympy_p_float(p: sympy.Point2D):
     return np.array([float(p.x), float(p.y)])
@@ -39,6 +42,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.turn = 0
 
         # Game fundamentals
         self.total_days = total_days
@@ -84,6 +88,18 @@ class Player:
         # Inverse magnitude: closer things apply greater force
         return dir * 1 / (mag)
 
+
+    def risk_distances(self, enemy_location, own_units):
+       # self.debug("\thomebase:", self.homebase)
+        #self.debug("\tEnemy location:",enemy_location)
+        #self.debug("\tEnemy distance_d_home_base:",np.linalg.norm(np.subtract(self.homebase,enemy_location)))
+        d_base = np.linalg.norm(np.subtract(self.homebase,enemy_location))
+        d_to_closest_unit = 150
+        for unit in own_units:
+            d_our_unit = np.linalg.norm(np.subtract(unit[1], enemy_location))
+            d_to_closest_unit = min(d_our_unit,d_to_closest_unit)
+        return (d_base, d_to_closest_unit)
+
     def play(
         self, unit_id, unit_pos, map_states, current_scores, total_scores
     ) -> [tuple[float, float]]:
@@ -106,6 +122,9 @@ class Player:
         """
 
         # (id, (x, y))
+        DISPLAY_EVERY_N_ROUNDS = 30
+        HEAT_MAP = True
+        
         own_units = list(
             zip(
                 unit_id[self.player_idx],
@@ -118,6 +137,26 @@ class Player:
             for i in range(len(unit_pos[player]))
             if player != self.player_idx
         ]
+
+        #self.logger.info(own_units)
+        #self.logger.info(enemy_units_locations)
+       # self.logger.info(own_units)
+       # self.logger.info(enemy_units_locations)
+        #self.debug("\tEnemy unit locations:", enemy_units_locations)
+        risk_distances = [
+            self.risk_distances(enemy_location, own_units)
+            for enemy_location in enemy_units_locations
+        ]
+
+        self.debug("\tRisk distances:", risk_distances)
+
+        risks = list(
+            zip(enemy_units_locations,
+                [min(100,(750/(d1)+750/(d2))) for d1, d2 in risk_distances]
+            )
+        )
+        
+        self.debug("\tRisks:", risks)
 
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
@@ -152,4 +191,43 @@ class Player:
 
             moves.append(self.to_polar(total_force))
 
+        if HEAT_MAP and self.turn % DISPLAY_EVERY_N_ROUNDS == 0:
+
+            c = []
+            for r in risks:
+                c.append(r[1])
+            plt.rcParams["figure.autolayout"] = True
+            x = np.array(enemy_units_locations)[:,0]
+            y = np.array(enemy_units_locations)[:,1]
+            c = np.array(c)
+       
+            self.logger.info(c)
+            df = pd.DataFrame({"x": x, "y": y, "c": c})
+                
+            fig, ax = plt.subplots()#1,1, figsize=(20,6))
+            cmap = plt.cm.hot
+            norm = colors.Normalize(vmin=0.0, vmax=100.0)
+            mp = ax.scatter(df.x, df.y, color=cmap(norm(df.c.values)))
+            ax.set_xticks(df.x)
+
+            fig.subplots_adjust(right=0.9)
+            sub_ax = plt.axes([.8,.4,.1,.4])
+            
+
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+            plt.colorbar(sm,cax=sub_ax)
+            ax.invert_yaxis()
+
+            for p in range(1):
+                for num, pos in own_units:
+                    ax.scatter(
+                        pos[0],
+                        pos[1],
+                        color="blue"
+                    )
+
+            np.meshgrid(list(range(100)), list(range(100)))
+            plt.title(f"Day {self.turn}")
+            plt.show()
+        self.turn += 1
         return moves
