@@ -26,7 +26,7 @@ class Defense:
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
         self.day = 0
-        self.scanner_radius = 50
+        self.scanner_radius = 30
 
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
@@ -35,15 +35,13 @@ class Defense:
         self.defenderIdxs = defenderIdxs
         self.unit_locations = [unit for i, unit in enumerate(units) if i in defenderIdxs]
         self.enemy_units = enemy_units
-        self.day += 1
+        self.day += 30
     def get_moves(self):
-        hover_point = (np.array([50, 50]) - self.spawn_point)*(3/4) + self.spawn_point #TODO: where to define this? shouldnt be set ,dynamic, hover near center of land, make sure not overlapping
 
-
-        moves = [(1, hover_point[0] - pos.x, hover_point[1] - pos.y) for pos in self.unit_locations]
+        moves = [(0, 0, 0) for i, pos in enumerate(self.unit_locations)]
         moved = [False for _ in range(self.number_units)]
         if self.number_units == 0:
-            return moves
+            return []
 
 
         clusters = self.get_clusters()
@@ -57,26 +55,10 @@ class Defense:
                 clusters_to_defend += 1
             else:
                 break
-        # clusters_to_defend += 1 if units_left_to_allocate > 0 else 0
 
         clusters = clusters[:clusters_to_defend]
         clusters = sorted(clusters, key=lambda x: x["angle"])
 
-        # For each cluster, allocate units to defend it, see below for alternative option
-        # for i, cluster in enumerate(clusters):
-        #     centroid = cluster["centroid"]
-
-        #     distances = sorted([(idx, np.linalg.norm(np.array(unit) - centroid)) for idx, unit in enumerate(self.unit_locations)], key=lambda x: x[1])
-        #     points_matched = 0
-        #     for j, (idx, distance) in enumerate(distances):
-        #         if points_matched == len(cluster["points"]):
-        #             break    
-        #         elif moved[idx] == False:
-        #             moved[idx] = True
-        #             moves[idx] = cluster["points"][points_matched][0] - self.unit_locations[idx].x, cluster["points"][points_matched][1] - self.unit_locations[idx].y
-        #             points_matched += 1
-
-        # This is better?
         # for each unit, allocate it to the closest cluster
         cluster_points_left = [len(cluster["points"]) for cluster in clusters]
         for i, unit in enumerate(self.unit_locations):
@@ -92,8 +74,11 @@ class Defense:
                 if cluster_points_left[idx] > 0 or offset_weight != 3:
                     cluster_points_left[idx] -= 1
                     moved[i] = True
-
-                    target_point = clusters[idx]["points"][cluster_points_left[idx] if cluster_points_left[idx] >= 0 else 0]
+                    if cluster_points_left[idx] < 0:
+                        cluster_point_distances = [np.linalg.norm(np.array(self.spawn_point) - np.array(point)) for idx, point in enumerate(clusters[idx]["points"])]
+                        min_dist = max(cluster_point_distances).item()
+                        idx_of_closest_cluster_point = cluster_point_distances.index(min_dist)
+                    target_point = clusters[idx]["points"][cluster_points_left[idx] if cluster_points_left[idx] >= 0 else idx_of_closest_cluster_point]
                     target_point = np.floor(target_point)
                     target_point += np.array((0.5, 0.5))
 
@@ -111,9 +96,33 @@ class Defense:
 
                     moves[i] = distance_to_goal, end_direction[0], end_direction[1]
                     break
+            # move adding the offset here
+            # for loop
+            # if cluster not all true
+            # add offset
 
-
+        c_x, c_y = (np.array([50, 50]) - self.spawn_point)*(3/4)
+        c_dist = np.array(np.linalg.norm(np.array([c_x, c_y])))
+        center_angle = np.arctan2(c_y, c_x)
+        hover_point_angles = [center_angle]
+        for i in range(1, 6):
+            angle = (np.pi/24)*i
+            hover_point_angles.append(center_angle + angle)
+            hover_point_angles.append(center_angle - angle)
+        hover_points = [self.spawn_point/c_dist + np.array((np.cos(angle), np.sin(angle))) for angle in hover_point_angles]
+        n_hover = len(hover_points)
+        i = 0
+        direction_to_spawn = (self.spawn_point - np.array([50, 50]))/np.linalg.norm(self.spawn_point - np.array([50, 50]))
+        for j, unit in enumerate(self.unit_locations):
+            if moved[j] == False:
+                moves[j] = 1, hover_points[i%n_hover][0]*(c_dist - (i//n_hover)*2*direction_to_spawn[0]) - unit.x, hover_points[i%n_hover][1]*(c_dist - (i//n_hover)*2*direction_to_spawn[1]) - unit.y
+                i += 1
+        
         # TODO:
+        # change hover points
+        # smaller radius
+        # if path to homme width is < some X, retreat to hover point
+        
         # go to location - some offset (maybe calc trajectory)
         # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
         # once all units are in place - (current loc to calc place ~=, for all units in this one match)
@@ -125,6 +134,7 @@ class Defense:
         return moves
 
     def number_in_circle(self, units, center, radius):
+        units = set([tuple(np.floor(unit)) for unit in units])
         return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
     
     def get_clusters(self):
@@ -152,20 +162,6 @@ class Defense:
 
         clusters = sorted(clusters, key=lambda x: x["distance"])
         return clusters
-
-
-#defensive strategy
-# phase 1 - send out in spiral to edge until disbuted in front and not enemy 2 in front
-# if enemy 1 in front - retreat (wait for more units)
-# if any attack detection
-# group at least n units that way
-# match the attack shape? - find connected units, normalize, invert, assign units to those position (least number movements to match)
-# TODO: what to do with extra units
-# probably 1 of 3 things: encircle, add depth, add width
-
-#what if not enough defenders?
-# prioritize those closest to home?
-
 
 class Attacker:
 
