@@ -1,5 +1,6 @@
 import os
 import pickle
+from pty import spawn
 import py_compile
 from turtle import distance
 import numpy as np
@@ -15,6 +16,9 @@ import shapely.ops
 import scipy
 from matplotlib import pyplot as plt
 
+import warnings
+
+warnings.filterwarnings("ignore", category=shapely.errors.ShapelyDeprecationWarning)
 
 def delaunay2edges(tri_simplices):
     """Convert the delaunay tris to unique edges
@@ -46,15 +50,6 @@ def poly_are_neighbors(poly1: shapely.geometry.polygon.Polygon,
         return True
     else:
         return False
-
-class Unit:
-    def __init__(self, player: int, pos: Tuple):
-        """The unit of each player. New unit spawns every N days. Can be moved in any direction by 1 km"""
-        assert 0 <= player < 4
-
-        self.player = int(player)
-        self.pos = pos
-        self.status = 1  # 1 = alive, 0 = dead
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -135,24 +130,25 @@ class Player:
         #   be removed.
         units = []
         for player in range(len(unit_pos)):
-            for id in unit_id[player]:
-                id = int(id) 
-                units.append((player, unit_pos[player][id]))
+            for pos in unit_pos[player]:
+                units.append((player, (pos.x, pos.y)))
 
         pts_hash = {}
-        for u in units:
+        for pl,pos in units:
             # Quantize unit pos to cell. We assume cell origin at center.
-            pos_int = (int(u.pos[0]) + home_offset, int(u.pos[1]) + home_offset)
+            pos_int = (int(pos[0]) + home_offset, int(pos[1]) + home_offset)
+
             if pos_int in pts_hash:
                 player_existing = pts_hash[pos_int]
-                if player_existing == u.player:
-                    pts_hash[pos_int] = u.player
+                if player_existing == pl:
+                    pts_hash[pos_int] = pl
                 else:
                     pass  # Disputed cell
             else:
-                pts_hash[pos_int] = u.player
+                pts_hash[pos_int] = pl
         pts = list(pts_hash.keys())
         player_ids = list(pts_hash.values())
+        pts_coords_hash = {coords: index for index, coords in enumerate(pts)}
 
         # Get polygon of Voronoi regions around each pt
         _points = shapely.geometry.MultiPoint(pts)
@@ -170,13 +166,13 @@ class Player:
             if region_bounded.area > 0:
                 vor_regions.append(region_bounded)
 
-        # Add the home base to list of points
-        pts_with_home = pts.copy()
-        player_ids_with_home = player_ids.copy()
-        for player in range(4):
-            # Add home bases as pts
-            pts_with_home.append(spawn_loc[player])
-            player_ids_with_home.append(player)
+        # # Add the home base to list of points
+        # pts_with_home = pts.copy()
+        # player_ids_with_home = player_ids.copy()
+        # for player in range(4):
+        #     # Add home bases as pts
+        #     pts_with_home.append(spawn_loc[player])
+        #     player_ids_with_home.append(player)
 
         # Find mapping from pts idx to polys (via nearest unit) and poly to player
         pt_to_poly = {}  # includes home base
@@ -202,10 +198,10 @@ class Player:
         # Get the graph of connected pts via triangulation (include home base when triangulating)
         pts_with_home = pts.copy()
         player_ids_with_home = player_ids.copy()
-        for key, val in spawn_loc.items():
-            # Add home bases as pts
-            pts_with_home.append(val)
-            player_ids_with_home.append(key)
+        # for key, val in spawn_loc.items():
+        #     # Add home bases as pts
+        #     pts_with_home.append(val)
+        #     player_ids_with_home.append(key)
 
         tri = scipy.spatial.Delaunay(np.array(pts_with_home))
         edges = delaunay2edges(tri.simplices)  # Shape: [N, 2]
@@ -214,8 +210,9 @@ class Player:
         # TODO: Handle case when enemy unit within home cell. It will cut off all player's units.
         #  Soln: When making graph, remove edge.
         #  Problem: How will we do a path search to home base?
+        
         edge_player_id = []  # Player each edge belongs to
-        for p1, p2 in edges:
+        for idx, (p1, p2) in enumerate(edges):
             player1 = player_ids_with_home[p1]
             player2 = player_ids_with_home[p2]
 
@@ -232,8 +229,13 @@ class Player:
                 play2_ = poly_idx_to_player[poly2_idx]
 
                 are_neighbors = poly_are_neighbors(poly1, poly2)
-                if are_neighbors and play1_ == player1 and play2_ == player1:
+                if not are_neighbors: # and play1_ == player1 and play2_ == player1:
                     # Can traverse edge only if voronoi polys are neighbors
+                    edge_player_id.append(-2)
+                    continue
+                    # valid_ = True
+            
+                if play1_ == player1 and play2_ == player1:
                     valid_ = True
 
             if valid_:
@@ -242,35 +244,48 @@ class Player:
                 edge_player_id.append(-1)
 
         edge_player_id = np.array(edge_player_id)
-        mask_edges = (edge_player_id > -1)
+        edges = edges[edge_player_id > -2] # remove edges that are not neighbors
+        edge_player_id = edge_player_id[edge_player_id > -2]
 
-        # Remove invalid edges
-        edges = edges[mask_edges]
-        edge_player_id = edge_player_id[mask_edges]
+        adj_dict = {}
+        for val in edges:
+            p1 = pts[val[0]]
+            v1 = val[1]
+            p2 = pts[v1]
+
+            if p1 not in adj_dict: adj_dict[p1] = []
+            if p2 not in adj_dict: adj_dict[p2] = []
+
+            adj_dict[p1].append(p2)
+            adj_dict[p2].append(p1)
+
+        #######################################################################
+
 
         # TODO: BUILD A LIST OF NEIGHBORING POLYGONS FOR EVERY POLYGON
 
         # Build a graph data structure for each player
-        graphs = {0: defaultdict(list), 1: defaultdict(list), 2: defaultdict(list), 3: defaultdict(list)}
-        for player, (p1, p2) in zip(edge_player_id, edges):
-            if player > -1:
-                graph_p = graphs[player]
-                graph_p[p1].append(p2)
-                graph_p[p2].append(p1)
+        # graphs = {0: defaultdict(list), 1: defaultdict(list), 2: defaultdict(list), 3: defaultdict(list)}
+        # for player, (p1, p2) in zip(edge_player_id, edges):
+        #     if player > -1:
+        #         graph_p = graphs[player]
+        #         graph_p[p1].append(p2)
+        #         graph_p[p2].append(p1)
 
         # TODO: From each home base, traverse the full graph
 
         #######################################################################
 
-        if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
-            moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
-        else:
-            moves = self.play_cautious(unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts)
+        # if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
+        #     moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
+        # else:
+        #     moves = self.play_cautious(unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts)
         
+        moves = self.play_aggressive(home_offset, vor_regions, pts_coords_hash, player_ids_with_home, units, pt_to_poly, poly_idx_to_player, adj_dict)
         self.current_day += 1
         return moves
 
-    def move_toward_position(current, target):
+    def move_toward_position(self, current, target):
             distance_to_target = np.sqrt((target[0] - current[0])**2 + (target[1] - current[1])**2)
 
             if distance_to_target == 0:
@@ -281,7 +296,7 @@ class Player:
             return max(1.0, distance_to_target), angle_toward_target
 
     def play_cautions(self, unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts):
-        moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
+        moves = self.play_aggressive(player_ids_with_home, pt_to_poly, poly_idx_to_player, adj_dict)
         fort_unit_ids = unit_id[self.player_idx][-4:-1]
         fort_positions = [(0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]
 
@@ -290,22 +305,36 @@ class Player:
 
         return moves
 
-    def play_aggressive(self, pt_to_poly, poly_idx_to_player, graph_p, pts):
+    def play_aggressive(self, home_offset, vor_regions, pts_coords_hash, player_ids_with_home, units, pt_to_poly, poly_idx_to_player, adj_dict):
         moves = []
 
-        # For each friendly unit, find the direction toward the farthest nearest enemy
-        for pt in pt_to_poly:
-            current_poly = pt_to_poly[pt]
-            if poly_idx_to_player[current_poly] == self.player_idx:
-                neighboring_enemies = []
-                for army in graph_p[pts[pt]]:
-                    if poly_idx_to_player[pt_to_poly[army]] != self.player_idx:
-                        neighboring_enemies.append(army)
+        # For each friendly unit, find the direction toward the farthest nearest enemy-bordering vertex
+        friendly_units = [u for p,u in units if p == self.player_idx]
+        friendly_units = [(int(x) + home_offset, int(y) + home_offset) for x,y in friendly_units]
 
-                target = min(neighboring_enemies, key = lambda x,y: (x - pts[pt][0])**2 + (y - pts[pt][1])**2)
+        for unit in friendly_units:
+            current_polygon = vor_regions[pt_to_poly[unit]]
 
-                moves.append(self.move_toward_position(pts[pt], target))
+            neighbors = adj_dict[unit]
+            neighboring_enemies = [n for n in neighbors if n not in friendly_units]
+            neighboring_enemy_polygons = [pt_to_poly[ne] for ne in neighboring_enemies]
 
-                # TODO: figure out the right order in which to append to moves
+            candidates = set() 
+            for poly_idx in neighboring_enemy_polygons:
+                polygon = vor_regions[poly_idx]
+                intersection = current_polygon.intersection(polygon)
+                if isinstance(intersection, shapely.geometry.LineString):
+                    points = intersection.coords
+                    for point in list(points):
+                        candidates.add(point)
+
+            # if current point is surrounded by friendly polygons, move toward center
+            if len(candidates) == 0:
+                target = (50.0, 50.0)
+                # TODO: FIX THIS
+            else:
+                target = max(list(candidates), key=lambda pt: (pt[0] - unit[0])**2 + (pt[1] - unit[1])**2)
+
+            moves.append(self.move_toward_position(unit, target))
 
         return moves
