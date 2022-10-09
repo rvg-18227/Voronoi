@@ -276,12 +276,12 @@ class Player:
 
         #######################################################################
 
-        # if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
-        #     moves = self.play_aggressive(pt_to_poly, poly_idx_to_player, graph_p, pts)
-        # else:
-        #     moves = self.play_cautious(unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts)
+        if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
+            moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
+        else:
+            moves = self.play_cautious(unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict)
         
-        moves = self.play_aggressive(home_offset, vor_regions, pts_coords_hash, player_ids_with_home, units, pt_to_poly, poly_idx_to_player, adj_dict)
+        # moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
         self.current_day += 1
         return moves
 
@@ -295,17 +295,21 @@ class Player:
             
             return max(1.0, distance_to_target), angle_toward_target
 
-    def play_cautions(self, unit_id, unit_pos, pt_to_poly, poly_idx_to_player, graph_p, pts):
-        moves = self.play_aggressive(player_ids_with_home, pt_to_poly, poly_idx_to_player, adj_dict)
+    def play_cautious(self, unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict):
+        moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
         fort_unit_ids = unit_id[self.player_idx][-4:-1]
         fort_positions = [(0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]
 
         for i in range(len(fort_positions)):
-            moves[fort_unit_ids[i]] = self.move_toward_position(unit_pos[self.player_idx][fort_unit_ids[i]], fort_positions[i])
+            current_point = unit_pos[self.player_idx][int(fort_unit_ids[i])]
+            current = (current_point.x, current_point.y)
+            target = fort_positions[i]
+            move = self.move_toward_position(current, target)
+            moves[int(fort_unit_ids[i])] = move
 
         return moves
 
-    def play_aggressive(self, home_offset, vor_regions, pts_coords_hash, player_ids_with_home, units, pt_to_poly, poly_idx_to_player, adj_dict):
+    def play_aggressive(self, home_offset, vor_regions, units, pt_to_poly, adj_dict):
         moves = []
 
         # For each friendly unit, find the direction toward the farthest nearest enemy-bordering vertex
