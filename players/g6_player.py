@@ -26,7 +26,7 @@ class Defense:
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
         self.day = 0
-        self.scanner_radius = 30
+        self.scanner_radius = 35
 
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
@@ -35,7 +35,8 @@ class Defense:
         self.defenderIdxs = defenderIdxs
         self.unit_locations = [unit for i, unit in enumerate(units) if i in defenderIdxs]
         self.enemy_units = enemy_units
-        self.day += 30
+        self.day += 1
+
     def get_moves(self):
 
         moves = [(0, 0, 0) for i, pos in enumerate(self.unit_locations)]
@@ -89,7 +90,7 @@ class Defense:
 
                     #TODO: if formation is ready, offset = 0
                     if self.number_in_circle(self.unit_locations, unit, 1) > self.number_in_circle(self.enemy_units, target_point, 1):
-                        offset_weight = 0
+                        offset_weight -= 3
 
                     end_direction = direction + offset*offset_weight
                     distance_to_goal = np.linalg.norm(end_direction)
@@ -167,13 +168,13 @@ class Attacker:
 
     def __init__(self, id, position, target="RIGHT"):
         self.id = id
-        self.x = float(position[0])
-        self.y = float(position[1])
+        self.x = float(position.x)
+        self.y = float(position.y)
         self.unit_type = UnitType.ATTACK
         self.target = target # always either left or right
 
     def get_move(self, game, positions):
-        print("ATTACKING MOVE")
+        # print("ATTACKING MOVE")
         if self.target == "LEFT":
             current_x = int(np.floor(self.x))
             current_y = int(np.floor(self.y))
@@ -263,9 +264,16 @@ class Player:
         self.spawn_point = spawn_point
 
         self.current_turn = 0
-        self.PHASE_ONE_OUTPUT = [UnitType.DEFENSE]#[UnitType.SPACER]
-        self.PHASE_TWO_OUTPUT = [UnitType.DEFENSE]#[UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
-        self.PHASE_THREE_OUTPUT = [UnitType.DEFENSE]#[UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+        self.PHASE_ONE_OUTPUT = [UnitType.SPACER]
+        self.PHASE_TWO_OUTPUT = [UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+        self.PHASE_THREE_OUTPUT = [UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+
+        testing = True
+        if testing:
+            testingType = UnitType.ATTACK if self.player_idx == 0 else UnitType.DEFENSE
+            self.PHASE_ONE_OUTPUT = [testingType]
+            self.PHASE_TWO_OUTPUT = [testingType]
+            self.PHASE_THREE_OUTPUT = [testingType]
         #change these based on how much land we have? aka if more ppl are targeting us vs less?
         # if less land it means our defense is losing so we need more
         # if more land it means we want to attack more?
