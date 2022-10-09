@@ -174,9 +174,6 @@ class Player:
 
             # print('player, :', player, 'mid_angle', mid_angle*180/pi, '(my_unit_id, ene1_id, ene2_id): (', unit_id[self.player_idx][my_unit_idx], unit_id[player][ene_unit_1_idx], unit_id[player][ene_unit_2_idx], ')')
         
-       
-
-        print('strategies: ', strategies)
         return strategies
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
@@ -199,7 +196,7 @@ class Player:
                 """
         offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
         offense_idx = [i['move'] for i in offense]
-        print('alpha ', offense)
+        
         moves = []
         locx = 0
         locy = 0
