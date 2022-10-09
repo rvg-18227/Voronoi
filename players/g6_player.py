@@ -1,7 +1,7 @@
 import os
 import pickle
 from time import clock_settime
-from turtle import width
+#from turtle import width
 import numpy as np
 import sympy
 import logging
@@ -167,6 +167,65 @@ class Defense:
 # prioritize those closest to home?
 
 
+class Attacker:
+
+    def __init__(self, id, position, target="RIGHT"):
+        self.id = id
+        self.x = float(position[0])
+        self.y = float(position[1])
+        self.unit_type = UnitType.ATTACK
+        self.target = target # always either left or right
+
+    def get_move(self, game, positions):
+        print("ATTACKING MOVE")
+        if self.target == "LEFT":
+            current_x = int(np.floor(self.x))
+            current_y = int(np.floor(self.y))
+            if game[current_x][current_y] == -1 or 0:
+                print("DISPUTED CELL")
+                # The current state is disputed OR there is an enemy within surrounding 9 tiles
+                unit_count = 0
+                for pos in positions:
+                    if pos == Point2D(current_x, current_y):
+                        unit_count += 1
+                        print("Unit Count: ", unit_count)
+                if unit_count > 1:
+                    pass
+                    # send one forward
+                    # check if its still disputed (if not, then we killed the enemy)
+                    # keep advancing until disputed again 
+                else:
+                    return 1, 0, 0 # Does not move if alone in a disputed cell
+            else:
+                return 1, 0, 1
+        
+        elif self.target == "RIGHT":
+            current_x = int(np.floor(self.x))
+            current_y = int(np.floor(self.y))
+            if game[current_x][current_y] == -1:
+                print("DISPUTED CELL")
+                # The current state is disputed
+                unit_count = 0
+                for pos in positions:
+                    if pos == Point2D(current_x, current_y):
+                        unit_count += 1
+                        print("Unit Count: ", unit_count)
+                if unit_count > 1:
+                    pass
+                    # send one forward
+                    # check if its still disputed (if not, then we killed the enemy)
+                    # keep advancing until disputed again 
+                else:
+                    return 0, 1, 0 # Does not move if alone in a disputed cell
+            else:
+                return 0, 1, 1
+        
+        return self.x, self.y, 1
+
+
+
+
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -265,12 +324,31 @@ class Player:
         # in end phase allocate X attackers and Y defenders in some proportion 
 
         self.map_states = map_states
+        self.unit_pos = unit_pos
+        self.left_right_count = 0
+
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
         for idx in spacer:
             moves[idx] = self.transform_move(1, 1, 1) #spacer.move_function(unit, idx, etc)
 
         for idx in attacker:
-            moves[idx] = self.transform_move(0, 1, 1) #attacker.move_function(unit, idx, etc)
+            target_param = ""
+            if self.left_right_count < 3:
+                target_param = "RIGHT"
+                self.left_right_count += 1
+            elif self.left_right_count < 6:
+                target_param = "LEFT"
+                self.left_right_count += 1
+            
+            if self.left_right_count > 5:
+                self.left_right_count = 0
+
+
+            attacker = Attacker(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx], target_param)
+            x, y, dist = attacker.get_move(self.map_states, self.unit_pos)
+
+            # moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
+            moves[idx] = self.transform_move(x, y, dist)
 
         self.defense.update(self.map_states, defenders, unit_pos[self.player_idx], enemy_units)
         defensiveMoves = self.defense.get_moves()
