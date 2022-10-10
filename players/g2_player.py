@@ -1,10 +1,28 @@
 import os
 import pickle
+from matplotlib.pyplot import close
 import numpy as np
 import sympy
 import logging
 from typing import Tuple, List
 import math
+
+from scipy.spatial.distance import cdist
+
+#HYPER PARAMETERS
+DANGER_ZONE_RADIUS = 20
+
+#Dictionary into 2d Array
+def points_to_numpy(units):
+
+    #columns: x, y, player_idx belongs, 
+    result = np.array([0,0,0])
+
+    for i in range(4):
+        for u in units[i]:
+            result = np.vstack([result, [u.x, u.y, i]])
+
+    return result[1:,:]
 
 
 class Player:
@@ -48,6 +66,7 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
+
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -66,7 +85,65 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
+        
 
+        if self.player_idx == 1:
+
+            #for the first 50 days
+            #first unit goes straight diagonal (45 deg)
+            #second unit goes at a 22.5 degree
+            #third unit goes at a 67.5 degree
+
+            #same dimension as unit_pos
+            danger_levels = self.danger_levels(unit_pos)
+
+            moves = []
+            scout_targets = [(50,20), (20,50)]
+
+            danger_levels_ally = danger_levels[self.player_idx]
+
+            frontier = [[0],[1],[2]]
+
+            for i in range(len(unit_id[self.player_idx])):
+
+                curr_x = unit_pos[self.player_idx][i].x
+                curr_y = unit_pos[self.player_idx][i].y
+
+                # first unit holds 50,50
+                if i == 0:
+                    distance = 1
+
+                    angle = (45)
+
+                    moves.append((distance, angle*(math.pi / 180)))
+
+                #scouts the left and right wing
+                elif i == 1:
+                    distance = min(1, math.dist([curr_y,curr_x],scout_targets[0]))
+                    distance = 1
+                    angle = 22.5
+
+                    moves.append((distance, angle*(math.pi / 180)))
+                
+                elif i == 2:
+                
+                    #distance = min(1, math.dist([curr_y,curr_x],scout_targets[1]))
+                    distance = 1
+                    angle = 67.5
+
+                    moves.append((distance, angle*(math.pi / 180)))
+
+                else:
+                    moves.append((1, 45*(math.pi / 180)))
+
+            #print(moves)
+            return [self.transform_move(move) for move in moves]
+
+        else:
+            return self.sprinkler_player(unit_id)
+
+    #First Algorithm
+    def sprinkler_player(self, unit_id):
         moves = []
         angle_jump = 10
         angle_start = 45
@@ -78,4 +155,35 @@ class Player:
             moves.append((distance, angle* (math.pi / 180)))
 
         return [self.transform_move(move) for move in moves]
-        #return moves
+
+    #start claculating only after day 40+
+    #unlikely to have nearby enemies day 40
+    def danger_levels(self, unit_pos):
+
+        np_unit_pos = points_to_numpy(unit_pos)
+
+        result = [[] for _ in range(4)]
+
+        for team_idx in range(4):
+            units = unit_pos[team_idx]
+
+            for u in units:
+                distances = cdist([np.array((u.x, u.y))], np_unit_pos[:, :2]).flatten()
+                close_points = np_unit_pos[distances <= DANGER_ZONE_RADIUS,:]
+                team_points = close_points[close_points[:,2] == team_idx]
+
+                #should always be >=1 because it counts itself
+                close_team_count = team_points.shape[0]
+
+                #total count - team count = enemy count
+                close_enemy_count = close_points.shape[0]-close_team_count
+
+                #print("TeamCount: ", close_team_count)
+                #print("EnemyCount: ", close_enemy_count)
+
+                danger_score = close_enemy_count/close_team_count
+                result[team_idx].append(danger_score)
+                
+        #print(result)
+        return result
+
