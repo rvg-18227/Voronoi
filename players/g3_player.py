@@ -203,8 +203,8 @@ class Player:
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
         """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
         dist, angle = order
-        x = self.homebase[0] + dist * math.sin(angle)
-        y = self.homebase[1] + dist * math.cos(angle)
+        x = self.homebase[0] + dist * math.cos(angle)
+        y = self.homebase[1] + dist * math.sin(angle)
         return (x, y)
 
     def explore(self, scout_unit, ally_units):
@@ -430,5 +430,6 @@ def get_base_angles(player_idx: int) -> Tuple[float, float]:
                     pi/2 * (1 - player_index)
               p2
     """
-    base_angle = (math.pi/2) * (1 + player_idx)
-    return base_angle, base_angle - math.pi/2
+    base = (1 - player_idx) * math.pi / 2
+
+    return base, base - math.pi / 2
