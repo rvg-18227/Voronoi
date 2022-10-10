@@ -130,21 +130,26 @@ class Player:
             ]
             ally_force = np.add.reduce(ally_force)
 
-            boundary_force = np.array([0, 0])
-            top_repelling_force = np.array([0, 1])
-            bottom_repelling_force = np.array([0, -1])
-            left_repelling_force = np.array([1, 0])
-            right_repelling_force = np.array([-1, 0])
+            boundary_force = np.array([0.0, 0.0])
+            top_repelling_force = np.array([0.0, 1.0])
+            bottom_repelling_force = np.array([0.0, -1.0])
+            left_repelling_force = np.array([1.0, 0.0])
+            right_repelling_force = np.array([-1.0, 0.0])
             if unit_pos[0] < BORDER_THRESHOLD:
-                boundary_force += left_repelling_force * (1 / unit_pos[0])
+                # print(left_repelling_force)
+                # print(unit_pos)
+                boundary_force += left_repelling_force * (1.0 / unit_pos[0])
             if unit_pos[0] > 100 - BORDER_THRESHOLD:
-                boundary_force += right_repelling_force * (1 / (100 - unit_pos[0]))
+                boundary_force += right_repelling_force * (1.0 / (100.0 - unit_pos[0]))
             if unit_pos[1] < BORDER_THRESHOLD:
-                boundary_force += top_repelling_force * (1 / unit_pos[1])
+                boundary_force += top_repelling_force * (1.0 / unit_pos[1])
             if unit_pos[1] > 100 - BORDER_THRESHOLD:
-                boundary_force += bottom_repelling_force * (1 / (100 - unit_pos[1]))
+                boundary_force += bottom_repelling_force * (1.0 / (100.0 - unit_pos[1]))
             
-            home_force = self.repelling_force(unit_pos, self.homebase)
+            if unit_pos[0] == self.homebase[0] and unit_pos[1] == self.homebase[1]:
+                home_force = np.array([0.0, 0.0])
+            else:
+                home_force = self.repelling_force(unit_pos, self.homebase)
             
 
             total_force = self.normalize(
