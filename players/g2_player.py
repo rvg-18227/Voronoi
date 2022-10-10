@@ -284,16 +284,16 @@ class Player:
         #unit_regions is which region is a unit in
         return result, danger_regions, region_count, unit_regions
 
-    def wall_forces(self, current_point) -> Dict[Tuple[float, float], float]:
+    def wall_forces(self, current_point) -> List[Tuple[float, float], float]:
         current_x = current_point.x
         current_y = current_point.y
         dist_to_top = Point(current_x, 0).distance(current_point)
         dist_to_bottom = Point(current_x, 100).distance(current_point)
         dist_to_right = Point(0, current_y).distance(current_point)
         dist_to_left = Point(100, current_y).distance(current_point)
-        return {(50, 0): dist_to_top, (50, 0): dist_to_bottom, (100, 50): dist_to_right, (0, 50): dist_to_left}
+        return [((current_x, 0), dist_to_top), ((current_x, 100), dist_to_bottom), ((100, current_y), dist_to_right), ((0, current_y), dist_to_left)]
 
-    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> Dict[Tuple[float, float], float]:
+    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> List[Tuple[float, float], float]:
         if(len(unit_id[self.player_idx]) < 2):
             return None
 
@@ -306,18 +306,18 @@ class Player:
             dist = friend_unit_pos.distance(current_pos)
             if dist < closest_unit_dist:
                 closest_unit_dist = dist
-        return {friend_unit_pos: closest_unit_dist}        
+        return [(friend_unit_pos, closest_unit_dist)]
 
     def get_forces(self, unit_id, unit_pos, danger_regions):
-        forces = {id: {} for id in unit_id[self.player_idx]}
+        forces = {id: [] for id in unit_id[self.player_idx]}
         for i in range(len(unit_id[self.player_idx])):
             unit = unit_id[self.player_idx][i]
             current_pos = unit_pos[self.player_idx][i]
             home_coords = self.get_home_coords()
             
-            forces[unit].update({Tuple(home_coords): home_coords.distance(current_pos)})
-            forces[unit].update(self.wall_forces(current_pos))
-            forces[unit].update(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
-            forces[unit].update(danger_regions)
+            forces[unit].append((Tuple(home_coords), home_coords.distance(current_pos)))
+            forces[unit].append(self.wall_forces(current_pos))
+            forces[unit].append(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
+            forces[unit].append(danger_regions)
 
         return forces
