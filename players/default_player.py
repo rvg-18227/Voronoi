@@ -3,11 +3,12 @@ import pickle
 import numpy as np
 import logging
 from typing import Tuple
+import shapely.geometry
 
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
-                 player_idx: int, spawn_point: Tuple, min_dim: int, max_dim: int, precomp_dir: str) \
+                 player_idx: int, spawn_point: shapely.geometry.Point, min_dim: int, max_dim: int, precomp_dir: str) \
             -> None:
         """Initialise the player with given skill.
 
@@ -47,8 +48,8 @@ class Player:
 
                 Args:
                     unit_id (list(list(str))): contains the ids of each player's units (unit_id[player_idx][x])
-                    unit_pos (list(list(float))): contains the position of each unit currently present on the map
-                                                    (unit_pos[player_idx][x])
+                    unit_pos (list(list(shapely.geometry.Point))): contains the position of each unit currently present
+                                                    on the map (unit_pos[player_idx][x])
                     map_states (list(list(int)): contains the state of each cell, using the x, y coordinate system
                                                     (map_states[x][y])
                     current_scores (list(int)): contains the number of cells currently occupied by each player
