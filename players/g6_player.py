@@ -1,6 +1,5 @@
 import os
 import pickle
-from time import clock_settime
 #from turtle import width
 import numpy as np
 import sympy
