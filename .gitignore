@@ -1,7 +1,0 @@
-log/
-__pycache__/
-players/__pycache__/
-render
-game.pkl
-game.mp4
-.DS_Store
