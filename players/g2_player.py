@@ -132,7 +132,7 @@ class Player:
     
     def fixed_formation_moves(self, unit_ids, angles, move_size=1):
         return {
-            unit_id: 
+            int(unit_id) : 
                 self.transform_move((move_size, angles[idx % len(angles)]*(math.pi / 180)))
             for idx, unit_id
             in enumerate(unit_ids)
@@ -168,15 +168,19 @@ class Player:
                 """
 
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
-        moves = {id: None for id in unit_id[self.player_idx]}
+        moves = {int(id): None for id in unit_id[self.player_idx]}
 
         # Send fixed scouts to capture early game wins
-        moves.update(self.fixed_formation_moves(unit_id[self.player_idx])[0:3], [45.0, 67.5, 22.5])
-
+        moves.update(self.fixed_formation_moves(unit_id[self.player_idx][0:3], [45.0, 67.5, 22.5]))
  
+        #if all the moves are fixed formation moves:
+        if len(moves) <= 3:
+            return list(moves.values())
+
         danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
 
         region_and_score = []
+
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
         for r in self.regions:
@@ -199,28 +203,26 @@ class Player:
 
             temp.append(r)
             heapq.heappush(region_and_score,tuple(temp))
-        
-        heapq.heapify(region_and_score)
-        #print(region_and_score)
 
         for i in range(len(unit_id[self.player_idx])):
+            
             pt = unit_pos[self.player_idx][i]
             curr = (pt.x, pt.y)
 
             if i in unit_regions:
                 self.otw_to_regions.pop(i, None)
                 self.region_otw[unit_regions[i]].discard(i)
-                moves[i] = self.point_move(curr, unit_regions[i].center_point)
+                moves[i+1] = self.point_move(curr, unit_regions[i].center_point)
                 continue
 
             if i in self.otw_to_regions:
-                moves[i] = self.point_move(curr, self.otw_to_regions[i])
+                moves[i+1] = self.point_move(curr, self.otw_to_regions[i])
                 continue
 
             target = list(heapq.heappop(region_and_score))
             #print(region_and_score)
 
-            moves[i] = self.point_move(curr, target[2].center_point)
+            moves[i+1] = self.point_move(curr, target[2].center_point)
 
             self.otw_to_regions[i] = target[2].center_point
             print(i, target[2].center_point)
@@ -228,8 +230,11 @@ class Player:
 
             heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
 
-        self.days += 1    
-        return moves
+        self.days += 1  
+
+        #print(list(moves.values()))  
+        print(moves)
+        return list(moves.values())
 
     def danger_levels(self, unit_pos):
         np_unit_pos = points_to_numpy(unit_pos)
@@ -258,19 +263,25 @@ class Player:
                         if team_idx == self.player_idx:
                             unit_regions[unit_idx] = region
 
-                        if region in danger_regions:
-                            danger_regions[region] += danger_score
-                        else:
-                            danger_regions[region] = danger_score
+                            if region in danger_regions:
+                                danger_regions[region] += danger_score
+                            else:
+                                danger_regions[region] = danger_score
 
-                        if region in region_count:
-                            region_count[region] += 1
-                        else:
-                            region_count[region] = 1
+                            if region in region_count:
+                                region_count[region] += 1
+                            else:
+                                region_count[region] = 1
 
                         continue
 
-        #print(result)
+        #result is the danger level of all units (same dimensions as unit_pos)
+
+        #danger_regions is a dict with {(center_point of region) : sum of danger_level of teammate}
+
+        #region_count is number of teammates in region
+
+        #unit_regions is which region is a unit in
         return result, danger_regions, region_count, unit_regions
 
     def wall_forces(self, current_point) -> Dict[Tuple[float, float], float]:
@@ -297,7 +308,7 @@ class Player:
                 closest_unit_dist = dist
         return {friend_unit_pos: closest_unit_dist}        
 
-    def get_forces(self, unit_id, unit_pos):
+    def get_forces(self, unit_id, unit_pos, danger_regions):
         forces = {id: {} for id in unit_id[self.player_idx]}
         for i in range(len(unit_id[self.player_idx])):
             unit = unit_id[self.player_idx][i]
@@ -307,5 +318,6 @@ class Player:
             forces[unit].update({Tuple(home_coords): home_coords.distance(current_pos)})
             forces[unit].update(self.wall_forces(current_pos))
             forces[unit].update(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
+            forces[unit].update(danger_regions)
 
         return forces
