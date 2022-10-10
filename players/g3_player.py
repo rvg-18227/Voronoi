@@ -10,14 +10,15 @@ import copy
 import numpy as np
 from shapely.geometry import Point
 from sklearn.cluster import KMeans
-import sympy
+
 
 LOG_LEVEL = logging.DEBUG
 
 WALL_DENSITY = 0.1
 WALL_RATIO = 0
-PRESSURE_HI = 1000
-PRESSURE_LO = 100
+PRESSURE_HI_THRESHOLD = 3
+PRESSURE_LO_THRESHOLD = 1.5
+PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3) 
 
 SCOUT_ALLY_SCALE = 2.0
 SCOUT_BORDER_REPULSION_SCALE = 1.0
@@ -26,7 +27,7 @@ SCOUT_BORDER_REPULSION_SCALE = 1.0
 >>>>>>> yunlan/push
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
-                 player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
+                 player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
             -> None:
         """Initialise the player with given skill.
 
@@ -78,26 +79,70 @@ class Player:
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
+        self.counter = 0
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
+    
+    def get_radius(self, point: Tuple[float, float]) -> float:
+        """Returns the radial distance of our soldier at @point to our homebase."""
+        return np.linalg.norm(np.array(point) - self.homebase)
 
-    def push(self, unit_pos: List[List[Point]]):
-        unit_pos = np.array([shapely_pts_to_tuples(pts) for pts in unit_pos])
-        allies = unit_pos[self.us]
-        enemies = np.delete(unit_pos, self.us, 0).flatten()
+    def push(self, unit_pos: List[List[Point]]) -> List[Tuple[float, float]]:
+        allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
+        enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
+        flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
 
         k = math.ceil(len(allies) / 4)
         kmeans = KMeans(n_clusters=k).fit(allies)
 
-        repelling_forces = [repelling_force_sum(enemies, c) for c in kmeans.cluster_centers_]
-        exceed_pressure_lo = [higher_than_lo(force) for force in repelling_forces]
-        soldier_moves = [_push_radially(allies[i], self.homebase, exceed_lo=exceed_pressure_lo[cid]) for i, cid in enumerate(kmeans.labels_)]
+        ally_distances = np.array([self.get_radius(point) for point in kmeans.cluster_centers_])
+        kmeans_radius = KMeans(n_clusters=min(3, k)).fit(ally_distances.reshape(-1, 1))
 
-        self.debug([int(np.linalg.norm(force)) for force in repelling_forces])
+        max_cluster = kmeans_radius.labels_[0]
+
+        repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
+        pressure_levels = np.array([get_pressure_level(force) for force in repelling_forces])
+        pressure_levels[np.array(kmeans_radius.labels_) != max_cluster] = PRESSURE_LO # index where point is not in outer radius
+        soldier_moves = [self._push_radially(allies[i], plevel=pressure_levels[cid]) for i, cid in enumerate(kmeans.labels_)]
+
+        self.debug(f'pressure: {[int(np.linalg.norm(force)) for force in repelling_forces]}')
+        self.debug(f'moves: {soldier_moves}')
 
         return soldier_moves
+
+    def _move_radially(self, pt: List[float], forward=True) -> Tuple[float, float]:
+        """Moves @pt radially away from homebase, returns a tuple (distance, angle)
+        to move the point.
+        
+        If @pt is at homebase, select an angle from self.midsorted_outer_wall_angles
+        to move in.
+
+        If @forward is True, move away from the homebase. Otherwise, towards the homebase.
+        """
+        direction = 1 if forward else -1
+
+        if (pt == self.homebase).all():
+            angle = self.midsorted_outer_wall_angles[self.counter % len(self.midsorted_outer_wall_angles)]
+            self.counter += 1
+        else:
+            towards_x, towards_y = np.array(pt) - np.array(self.homebase)
+            angle = np.arctan2(towards_y, towards_x)
+        
+        return (direction, angle)
+
+    def _push_radially(self, pt: List[float], plevel=False) -> Tuple[float, float]:
+        """Push, stay or retreat based on the pressure level, returns a tuple
+        (distance, angle) to move the point.
+        """
+        if plevel == PRESSURE_LO:
+            return self._move_radially(pt)
+        elif plevel == PRESSURE_MID:
+            # stay where we are
+            return (0., 0.)
+        else:
+            return self._move_radially(pt, forward=False)
 
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -154,9 +199,10 @@ class Player:
 >>>>>>> yunlan/push
 
 
-    def order2coord(self, order) -> tuple[float, float]:
+    def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
+        """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
         dist, angle = order
-        x = self.homebase[0] - dist * math.sin(angle)
+        x = self.homebase[0] + dist * math.sin(angle)
         y = self.homebase[1] + dist * math.cos(angle)
         return (x, y)
 
@@ -239,15 +285,6 @@ def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[fl
 #   Strategies
 # -----------------------------------------------------------------------------
 
-def _push_radially(pt, homebase, exceed_lo=False):
-    if exceed_lo:
-        # stay where we are
-        return (0., 0.)
-
-    towards_x, towards_y = np.array(pt) - np.array(homebase)
-    angle = np.arctan2(towards_y, towards_x)
-    
-    return (1, angle)
 
 
 # -----------------------------------------------------------------------------
@@ -273,14 +310,24 @@ def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, f
 def reactive_force(fvec: List[float]) -> List[float]:
     return fvec * (-1.)
 
-def higher_than_lo(force):
-    return True if np.linalg.norm(force) > PRESSURE_LO else False
+def get_pressure_level(force: List[float]) -> int:
+    p = np.linalg.norm(force)
+
+    if p <= PRESSURE_LO_THRESHOLD:
+        return PRESSURE_LO
+    elif p > PRESSURE_LO_THRESHOLD and p < PRESSURE_HI_THRESHOLD:
+        return PRESSURE_MID
+    else:
+        return PRESSURE_HI
 
 # -----------------------------------------------------------------------------
 #   Helper functions
 # -----------------------------------------------------------------------------
 
 def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Returns a list of 2-tuple (dist, angle) required to move a list of points
+    from @unit_pos to @target_loc.
+    """
     assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
     np_unit_pos = np.array(unit_pos, dtype=float)
     np_target_loc = np.array(target_loc, dtype=float)
@@ -298,14 +345,17 @@ def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float,
 
 
 def shapely_pts_to_tuples(points: List[Point]) -> List[Tuple[float, float]]:
+    """Converts a list of shapely.geometry.Point into a list of 2-tuple of floats."""
     return list(map(shapely_pt_to_tuple, points))
 
 
 def shapely_pt_to_tuple(point: Point) -> Tuple[float, float]:
+    """Converts a shapely.geometry.Point into a 2-tuple of floats."""
     return ( float(point.x), float(point.y) )
 
 
 def midsort(arr: List[float]) -> List[float]:
+    """Sorts an array by repeatedly selecting the midpoints."""
     n = len(arr)
     if n <= 2:
         return arr
@@ -349,18 +399,18 @@ def get_base_angles(player_idx: int) -> Tuple[float, float]:
 
     Example:
 
-        The map of the voronoi game is a 100 * 100 grid. From the top left going clockwise
-        are player 0, 1, 2, 3.
+        The map of the voronoi game is a 100 * 100 grid. From the top left going
+        counter-clockwise are player p1 (index: 0), p2 (1), p3 (2), p4 (3).
 
         Below is a visualization of player 3's base angles.
         
-            (base angle + pi/2) 
+            (base angle - pi/2) 
                 ^
                 | 
                 |     
                 -------> (base angle)
-                    -pi/2 - pi/2 * (player_index: 3)
-              p3
+                    pi/2 * (1 - player_index)
+              p2
     """
-    base_angle = (-1) * ((math.pi / 2) + (player_idx * math.pi/2))
-    return base_angle, base_angle + math.pi/2
+    base_angle = (math.pi/2) * (1 - player_idx)
+    return base_angle, base_angle - math.pi/2
