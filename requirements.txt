@@ -6,3 +6,4 @@ matplotlib
 pyproj
 simplekml
 scipy
+scikit-learn
