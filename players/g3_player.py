@@ -19,8 +19,8 @@ PRESSURE_HI_THRESHOLD = 3
 PRESSURE_LO_THRESHOLD = 1.5
 PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3) 
 
-SCOUT_ALLY_SCALE = 10.0
-SCOUT_BORDER_REPULSION_SCALE = 3.0
+SCOUT_ALLY_SCALE = 12.0
+SCOUT_BORDER_REPULSION_SCALE = 4.0
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -91,7 +91,7 @@ class Player:
 
     def push(self, scout_ids) -> List[Tuple[float, float]]:
         #allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
-        allies = np.delete(self.our_units, scout_ids, axis=0)  # not using slicing because scout_ids could be non-continous
+        allies = np.delete(self.our_units, scout_ids, axis=0)  # not using slicing because scout_ids could be non-consecutive
 
         # enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
         # flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
@@ -191,11 +191,11 @@ class Player:
 
         #start = time.time()
         defense_moves = self.push(scout_ids)
-        #print('Defense: ', time.time()-start)
+        #print('Defense:', time.time()-start)
         
         #start = time.time()
         offense_moves = self.move_scouts(scout_ids)
-        #print('Offense: ', time.time()-start)
+        #print('Offense:', time.time()-start)
 
         return offense_moves + defense_moves
 
@@ -208,9 +208,9 @@ class Player:
         return (x, y)
 
     def explore(self, scout_unit, ally_units):
-        # enemy_k = min(25, math.ceil(self.enemy_units.shape[0]/4))
+        # enemy_k = min(50, math.ceil(self.enemy_units.shape[0]/2))
         # enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units).cluster_centers_
-        # ally_k = min(8, math.ceil(ally_units.shape[0]/4))
+        # ally_k = min(15, math.ceil(ally_units.shape[0]/2))
         # ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units).cluster_centers_
 
         # change to random selection to speed up
