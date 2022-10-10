@@ -7,3 +7,4 @@ game*.mp4
 .DS_Store
 venv/
 run_and_render.sh
+.vscode
