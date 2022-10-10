@@ -430,5 +430,5 @@ def get_base_angles(player_idx: int) -> Tuple[float, float]:
                     pi/2 * (1 - player_index)
               p2
     """
-    base_angle = (math.pi/2) * (1 - player_idx)
+    base_angle = (math.pi/2) * (1 + player_idx)
     return base_angle, base_angle - math.pi/2
