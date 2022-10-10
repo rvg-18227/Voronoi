@@ -48,6 +48,9 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
+   # def get_home_coords(self, player_idx):
+
+
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -68,8 +71,15 @@ class Player:
                 """
 
         moves = []
+        forces = {}
         angle_jump = 10
         angle_start = 45
+        print(self.player_idx)
+        for unit in unit_id[self.player_idx]:
+            forces[unit] = []
+            current_pos = unit_pos[self.player_idx][unit]
+            print(current_pos)
+
         for i in range(len(unit_id[self.player_idx])):
             distance = 1
 
