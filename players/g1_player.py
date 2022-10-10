@@ -124,16 +124,57 @@ class Player:
                     2: (_MAP_W - home_offset, _MAP_W - home_offset),
                     3: (home_offset, _MAP_W - home_offset)}
 
+        
         # Construct 2 lists for passing to shapely/scipy for triangulation
         # Handle edge case where cell is occupied by 2 players: Quantize pts to grid cells.
         #   When a cell is disputed, it no longer contributes to the voronoi diagram. All the units within that cell must
         #   be removed.
+        units = self.create_units(unit_pos)
+        pts_hash = self.create_pts_hash(units, home_offset)
+        pts = list(pts_hash.keys())
+        player_ids = list(pts_hash.values())
+
+        # Get polygon of Voronoi regions around each pt
+        vor_regions = self.create_voronoi_regions(pts, map_size)
+
+        # Find mapping from pts idx to polys (via nearest unit) and poly to player
+        pt_to_poly, poly_idx_to_player = self.create_pt_to_poly_and_poly_idx_to_player(pts, vor_regions, player_ids, spawn_loc)
+
+        # Get the graph of connected pts via triangulation (include home base when triangulating)
+        pts_with_home = pts.copy()
+        player_ids_with_home = player_ids.copy()
+
+        tri = scipy.spatial.Delaunay(np.array(pts_with_home))
+        edges = delaunay2edges(tri.simplices)  # Shape: [N, 2]
+
+        # Clean edges
+        edges = self.clean_edges(edges, player_ids_with_home, pts_with_home, pt_to_poly, vor_regions, poly_idx_to_player)
+
+        # Create adjacency list for graph of armies
+        adj_dict = self.create_adj_dict(edges, pts)
+
+        # Create union of all friendly polygons and list of its neighbors
+        superpolygon, s_neighbors = self.create_superpolygon(vor_regions, poly_idx_to_player, adj_dict)
+
+        if self.current_day <= (50 - self.spawn_days) or total_scores[self.player_idx] < max(total_scores):
+            moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors)
+        else:
+            moves = self.play_cautious(unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors)
+        
+        self.current_day += 1
+        return moves
+
+    def create_units(self, unit_pos):
         units = []
         for player in range(len(unit_pos)):
             for pos in unit_pos[player]:
                 units.append((player, (pos.x, pos.y)))
+            
+        return units
 
+    def create_pts_hash(self, units, home_offset):
         pts_hash = {}
+
         for pl,pos in units:
             # Quantize unit pos to cell. We assume cell origin at center.
             pos_int = (int(pos[0]) + home_offset, int(pos[1]) + home_offset)
@@ -146,10 +187,25 @@ class Player:
                     pass  # Disputed cell
             else:
                 pts_hash[pos_int] = pl
-        pts = list(pts_hash.keys())
-        player_ids = list(pts_hash.values())
-        pts_coords_hash = {coords: index for index, coords in enumerate(pts)}
+        
+        return pts_hash
 
+    def create_adj_dict(self, edges, pts):
+        adj_dict = {}
+
+        for val in edges:
+            p1 = pts[val[0]]
+            p2 = pts[val[1]]
+
+            if p1 not in adj_dict: adj_dict[p1] = []
+            if p2 not in adj_dict: adj_dict[p2] = []
+
+            adj_dict[p1].append(p2)
+            adj_dict[p2].append(p1)
+        
+        return adj_dict
+
+    def create_voronoi_regions(self, pts, map_size):
         # Get polygon of Voronoi regions around each pt
         _points = shapely.geometry.MultiPoint(pts)
         envelope = shapely.geometry.box(0, 0, map_size, map_size)
@@ -165,15 +221,10 @@ class Player:
             region_bounded = region.intersection(envelope)
             if region_bounded.area > 0:
                 vor_regions.append(region_bounded)
+        
+        return vor_regions
 
-        # # Add the home base to list of points
-        # pts_with_home = pts.copy()
-        # player_ids_with_home = player_ids.copy()
-        # for player in range(4):
-        #     # Add home bases as pts
-        #     pts_with_home.append(spawn_loc[player])
-        #     player_ids_with_home.append(player)
-
+    def create_pt_to_poly_and_poly_idx_to_player(self, pts, vor_regions, player_ids, spawn_loc):
         # Find mapping from pts idx to polys (via nearest unit) and poly to player
         pt_to_poly = {}  # includes home base
         # Polygon isn't hashable, so we use polygon idx.
@@ -194,18 +245,10 @@ class Player:
             home_coord = spawn_loc[idx]
             _, ii = kdtree.query(home_coord, k=1)  # index of nearest pt
             pt_to_poly[home_coord] = pt_to_poly[pts[ii]]  # home base same as nearest unit
+        
+        return pt_to_poly, poly_idx_to_player
 
-        # Get the graph of connected pts via triangulation (include home base when triangulating)
-        pts_with_home = pts.copy()
-        player_ids_with_home = player_ids.copy()
-        # for key, val in spawn_loc.items():
-        #     # Add home bases as pts
-        #     pts_with_home.append(val)
-        #     player_ids_with_home.append(key)
-
-        tri = scipy.spatial.Delaunay(np.array(pts_with_home))
-        edges = delaunay2edges(tri.simplices)  # Shape: [N, 2]
-
+    def clean_edges(self, edges, player_ids_with_home, pts_with_home, pt_to_poly, vor_regions, poly_idx_to_player):
         # Clean edges
         # TODO: Handle case when enemy unit within home cell. It will cut off all player's units.
         #  Soln: When making graph, remove edge.
@@ -233,7 +276,6 @@ class Player:
                     # Can traverse edge only if voronoi polys are neighbors
                     edge_player_id.append(-2)
                     continue
-                    # valid_ = True
             
                 if play1_ == player1 and play2_ == player1:
                     valid_ = True
@@ -247,58 +289,60 @@ class Player:
         edges = edges[edge_player_id > -2] # remove edges that are not neighbors
         edge_player_id = edge_player_id[edge_player_id > -2]
 
-        adj_dict = {}
-        for val in edges:
-            p1 = pts[val[0]]
-            v1 = val[1]
-            p2 = pts[v1]
+        return edges
 
-            if p1 not in adj_dict: adj_dict[p1] = []
-            if p2 not in adj_dict: adj_dict[p2] = []
+    def create_superpolygon(self, vor_regions, poly_idx_to_player, adj_dict):
+        friendly_polygons = []
+        for idx, reg in enumerate(vor_regions):
+            if poly_idx_to_player[idx] == self.player_idx:
+                friendly_polygons.append(reg)
 
-            adj_dict[p1].append(p2)
-            adj_dict[p2].append(p1)
+        superpolygon = shapely.ops.unary_union(friendly_polygons)
 
-        #######################################################################
+        s_neighbors = set()
+        for unit in adj_dict:
+            if superpolygon.contains(shapely.geometry.Point(unit[0], unit[1])):
+                for neigh in adj_dict[unit]:
+                    if not superpolygon.contains(shapely.geometry.Point(neigh[0], neigh[1])):
+                        s_neighbors.add(neigh)
+        s_neighbors = list(s_neighbors)
 
+        return superpolygon, s_neighbors
 
-        # TODO: BUILD A LIST OF NEIGHBORING POLYGONS FOR EVERY POLYGON
+    def find_target_from_superpolygon(self, unit, superpolygon, s_neighbors, friendly_units, pt_to_poly, vor_regions):
+        neighboring_enemies = [n for n in s_neighbors if n not in friendly_units]
+        neighboring_enemy_polygons = [pt_to_poly[ne] for ne in neighboring_enemies]
 
-        # Build a graph data structure for each player
-        # graphs = {0: defaultdict(list), 1: defaultdict(list), 2: defaultdict(list), 3: defaultdict(list)}
-        # for player, (p1, p2) in zip(edge_player_id, edges):
-        #     if player > -1:
-        #         graph_p = graphs[player]
-        #         graph_p[p1].append(p2)
-        #         graph_p[p2].append(p1)
+        candidates = set() 
+        for poly_idx in neighboring_enemy_polygons:
+            polygon = vor_regions[poly_idx]
+            intersection = superpolygon.intersection(polygon)
+            if isinstance(intersection, shapely.geometry.LineString):
+                points = intersection.coords
+                for point in list(points):
+                    candidates.add(point)
 
-        # TODO: From each home base, traverse the full graph
-
-        #######################################################################
-
-        if self.current_day <= 50 or total_scores[self.player_idx] < max(total_scores):
-            moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
+        if len(candidates) == 0:
+            target = unit # if no enemies are found, stay in the same place
         else:
-            moves = self.play_cautious(unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict)
-        
-        # moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
-        self.current_day += 1
-        return moves
+            target = max(list(candidates), key=lambda pt: (pt[0] - unit[0])**2 + (pt[1] - unit[1])**2)
+
+        return target
 
     def move_toward_position(self, current, target):
-            distance_to_target = np.sqrt((target[0] - current[0])**2 + (target[1] - current[1])**2)
+        distance_to_target = np.sqrt((target[0] - current[0])**2 + (target[1] - current[1])**2)
 
-            if distance_to_target == 0:
-                angle_toward_target = 0.0
-            else:
-                angle_toward_target = np.arctan2(target[1] - current[1], target[0] - current[0])
+        if distance_to_target == 0:
+            angle_toward_target = 0.0
+        else:
+            angle_toward_target = np.arctan2(target[1] - current[1], target[0] - current[0])
             
-            return max(1.0, distance_to_target), angle_toward_target
+        return max(1.0, distance_to_target), angle_toward_target
 
-    def play_cautious(self, unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict):
-        moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict)
+    def play_cautious(self, unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors):
+        moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors)
         fort_unit_ids = unit_id[self.player_idx][-4:-1]
-        fort_positions = [(0.5, 1.5), (1.5, 0.5), (1.5, 1.5)]
+        fort_positions = [(0.6, 1.6), (1.6, 0.6), (1.6, 1.6)]
 
         for i in range(len(fort_positions)):
             current_point = unit_pos[self.player_idx][int(fort_unit_ids[i])]
@@ -309,7 +353,7 @@ class Player:
 
         return moves
 
-    def play_aggressive(self, home_offset, vor_regions, units, pt_to_poly, adj_dict):
+    def play_aggressive(self, home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors):
         moves = []
 
         # For each friendly unit, find the direction toward the farthest nearest enemy-bordering vertex
@@ -332,10 +376,8 @@ class Player:
                     for point in list(points):
                         candidates.add(point)
 
-            # if current point is surrounded by friendly polygons, move toward center
             if len(candidates) == 0:
-                target = (50.0, 50.0)
-                # TODO: FIX THIS
+                target = self.find_target_from_superpolygon(unit, superpolygon, s_neighbors, friendly_units, pt_to_poly, vor_regions)
             else:
                 target = max(list(candidates), key=lambda pt: (pt[0] - unit[0])**2 + (pt[1] - unit[1])**2)
 

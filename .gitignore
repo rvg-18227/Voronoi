@@ -3,6 +3,7 @@ __pycache__/
 players/__pycache__/
 render
 game.pkl
-game.mp4
+game*.mp4
 .DS_Store
 venv/
+run_and_render.sh
