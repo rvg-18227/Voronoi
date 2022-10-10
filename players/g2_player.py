@@ -5,7 +5,7 @@ from matplotlib.pyplot import close
 import numpy as np
 import sympy
 import logging
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 import math
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
@@ -16,9 +16,23 @@ import heapq
 #HYPER PARAMETERS
 DANGER_ZONE_RADIUS = 20
 
+class InterestRegion:
+    def __init__(self, center_point, polygon, created_idx):
+        self.center_point: Tuple[float, float] = center_point
+        self.polygon: Polygon = polygon
+        self.created_idx: float = created_idx
+
+    def __hash__(self):
+        return hash(self.center_point)
+
+    def __lt__(self, other):
+        return self.created_idx < other.created_idx
+
+    def __repr__(self):
+        return(str(self.polygon))
+
 #Dictionary into 2d Array
 def points_to_numpy(units):
-
     #columns: x, y, player_idx belongs, 
     result = np.array([0,0,0])
 
@@ -38,17 +52,7 @@ def get_corner(idx):
     elif idx == 3:
         return (100, 0)
 
-def get_home_coords(self):
-    if self.player_idx == 0:
-        return Point(0.5, 0.5)
-    elif self.player_idx == 1:
-        return Point(0.5, 99.5)
-    elif self.player_idx == 2:
-        return Point(99.5, 99.5)
-    elif self.player_idx == 3:
-        return Point(99.5, 0.5)
-
-def get_interest_regions(idx):
+def get_interest_regions(idx) -> List[InterestRegion]:
     x, y = get_corner(idx)
     regions = []
 
@@ -74,21 +78,6 @@ def get_interest_regions(idx):
 def get_interest_regions_points(center_point, i):
     x, y = center_point
     return InterestRegion(center_point, Polygon([(x-10, y-10), (x+10, y-10), (x+10, y+10), (x-10,y+10)]), i)
-
-class InterestRegion:
-    def __init__(self, center_point, polygon, created_idx):
-        self.center_point = center_point
-        self.polygon = polygon
-        self.created_idx = created_idx
-
-    def __hash__(self):
-        return hash(self.center_point)
-
-    def __lt__(self, other):
-        return self.created_idx < other.created_idx
-
-    def __repr__(self):
-        return(str(self.polygon))
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -128,22 +117,36 @@ class Player:
         self.player_idx = player_idx
         self.days = 1
 
-        if player_idx == 0:
-            self.regions = get_interest_regions(player_idx)
-            #print(self.regions)
-            self.otw_to_regions = {}
-            self.region_otw = defaultdict(lambda: set())
+        self.regions = get_interest_regions(player_idx)
+        self.otw_to_regions = {}
+        self.region_otw = defaultdict(lambda: set())
 
     def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
-
     def point_move(self, p1, p2):
         dist = min(1, math.dist(p1,p2))
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
-
+    
+    def fixed_formation_moves(self, unit_ids, angles, move_size=1):
+        return {
+            unit_id: 
+                self.transform_move((move_size, angles[idx % len(angles)]*(math.pi / 180)))
+            for idx, unit_id
+            in enumerate(unit_ids)
+        }
+    
+    def get_home_coords(self):
+        if self.player_idx == 0:
+            return Point(0.5, 0.5)
+        elif self.player_idx == 1:
+            return Point(0.5, 99.5)
+        elif self.player_idx == 2:
+            return Point(99.5, 99.5)
+        elif self.player_idx == 3:
+            return Point(99.5, 0.5)
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -164,106 +167,79 @@ class Player:
                                                 move each unit of the player
                 """
 
-        #for the first 50 days
-        #first unit goes straight diagonal (45 deg) aims for point (50,50)
-        #second unit goes at a 22.5 degree, helping the boundary fight on the vertical
-        #third unit goes at a 67.5 degree, helping the boundary fight on the horizontal
-        #fourth unit has target helps, which ever needs more help, if none, go to not taken region
-        #fifth unit has target, similar to 4 does
+        # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
+        moves = {id: None for id in unit_id[self.player_idx]}
 
-        moves = [None] * len(unit_id[self.player_idx])
+        # Send fixed scouts to capture early game wins
+        moves.update(self.fixed_formation_moves(unit_id[self.player_idx])[0:3], [45.0, 67.5, 22.5])
 
-        scout_angles = [45.0, 67.5, 22.5, ]
+ 
+        danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
 
+        region_and_score = []
+        #Move to quadrant with (in priority, highest first):
+        #no units > danger score > closest
+        for r in self.regions:
+            temp = []
 
-        if self.days < 50:
-            for i in range(len(unit_id[self.player_idx])):
-                pt = unit_pos[self.player_idx][i]
-                curr = (pt.x, pt.y)
+            if r in region_count:
+                temp.append(region_count[r])
+            else:
+                temp.append(0)
 
-                # first unit holds 50,50
-                if self.days < 50:
+            temp[0] += len(self.region_otw[r])
 
-                    distance = 1
-                    angle = scout_angles[i%3]
-
-                    moves[i] = self.transform_move((distance, angle*(math.pi / 180)))
-        else:
-            #same dimension as unit_pos
-            danger_levels, danger_regions_score, region_count, idx_in_region = self.danger_levels(unit_pos)
-            #print(danger_regions_score)
-
-            region_and_score = []
-            #Move to quadrant with (in priority, highest first):
-            #no units > danger score > closest
-            for r in self.regions:
-                temp = []
-
-                if r in region_count:
-                    temp.append(region_count[r])
-                else:
-                    temp.append(0)
-
-                temp[0] += len(self.region_otw[r])
-
-                if r in danger_regions_score:
-                    if danger_regions_score[r] != 0:
-                        temp.append(-danger_regions_score[r])
-                    else:
-                        temp.append(-float("inf"))
+            if r in danger_regions_score:
+                if danger_regions_score[r] != 0:
+                    temp.append(-danger_regions_score[r])
                 else:
                     temp.append(-float("inf"))
+            else:
+                temp.append(-float("inf"))
 
-                temp.append(r)
-                heapq.heappush(region_and_score,tuple(temp))
-            
-            heapq.heapify(region_and_score)
+            temp.append(r)
+            heapq.heappush(region_and_score,tuple(temp))
+        
+        heapq.heapify(region_and_score)
+        #print(region_and_score)
+
+        for i in range(len(unit_id[self.player_idx])):
+            pt = unit_pos[self.player_idx][i]
+            curr = (pt.x, pt.y)
+
+            if i in unit_regions:
+                self.otw_to_regions.pop(i, None)
+                self.region_otw[unit_regions[i]].discard(i)
+                moves[i] = self.point_move(curr, unit_regions[i].center_point)
+                continue
+
+            if i in self.otw_to_regions:
+                moves[i] = self.point_move(curr, self.otw_to_regions[i])
+                continue
+
+            target = list(heapq.heappop(region_and_score))
             #print(region_and_score)
 
-            for i in range(len(unit_id[self.player_idx])):
-                pt = unit_pos[self.player_idx][i]
-                curr = (pt.x, pt.y)
+            moves[i] = self.point_move(curr, target[2].center_point)
 
-                if i in idx_in_region:
-                    self.otw_to_regions.pop(i, None)
-                    self.region_otw[idx_in_region[i]].discard(i)
-                    moves[i] = self.point_move(curr, idx_in_region[i].center_point)
-                    continue
+            self.otw_to_regions[i] = target[2].center_point
+            print(i, target[2].center_point)
+            self.region_otw[target[2]].add(i)
 
-                if i in self.otw_to_regions:
-                    moves[i] = self.point_move(curr, self.otw_to_regions[i])
-                    continue
-
-                target = list(heapq.heappop(region_and_score))
-                #print(region_and_score)
-
-                moves[i] = self.point_move(curr, target[2].center_point)
-
-                self.otw_to_regions[i] = target[2].center_point
-                print(i, target[2].center_point)
-                self.region_otw[target[2]].add(i)
-
-                heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
+            heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
 
         self.days += 1    
         return moves
 
-    #start claculating only after day 40+
-    #unlikely to have nearby enemies day 40
     def danger_levels(self, unit_pos):
-
         np_unit_pos = points_to_numpy(unit_pos)
-
         result = [[] for _ in range(4)]
-
         danger_regions = {}
         region_count = {}
-
-        idx_in_region = {}
+        unit_regions = {}
 
         for team_idx in range(4):
-
-            for idx, u in enumerate(unit_pos[team_idx]):
+            for unit_idx, u in enumerate(unit_pos[team_idx]):
                 distances = cdist([np.array((u.x, u.y))], np_unit_pos[:, :2]).flatten()
                 close_points = np_unit_pos[distances <= DANGER_ZONE_RADIUS,:]
                 team_points = close_points[close_points[:,2] == team_idx]
@@ -277,39 +253,40 @@ class Player:
                 result[team_idx].append(danger_score)
 
                 #check if in any region
-                for regions in self.regions:
-                    if regions.polygon.contains(Point(u.x, u.y)):
-                        #print((u.x, u.y))
+                for region in self.regions:
+                    if region.polygon.contains(Point(u.x, u.y)):
                         if team_idx == self.player_idx:
-                            idx_in_region[idx] = regions
+                            unit_regions[unit_idx] = region
 
-                        if regions in danger_regions:
-                            danger_regions[regions] += danger_score
+                        if region in danger_regions:
+                            danger_regions[region] += danger_score
                         else:
-                            danger_regions[regions] = danger_score
+                            danger_regions[region] = danger_score
 
-                        if regions in region_count:
-                            region_count[regions] += 1
+                        if region in region_count:
+                            region_count[region] += 1
                         else:
-                            region_count[regions] = 1
+                            region_count[region] = 1
 
                         continue
 
         #print(result)
-        return result, danger_regions, region_count, idx_in_region
+        return result, danger_regions, region_count, unit_regions
 
-    def get_wall_dist(self, current_point):
+    def wall_forces(self, current_point) -> Dict[Tuple[float, float], float]:
         current_x = current_point.x
         current_y = current_point.y
         dist_to_top = Point(current_x, 0).distance(current_point)
         dist_to_bottom = Point(current_x, 100).distance(current_point)
         dist_to_right = Point(0, current_y).distance(current_point)
         dist_to_left = Point(100, current_y).distance(current_point)
-        return {"top": dist_to_top, "bottom": dist_to_bottom, "right": dist_to_right, "left": dist_to_left}
+        return {(50, 0): dist_to_top, (50, 0): dist_to_bottom, (100, 50): dist_to_right, (0, 50): dist_to_left}
 
-    def get_closest_friend(self, current_unit, current_pos, unit_pos, unit_id):
+    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> Dict[Tuple[float, float], float]:
+        if(len(unit_id[self.player_idx]) < 2):
+            return None
+
         closest_unit_dist = math.inf
-        closest_unit = math.inf
         for i in range(len(unit_pos[self.player_idx])):
             if i == current_unit:
                 continue
@@ -318,21 +295,19 @@ class Player:
             dist = friend_unit_pos.distance(current_pos)
             if dist < closest_unit_dist:
                 closest_unit_dist = dist
-                closest_unit = friend_unit
-        return {"unit_id": closest_unit, "distance": closest_unit_dist}
+        return {friend_unit_pos: closest_unit_dist}
+
+    def region_danger_forces(self) -> Dict[Tuple[float, float], float]:
 
     def get_forces(self, unit_id, unit_pos):
-        forces = {}
+        forces = {id: {} for id in unit_id[self.player_idx]}
         for i in range(len(unit_id[self.player_idx])):
             unit = unit_id[self.player_idx][i]
             current_pos = unit_pos[self.player_idx][i]
-            forces[unit] = {}
-            home_coord = self.get_home_coords()
-            forces[unit]["dist_home"] = home_coord.distance(current_pos)
-            forces[unit]["dist_walls"] = self.get_wall_dist(current_pos)
-            if len(unit_id[self.player_idx]) > 1:
-                closest_friend = self.get_closest_friend(i, current_pos, unit_pos, unit_id)
-                forces[unit]["dist_friend"] = closest_friend
-            else:
-                forces[unit]["dist_friend"] = "None"
-        return force
+            home_coords = self.get_home_coords()
+            
+            forces[unit].update({Tuple(home_coords): home_coords.distance(current_pos)})
+            forces[unit].update(self.wall_forces(current_pos))
+            forces[unit].update(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
+
+        return forces
