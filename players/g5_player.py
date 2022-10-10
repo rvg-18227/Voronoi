@@ -4,7 +4,11 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
+import sympy
 
+
+def sympy_p_float(p: sympy.Point2D):
+    return np.array([float(p.x), float(p.y)])
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -42,6 +46,35 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
+        if self.player_idx == 0:
+            self.homebase = np.array([0.5, 0.5])
+        elif self.player_idx == 1:
+            self.homebase = np.array([0.5, 99.5])
+        elif self.player_idx == 2:
+            self.homebase = np.array([99.5, 99.5])
+        else:
+            self.homebase = np.array([99.5, 0.5])
+    
+    def force_vec(self, p1, p2):
+        v = p1 - p2
+        mag = np.linalg.norm(v)
+        unit = v / mag
+        return unit, mag
+
+    def to_polar(self, p):
+        x, y = p
+        return np.sqrt(x ** 2 + y ** 2), np.arctan2(y, x)
+
+    def normalize(self, v):
+        return v / np.linalg.norm(v)
+
+    def repelling_force(self, p1, p2):
+        dir, mag = self.force_vec(p1, p2)
+        # Inverse magnitude: closer things apply greater force
+        return dir * 1 / (mag)
+
+    def attractive_force(self, p1, p2):
+        return -self.repelling_force(p1, p2)
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -62,67 +95,65 @@ class Player:
                                                 move each unit of the player
                 """
 
-        moves = []
-        if self.player_idx == 0:
-            angles = [0, np.pi / 4, np.pi / 2]
-            unit_at_homebase = len(unit_id[self.player_idx]) % 3 # 2
-            for i in range(len(unit_id[self.player_idx])-unit_at_homebase): # i = 0,1,2
-                distance = 1
-                angle = angles[i % 3]
-                moves.append((distance, angle))
+        own_units = list(
+            zip(
+                unit_id[self.player_idx],
+                [sympy_p_float(pos) for pos in unit_pos[self.player_idx]],
+            )
+        )
+        enemy_units_locations = [
+            (i, sympy_p_float(unit_pos[player][i]))
+            for player in range(len(unit_pos))
+            for i in range(len(unit_pos[player]))
+            if player != self.player_idx
+        ]
 
-            for i in range(unit_at_homebase):
-                moves.append((0,0))
-        elif self.player_idx == 1:
-            angles = [- np.pi / 4, - np.pi / 2, 0]
-            for i in range(len(unit_id[self.player_idx])):
-                distance = 1
-                angle = angles[i % 3]
-                moves.append((distance, angle))
-        elif self.player_idx == 2:
-            anglesEvenLayer = [- np.pi / 2, -3 * np.pi / 4, - np.pi]
-            anglesOddLayer = [ -5 * np.pi / 8, -7 * np.pi / 8]
-            n = len(unit_id[self.player_idx])
-            r = n % 5
-            for i in range(n-r):
-                if i % 5 <= 2:
-                    distance = 1
-                    angle = anglesEvenLayer[i % 5]
-                    moves.append((distance, angle))
-                else:
-                    # i % 5 > 2
-                    distance = 1
-                    angle = anglesOddLayer[(i % 5) - 3]
-                    moves.append((distance, angle))
-            if r == 1:
-                moves.append((0, 0))
-            elif r == 2:
-                moves.append((0, 0))
-                moves.append((0, 0))
-            elif r == 3:
-                distance = 1
-                for j in range(3):
-                    angle = anglesEvenLayer[j]
-                    moves.append((distance, angle))
-            elif r == 4:
-                distance = 1
-                for j in range(3):
-                    angle = anglesEvenLayer[j]
-                    moves.append((distance, angle))
-                moves.append((0, 0))
-        else:
-            anglesEvenLayer = [3 * np.pi / 4, np.pi / 2, np.pi]
-            anglesOddLayer = [5 * np.pi / 8, 7 * np.pi / 8]
-            n = len(unit_id[self.player_idx])
-            for i in range(n):
-                if i % 5 <= 2:
-                    distance = 1
-                    angle = anglesEvenLayer[i % 5]
-                    moves.append((distance, angle))
-                else:
-                    # i % 5 == 3 or 4
-                    distance = 1
-                    angle = anglesOddLayer[(i % 5) - 3]
-                    moves.append((distance, angle))
+        ENEMY_INFLUENCE = 1
+        HOME_INFLUENCE = 20
+        ALLY_INFLUENCE = 0.5
+        BOUNDARY_INFLUENCE = 1
+        BORDER_THRESHOLD = 2
+
+        moves = []
+
+        for unit_id, unit_pos in own_units:
+            enemy_unit_forces = [
+                self.attractive_force(unit_pos, enemy_pos)
+                for _, enemy_pos in enemy_units_locations
+            ]
+            enemy_force = np.add.reduce(enemy_unit_forces)
+
+            ally_force = [
+                self.repelling_force(unit_pos, ally_pos)
+                for ally_id, ally_pos in own_units
+                if ally_id != unit_id
+            ]
+            ally_force = np.add.reduce(ally_force)
+
+            boundary_force = np.array([0, 0])
+            top_repelling_force = np.array([0, 1])
+            bottom_repelling_force = np.array([0, -1])
+            left_repelling_force = np.array([1, 0])
+            right_repelling_force = np.array([-1, 0])
+            if unit_pos[0] < BORDER_THRESHOLD:
+                boundary_force += left_repelling_force * (1 / unit_pos[0])
+            if unit_pos[0] > 100 - BORDER_THRESHOLD:
+                boundary_force += right_repelling_force * (1 / (100 - unit_pos[0]))
+            if unit_pos[1] < BORDER_THRESHOLD:
+                boundary_force += top_repelling_force * (1 / unit_pos[1])
+            if unit_pos[1] > 100 - BORDER_THRESHOLD:
+                boundary_force += bottom_repelling_force * (1 / (100 - unit_pos[1]))
+            
+            home_force = self.repelling_force(unit_pos, self.homebase)
+            
+
+            total_force = self.normalize(
+                (enemy_force * ENEMY_INFLUENCE)
+                + (home_force * HOME_INFLUENCE)
+                + (ally_force * ALLY_INFLUENCE)
+                + (boundary_force * BOUNDARY_INFLUENCE)
+            )
+
+            moves.append(self.to_polar(total_force))
 
         return moves
