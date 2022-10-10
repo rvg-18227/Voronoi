@@ -170,6 +170,19 @@ class Player:
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
         moves = {int(id): None for id in unit_id[self.player_idx]}
 
+        if self.player_idx == 0:
+            # Max takes 0
+            pass
+        elif self.player_idx == 1:
+            # Abigail takes 1
+            pass
+        elif self.player_idx == 2:
+            # Noah takes 2
+            pass
+        elif self.player_idx == 3:
+            pass
+
+
         # Send fixed scouts to capture early game wins
         moves.update(self.fixed_formation_moves(unit_id[self.player_idx][0:3], [45.0, 67.5, 22.5]))
  
