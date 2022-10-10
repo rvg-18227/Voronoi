@@ -295,9 +295,7 @@ class Player:
             dist = friend_unit_pos.distance(current_pos)
             if dist < closest_unit_dist:
                 closest_unit_dist = dist
-        return {friend_unit_pos: closest_unit_dist}
-
-    def region_danger_forces(self) -> Dict[Tuple[float, float], float]:
+        return {friend_unit_pos: closest_unit_dist}        
 
     def get_forces(self, unit_id, unit_pos):
         forces = {id: {} for id in unit_id[self.player_idx]}
