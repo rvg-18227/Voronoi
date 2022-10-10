@@ -9,8 +9,8 @@ from typing import Tuple
 from sympy.geometry import Point2D
 from enum import Enum
 from scipy.ndimage import measurements, morphology
-
-
+import math
+import random
 
 class UnitType(Enum):
     SPACER = 0
@@ -26,7 +26,7 @@ class Defense:
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
         self.day = 0
-        self.scanner_radius = 35
+        self.scanner_radius = 20
 
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
@@ -102,37 +102,56 @@ class Defense:
             # if cluster not all true
             # add offset
 
-        c_x, c_y = (np.array([50, 50]) - self.spawn_point)*(3/4)
-        c_dist = np.array(np.linalg.norm(np.array([c_x, c_y])))
-        center_angle = np.arctan2(c_y, c_x)
-        hover_point_angles = [center_angle]
-        for i in range(1, 6):
-            angle = (np.pi/24)*i
-            hover_point_angles.append(center_angle + angle)
-            hover_point_angles.append(center_angle - angle)
-        hover_points = [self.spawn_point/c_dist + np.array((np.cos(angle), np.sin(angle))) for angle in hover_point_angles]
-        n_hover = len(hover_points)
-        i = 0
-        direction_to_spawn = (self.spawn_point - np.array([50, 50]))/np.linalg.norm(self.spawn_point - np.array([50, 50]))
-        for j, unit in enumerate(self.unit_locations):
-            if moved[j] == False:
-                moves[j] = 1, hover_points[i%n_hover][0]*(c_dist - (i//n_hover)*2*direction_to_spawn[0]) - unit.x, hover_points[i%n_hover][1]*(c_dist - (i//n_hover)*2*direction_to_spawn[1]) - unit.y
-                i += 1
-        
-        # TODO:
-        # change hover points
-        # smaller radius
+        n_free_units = self.number_units - sum(moved)
+        hover_points = self.get_hover_points(n_free_units)
+        offset = (1/6)
+        hover_points = [np.array(point) + (self.spawn_point - np.array(point))*offset for point in hover_points]
+
+        free_units = [i for i, move in enumerate(moves) if not moved[i]]
+
+        for point in hover_points:
+            distances = sorted([(idx, np.linalg.norm(np.array(unit) - point)) for idx, unit in enumerate(self.unit_locations)], key=lambda x: x[1])
+            for j, (idx, distance) in enumerate(distances):
+
+                if idx in free_units:
+                    free_units.remove(idx)
+                    moves[idx] = distance, point[0] - self.unit_locations[idx].x, point[1] - self.unit_locations[idx].y
+                    break
+
         # if path to homme width is < some X, retreat to hover point
         
-        # go to location - some offset (maybe calc trajectory)
         # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
         # once all units are in place - (current loc to calc place ~=, for all units in this one match)
-        # hold the line (aka offset becomes 0)
-
-
-        #does any of this work for diagonal?
         # self.prev_state = self.map_state
+
         return moves
+
+    def get_hover_points(self, n):
+        hover_points = []
+        step = 90/n
+
+        degrees_to_hover = [(step*i) + 90/(n+1) for i in range(n)]
+        random.shuffle(degrees_to_hover)
+
+        for deg in degrees_to_hover:
+            angle = math.radians(deg)
+            angle = angle - (math.pi/2 * self.player_idx)
+            hover_points.append(self.get_raycast_to_border(angle))
+
+        return hover_points
+    
+    def get_raycast_to_border(self, angle):
+        min_dist = 25
+        max_dist = 75
+        step = 1
+        for i in reversed(range(min_dist, max_dist, step)):
+            point = self.spawn_point + np.array((i*math.cos(angle), i*math.sin(angle)))
+            if point[0] > 100 or point[0] < 0 or point[1] > 100 or point[1] < 0:
+                continue
+            if self.map_state[math.floor(point[0])][math.floor(point[1])] == self.player_idx+1:
+                return point
+
+        return self.spawn_point
 
     def number_in_circle(self, units, center, radius):
         units = set([tuple(np.floor(unit)) for unit in units])
