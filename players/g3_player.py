@@ -3,9 +3,7 @@ import math
 import os
 import pickle
 from typing import Tuple, List
-<<<<<<< HEAD
 import copy
->>>>>>> yunlan/push
 
 import numpy as np
 from shapely.geometry import Point
@@ -23,8 +21,6 @@ PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3)
 SCOUT_ALLY_SCALE = 2.0
 SCOUT_BORDER_REPULSION_SCALE = 1.0
 
-<<<<<<< HEAD
->>>>>>> yunlan/push
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -65,13 +61,11 @@ class Player:
         self.us = player_idx
         self.homebase = np.array(spawn_point)
         self.day_n = 0
-<<<<<<< HEAD
 
         self.our_units = None
         self.enemy_units = None
         self.enemy_offsets = None
         self.map_states = None
->>>>>>> yunlan/push
 
         self.target_loc = []
 
@@ -165,7 +159,6 @@ class Player:
 
         self.day_n += 1
 
-<<<<<<< HEAD
         self.map_states = map_states
 
         float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
@@ -173,7 +166,6 @@ class Player:
         self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
         self.our_units = np.array(float_unit_pos[self.us])
 
->>>>>>> yunlan/push
         # EARLY GAME: form a 2-layer wall
         if self.day_n <= self.initial_radius:
             while len(unit_id[self.us]) > len(self.target_loc):
@@ -184,7 +176,6 @@ class Player:
             return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
         
         # MID_GAME: adjust formation based on opponents' positions
-<<<<<<< HEAD
         num_scouts = 3
         scouts = np.array(float_unit_pos[self.us][:num_scouts])
 
@@ -196,7 +187,6 @@ class Player:
         offense_moves = self.move_scouts(scouts, np.arange(num_scouts))
 
         return offense_moves + defense_moves
->>>>>>> yunlan/push
 
 
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
@@ -279,7 +269,6 @@ def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[fl
     unit = v / mag
     return unit, mag
 
-<<<<<<< HEAD
 
 # -----------------------------------------------------------------------------
 #   Strategies
@@ -298,7 +287,6 @@ def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[fl
     unit = v / mag
     return unit, mag
 
->>>>>>> yunlan/push
 def repelling_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
     dir, mag = force_vec(p1, p2)
     # Inverse magnitude: closer things apply greater force
