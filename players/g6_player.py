@@ -1,6 +1,5 @@
 import os
 import pickle
-from time import clock_settime
 from turtle import width
 import numpy as np
 import sympy
@@ -167,6 +166,67 @@ class Defense:
 # prioritize those closest to home?
 
 
+class Spacer:
+    
+    def __init__(self, player_idx, spawn_point):
+        self.unitType = UnitType.SPACER
+        self.number_units = 0
+        self.prev_state = None
+        self.spawn_point = (spawn_point.x, spawn_point.y)
+        self.player_idx = player_idx
+        self.day = 0
+        self.scanner_radius = 50
+
+    def update(self, map_state, spacerIdxs, units, enemy_units):
+        self.map_state = map_state
+        #rotate the map state to the bottom left
+        self.number_units = len(spacerIdxs)
+        self.spacerIdxs = spacerIdxs
+        self.unit_locations = [unit for i, unit in enumerate(units) if i in spacerIdxs]
+        self.enemy_units = enemy_units
+        self.day += 1
+    def get_moves(self):
+        moves = {}
+        if self.number_units == 0:
+            return moves
+        print()
+        # Adapted from group 4 Code
+        ENEMY_INFLUENCE = 1 # TODO: change influence values for best spacers!
+        HOME_INFLUENCE = 20
+        ALLY_INFLUENCE = 0.5
+
+        for i, unit in enumerate(self.unit_locations):
+
+            enemy_force = np.add.reduce([self.repelling_force(unit,enemy) for enemy in self.enemy_units])
+            home_force = self.repelling_force(unit, self.spawn_point)
+            ally_force = np.add.reduce([self.repelling_force(unit,ally) for ally in self.unit_locations if not unit]) ###TODO: currently only looks at other SPACERS as ally's not all. Need to change this.
+
+            total_force = self.normalize((enemy_force * ENEMY_INFLUENCE)
+                                         + (home_force * HOME_INFLUENCE)
+                                         + (ally_force * ALLY_INFLUENCE)
+                                         )
+            moves[unit] = self.to_polar(total_force)
+
+    def force_vec(self, p1, p2):
+        v = p1 - p2
+        mag = np.linalg.norm(v)
+        unit = v / mag
+        return unit, mag
+
+    def to_polar(self, p):
+        x, y = p
+        return np.sqrt(x**2 + y**2), np.arctan2(y, x)
+
+    def normalize(self, v):
+        return v / np.linalg.norm(v)
+
+    def repelling_force(self, p1, p2):
+        dir, mag = self.force_vec(p1, p2)
+        return dir * 1 / (mag)        
+
+
+
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -228,7 +288,7 @@ class Player:
             UnitType.DEFENSE: {}
         }
 
-
+        self.spacer = Spacer(self.player_idx, self.spawn_point)
         self.defense = Defense(self.player_idx, self.spawn_point)
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
@@ -250,7 +310,7 @@ class Player:
                                                 move each unit of the player
                 """
         self.add_spawn_units_if_needed(unit_id[self.player_idx])
-        spacer, attacker, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
+        spacers, attacker, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
 
         enemy_ids, enemy_units = self.get_enemy_units(unit_id, unit_pos)
 
@@ -266,8 +326,15 @@ class Player:
 
         self.map_states = map_states
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
-        for idx in spacer:
-            moves[idx] = self.transform_move(1, 1, 1) #spacer.move_function(unit, idx, etc)
+
+        self.spacer.update(self.map_states, spacers, unit_pos[self.player_idx], enemy_units)
+        print(self.spacer.number_units)
+        spacerMoves = self.spacer.get_moves()
+        print(spacerMoves)
+        
+        for real_idx in spacers:
+            print("i")
+            moves[real_idx] = spacerMoves[real_idx]
 
         for idx in attacker:
             moves[idx] = self.transform_move(0, 1, 1) #attacker.move_function(unit, idx, etc)
