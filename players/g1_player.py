@@ -341,15 +341,15 @@ class Player:
 
     def play_cautious(self, unit_id, unit_pos, home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors):
         moves = self.play_aggressive(home_offset, vor_regions, units, pt_to_poly, adj_dict, superpolygon, s_neighbors)
-        fort_unit_ids = unit_id[self.player_idx][-4:-1]
+        # TODO: Better logic - we don't know that the last 4 units are closes to home (or last to spawn)
         fort_positions = [(0.6, 1.6), (1.6, 0.6), (1.6, 1.6)]
 
-        for i in range(len(fort_positions)):
-            current_point = unit_pos[self.player_idx][int(fort_unit_ids[i])]
+        for idx in range(len(fort_positions)):
+            current_point = unit_pos[self.player_idx][-idx]
             current = (current_point.x, current_point.y)
-            target = fort_positions[i]
+            target = fort_positions[idx]
             move = self.move_toward_position(current, target)
-            moves[int(fort_unit_ids[i])] = move
+            moves[-idx] = move
 
         return moves
 
