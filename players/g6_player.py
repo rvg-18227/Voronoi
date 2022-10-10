@@ -289,7 +289,7 @@ class Player:
 
         testing = True
         if testing:
-            testingType = UnitType.ATTACK if self.player_idx == 0 else UnitType.DEFENSE
+            testingType = UnitType.DEFENSE
             self.PHASE_ONE_OUTPUT = [testingType]
             self.PHASE_TWO_OUTPUT = [testingType]
             self.PHASE_THREE_OUTPUT = [testingType]
