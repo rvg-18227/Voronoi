@@ -16,3 +16,5 @@ vis_height = 775
 vis_width_ratio = 0.8
 vis_height_ratio = 0.8
 vis_padding = 0.02
+
+timeout = 60 * 10

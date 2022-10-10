@@ -1,10 +1,11 @@
 import logging
 import math
 import os
+import pickle
 import time
 import signal
 import numpy as np
-import sympy
+from shapely.geometry import Point
 from remi import start
 from voronoi_app import VoronoiApp
 import constants
@@ -78,7 +79,7 @@ class VoronoiGame:
         self.last_day = args.last
         self.base = []
         for i in range(constants.no_of_players):
-            self.base.append(sympy.geometry.Point2D(constants.base[i]))
+            self.base.append(Point(constants.base[i]))
 
         self.players = []
         self.player_names = []
@@ -137,6 +138,21 @@ class VoronoiGame:
         print("{} Unit Positions - {}".format(result["player_names"][3],
                                               [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
         print("\nTime Elapsed - {:.3f}s".format(self.end_time-self.start_time))
+
+        if args.dump_state:
+            with open("game.pkl", "wb+") as f:
+                pickle.dump(
+                    {
+                        "map_states": self.map_states,
+                        "cell_units": self.cell_units,
+                        "player_score": self.player_score,
+                        "player_total_score": self.player_total_score,
+                        "unit_id": self.unit_id,
+                        "unit_pos": self.unit_pos,
+                        "home_path": self.home_path,
+                    },
+                    f,
+                )
 
     def add_players(self, player_list):
         player_count = dict()
@@ -255,6 +271,7 @@ class VoronoiGame:
                     map_states=self.map_states[day][0],
                     current_scores=self.player_score[day][0],
                     total_scores=self.player_total_score[day])
+                returned_action = [(float(dist), float(angle)) for dist, angle in returned_action]
 
             if self.check_action(returned_action, day, i):
                 for j in range(len(returned_action)):
@@ -320,11 +337,15 @@ class VoronoiGame:
                     self.map_states[day][state][i][j] = self.cell_units[day][state][i][j]
                 else:
                     a, b = occupied_cells[0]
+                    a = int(a)
+                    b = int(b)
                     min_dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
                     min_dist_cells = [(a, b)]
                     min_dist_state = self.cell_units[day][state][a][b]
                     for k in range(1, len(occupied_cells)):
                         a, b = occupied_cells[k]
+                        a = int(a)
+                        b = int(b)
                         dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
                         if dist < min_dist:
                             min_dist = dist
@@ -356,36 +377,37 @@ class VoronoiGame:
             return False
         is_valid = False
         if isiterable(move) and count_iterable(move) == 2:
-            if np.all([x is not None and sympy.simplify(x).is_real for x in move]):
+            if all(x is not None and not np.isnan(x) and np.isfinite(x) for x in move):
                 is_valid = True
 
         return is_valid
 
     def move_unit(self, distance, angle, day, idx, unit_idx):
+        angle = float(angle)
         a = self.unit_pos[day][0][idx][unit_idx].x
         b = self.unit_pos[day][0][idx][unit_idx].y
         if distance > 1.0:
             distance = 1.0
             self.logger.debug("Distance rectified to max distance of 1 km")
 
-        new_a = a + (distance * sympy.cos(angle))
-        new_b = b + (distance * sympy.sin(angle))
+        new_a = a + (distance * np.cos(angle))
+        new_b = b + (distance * np.sin(angle))
 
         if new_a < 0:
             new_a = 0
-            new_b = b + (-a * sympy.tan(angle))
+            new_b = b + (-a * np.tan(angle))
         elif new_a >= 100:
             new_a = 99.99999999
-            new_b = b + ((new_a-a) * sympy.tan(angle))
+            new_b = b + ((new_a-a) * np.tan(angle))
 
         if new_b < 0:
             new_b = 0
-            new_a = a + (-b / sympy.tan(angle))
+            new_a = a + (-b / np.tan(angle))
         elif new_b >= 100:
             new_b = 99.99999999
-            new_a = a + ((new_b-b) / sympy.tan(angle))
+            new_a = a + ((new_b-b) / np.tan(angle))
 
-        new_pos = sympy.Point2D(new_a, new_b)
+        new_pos = Point(new_a, new_b)
         self.unit_id[day][1][idx].append(self.unit_id[day][0][idx][unit_idx])
         self.unit_pos[day][1][idx].append(new_pos)
 
@@ -419,8 +441,9 @@ class VoronoiGame:
     def path_map(self, day, idx, x, y):
         stack = [(x, y)]
         while len(stack):
-            a, b = stack[-1]
-            stack.pop()
+            a, b = stack.pop()
+            a = int(a)
+            b = int(b)
             self.home_path[day][idx][a][b] = True
 
             if a == 0:

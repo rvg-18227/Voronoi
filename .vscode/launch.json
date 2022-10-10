@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--port",
+                "-1",
+                "-p1",
+                "8",
+                "-p2",
+                "2",
+                "-p3",
+                "3",
+                "-p4",
+                "4"
+            ],
+            "justMyCode": true
+        }
+    ]
+}
