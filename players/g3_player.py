@@ -4,6 +4,7 @@ import os
 import pickle
 from typing import Tuple, List
 import copy
+import time
 
 import numpy as np
 from shapely.geometry import Point
@@ -18,8 +19,8 @@ PRESSURE_HI_THRESHOLD = 3
 PRESSURE_LO_THRESHOLD = 1.5
 PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3) 
 
-SCOUT_ALLY_SCALE = 2.0
-SCOUT_BORDER_REPULSION_SCALE = 1.0
+SCOUT_ALLY_SCALE = 10.0
+SCOUT_BORDER_REPULSION_SCALE = 3.0
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -70,6 +71,7 @@ class Player:
         self.target_loc = []
 
         self.initial_radius = 35
+        self.num_scouts = 3
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
@@ -79,24 +81,33 @@ class Player:
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
     
-    def get_radius(self, point: Tuple[float, float]) -> float:
-        """Returns the radial distance of our soldier at @point to our homebase."""
-        return np.linalg.norm(np.array(point) - self.homebase)
+    # def get_radius(self, point: Tuple[float, float]) -> float:
+    #     """Returns the radial distance of our soldier at @point to our homebase."""
+    #     return np.linalg.norm(np.array(point) - self.homebase)
 
-    def push(self, unit_pos: List[List[Point]]) -> List[Tuple[float, float]]:
-        allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
-        enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
-        flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
+    def get_radius(self, points):
+        """Returns the radial distance of our soldier at @point to our homebase."""
+        return np.sqrt(((points - self.homebase) ** 2).sum(axis=1))
+
+    def push(self, scout_ids) -> List[Tuple[float, float]]:
+        #allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
+        allies = np.delete(self.our_units, scout_ids, axis=0)  # not using slicing because scout_ids could be non-continous
+
+        # enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
+        # flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
+        flattened_enemies = self.enemy_units
 
         k = math.ceil(len(allies) / 4)
         kmeans = KMeans(n_clusters=k).fit(allies)
 
-        ally_distances = np.array([self.get_radius(point) for point in kmeans.cluster_centers_])
+        # ally_distances = np.array([self.get_radius(point) for point in kmeans.cluster_centers_])
+        ally_distances = self.get_radius(kmeans.cluster_centers_)
         kmeans_radius = KMeans(n_clusters=min(3, k)).fit(ally_distances.reshape(-1, 1))
 
         max_cluster = kmeans_radius.labels_[0]
 
-        repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
+        #repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
+        repelling_forces = [exploration_force(c, flattened_enemies, ally_pts=None) for c in kmeans.cluster_centers_]
         pressure_levels = np.array([get_pressure_level(force) for force in repelling_forces])
         pressure_levels[np.array(kmeans_radius.labels_) != max_cluster] = PRESSURE_LO # index where point is not in outer radius
         soldier_moves = [self._push_radially(allies[i], plevel=pressure_levels[cid]) for i, cid in enumerate(kmeans.labels_)]
@@ -176,15 +187,15 @@ class Player:
             return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
         
         # MID_GAME: adjust formation based on opponents' positions
-        num_scouts = 3
-        scouts = np.array(float_unit_pos[self.us][:num_scouts])
+        scout_ids = np.arange(self.num_scouts)
 
-        # remove first n troops as scouts...
-        unit_pos = copy.deepcopy(unit_pos)
-        unit_pos[self.us] = unit_pos[self.us][num_scouts:]
-        defense_moves = self.push(unit_pos)
-
-        offense_moves = self.move_scouts(scouts, np.arange(num_scouts))
+        #start = time.time()
+        defense_moves = self.push(scout_ids)
+        #print('Defense: ', time.time()-start)
+        
+        #start = time.time()
+        offense_moves = self.move_scouts(scout_ids)
+        #print('Offense: ', time.time()-start)
 
         return offense_moves + defense_moves
 
@@ -197,15 +208,23 @@ class Player:
         return (x, y)
 
     def explore(self, scout_unit, ally_units):
-        enemy_k = min(20, math.ceil(self.enemy_units.shape[0]/4))
-        enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units)
-        ally_k = min(6, math.ceil(ally_units.shape[0]/4))
-        ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units)
-        force = exploration_force(scout_unit, ally_clusters.cluster_centers_, enemy_clusters.cluster_centers_) \
-            + border_repulsion(scout_unit, xmax=len(self.map_states), ymax=len(self.map_states[0]))
+        # enemy_k = min(25, math.ceil(self.enemy_units.shape[0]/4))
+        # enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units).cluster_centers_
+        # ally_k = min(8, math.ceil(ally_units.shape[0]/4))
+        # ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units).cluster_centers_
+
+        # change to random selection to speed up
+        enemy_clusters = self.enemy_units[np.random.choice(np.arange(self.enemy_units.shape[0]), min(self.enemy_units.shape[0], 50), replace=False)]
+        ally_clusters = ally_units[np.random.choice(np.arange(ally_units.shape[0]), min(ally_units.shape[0], 15), replace=False)]
+
+        homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
+        force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters) \
+            + border_repulsion(scout_unit, xmax=len(self.map_states), ymax=len(self.map_states[0])) \
+            + SCOUT_ALLY_SCALE * homebase_force
         return np.array([1, np.arctan2(force[1], force[0])])
 
-    def move_scouts(self, scout_units, scout_ids):
+    def move_scouts(self, scout_ids):
+        scout_units = self.our_units[scout_ids]
         scout_moves = np.zeros_like(scout_units, dtype=float)
         # safety check
         ally_units = np.delete(self.our_units, scout_ids, axis=0)
@@ -241,12 +260,15 @@ def _push_radially(pt, homebase, exceed_lo=False):
 # -----------------------------------------------------------------------------
 #   Force (NumPy)
 # -----------------------------------------------------------------------------
-def exploration_force(curr_pt, ally_pts, enemy_pts, ally_scale=SCOUT_ALLY_SCALE):
-    ally_v = curr_pt - ally_pts
-    ally_force = inverse_force(ally_v)
+def exploration_force(curr_pt, enemy_pts, ally_pts=None):
+    if ally_pts is None:
+        ally_force = 0
+    else:
+        ally_v = curr_pt - ally_pts
+        ally_force = inverse_force(ally_v)
     enemy_v = curr_pt - enemy_pts
     enemy_force = inverse_force(enemy_v)
-    return ally_scale * ally_force + enemy_force
+    return ally_force + enemy_force
 
 def border_repulsion(curr_pt, xmax, ymax, scale=SCOUT_BORDER_REPULSION_SCALE):
     border_pts = np.array([[0, curr_pt[1]], [xmax, curr_pt[1]], [curr_pt[0], 0], [curr_pt[0], ymax]])
@@ -307,6 +329,14 @@ def get_pressure_level(force: List[float]) -> int:
         return PRESSURE_MID
     else:
         return PRESSURE_HI
+
+# def get_pressure_level(force):
+#     p = np.sqrt((force ** 2).sum(axis=1))
+#     a = np.zeros_like(p)
+#     a[np.where(p<=PRESSURE_LO_THRESHOLD)[0]] = PRESSURE_LO
+#     a[np.where(p>PRESSURE_LO_THRESHOLD && p<PRESSURE_HI_THRESHOLD)[0]] = PRESSURE_MID
+#     a[np.where(p>=PRESSURE_HI)[0]] = PRESSURE_HI
+#     return a
 
 # -----------------------------------------------------------------------------
 #   Helper functions
