@@ -49,29 +49,21 @@ def get_home_coords(self):
         return Point(99.5, 0.5)
 
 def get_interest_regions(idx):
-    
-    x,y = get_corner(idx)
-
+    x, y = get_corner(idx)
     regions = []
 
     regions.append(get_interest_regions_points((50,50),0))
 
     if x == 0:
         regions.append(get_interest_regions_points((10,50),1))
-
         regions.append(get_interest_regions_points((30,50),2))
-
     elif x == 100:
         regions.append(get_interest_regions_points((90,50),1))
-
         regions.append(get_interest_regions_points((70,50),2))
 
-    
     if y == 0:
         regions.append(get_interest_regions_points((50,10),3))
-
         regions.append(get_interest_regions_points((50,30),4))
-
     elif y == 100:
         regions.append(get_interest_regions_points((50,90),3))
 
@@ -80,8 +72,8 @@ def get_interest_regions(idx):
     return regions
 
 def get_interest_regions_points(center_point, i):
-    x,y = center_point
-    return InterestRegion(center_point, Polygon([(x-10,y-10),(x+10,y-10),(x+10,y+10),(x-10,y+10)]), i)
+    x, y = center_point
+    return InterestRegion(center_point, Polygon([(x-10, y-10), (x+10, y-10), (x+10, y+10), (x-10,y+10)]), i)
 
 class InterestRegion:
     def __init__(self, center_point, polygon, created_idx):
@@ -172,109 +164,89 @@ class Player:
                                                 move each unit of the player
                 """
 
-        #implement a region control based player
-        if self.player_idx == 0:
+        #for the first 50 days
+        #first unit goes straight diagonal (45 deg) aims for point (50,50)
+        #second unit goes at a 22.5 degree, helping the boundary fight on the vertical
+        #third unit goes at a 67.5 degree, helping the boundary fight on the horizontal
+        #fourth unit has target helps, which ever needs more help, if none, go to not taken region
+        #fifth unit has target, similar to 4 does
 
-            #for the first 50 days
-            #first unit goes straight diagonal (45 deg) aims for point (50,50)
-            #second unit goes at a 22.5 degree, helping the boundary fight on the vertical
-            #third unit goes at a 67.5 degree, helping the boundary fight on the horizontal
-            #fourth unit has target helps, which ever needs more help, if none, go to not taken region
-            #fifth unit has target, similar to 4 does
+        moves = [None] * len(unit_id[self.player_idx])
 
-            moves = [None] * len(unit_id[self.player_idx])
-
-            scout_angles = [45.0, 67.5, 22.5, ]
+        scout_angles = [45.0, 67.5, 22.5, ]
 
 
-            if self.days < 50:
-                for i in range(len(unit_id[self.player_idx])):
-                    pt = unit_pos[self.player_idx][i]
-                    curr = (pt.x, pt.y)
+        if self.days < 50:
+            for i in range(len(unit_id[self.player_idx])):
+                pt = unit_pos[self.player_idx][i]
+                curr = (pt.x, pt.y)
 
-                    # first unit holds 50,50
-                    if self.days < 50:
+                # first unit holds 50,50
+                if self.days < 50:
 
-                        distance = 1
-                        angle = scout_angles[i%3]
+                    distance = 1
+                    angle = scout_angles[i%3]
 
-                        moves[i] = self.transform_move((distance, angle*(math.pi / 180)))
-            else:
-                #same dimension as unit_pos
-                danger_levels, danger_regions_score, region_count, idx_in_region = self.danger_levels(unit_pos)
-                #print(danger_regions_score)
+                    moves[i] = self.transform_move((distance, angle*(math.pi / 180)))
+        else:
+            #same dimension as unit_pos
+            danger_levels, danger_regions_score, region_count, idx_in_region = self.danger_levels(unit_pos)
+            #print(danger_regions_score)
 
-                region_and_score = []
-                #Move to quadrant with (in priority, highest first):
-                #no units > danger score > closest
-                for r in self.regions:
-                    temp = []
+            region_and_score = []
+            #Move to quadrant with (in priority, highest first):
+            #no units > danger score > closest
+            for r in self.regions:
+                temp = []
 
-                    if r in region_count:
-                        temp.append(region_count[r])
-                    else:
-                        temp.append(0)
+                if r in region_count:
+                    temp.append(region_count[r])
+                else:
+                    temp.append(0)
 
-                    temp[0] += len(self.region_otw[r])
+                temp[0] += len(self.region_otw[r])
 
-                    if r in danger_regions_score:
-                        if danger_regions_score[r] != 0:
-                            temp.append(-danger_regions_score[r])
-                        else:
-                            temp.append(-float("inf"))
+                if r in danger_regions_score:
+                    if danger_regions_score[r] != 0:
+                        temp.append(-danger_regions_score[r])
                     else:
                         temp.append(-float("inf"))
+                else:
+                    temp.append(-float("inf"))
 
-                    temp.append(r)
-                    heapq.heappush(region_and_score,tuple(temp))
-                
-                heapq.heapify(region_and_score)
+                temp.append(r)
+                heapq.heappush(region_and_score,tuple(temp))
+            
+            heapq.heapify(region_and_score)
+            #print(region_and_score)
+
+            for i in range(len(unit_id[self.player_idx])):
+                pt = unit_pos[self.player_idx][i]
+                curr = (pt.x, pt.y)
+
+                if i in idx_in_region:
+                    self.otw_to_regions.pop(i, None)
+                    self.region_otw[idx_in_region[i]].discard(i)
+                    moves[i] = self.point_move(curr, idx_in_region[i].center_point)
+                    continue
+
+                if i in self.otw_to_regions:
+                    moves[i] = self.point_move(curr, self.otw_to_regions[i])
+                    continue
+
+                target = list(heapq.heappop(region_and_score))
                 #print(region_and_score)
 
-                for i in range(len(unit_id[self.player_idx])):
-                    pt = unit_pos[self.player_idx][i]
-                    curr = (pt.x, pt.y)
+                moves[i] = self.point_move(curr, target[2].center_point)
 
-                    if i in idx_in_region:
-                        self.otw_to_regions.pop(i, None)
-                        self.region_otw[idx_in_region[i]].discard(i)
-                        moves[i] = self.point_move(curr, idx_in_region[i].center_point)
-                        continue
+                self.otw_to_regions[i] = target[2].center_point
+                print(i, target[2].center_point)
+                self.region_otw[target[2]].add(i)
 
-                    if i in self.otw_to_regions:
-                        moves[i] = self.point_move(curr, self.otw_to_regions[i])
-                        continue
+                heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
 
-                    target = list(heapq.heappop(region_and_score))
-                    #print(region_and_score)
-
-                    moves[i] = self.point_move(curr, target[2].center_point)
-
-                    self.otw_to_regions[i] = target[2].center_point
-                    print(i, target[2].center_point)
-                    self.region_otw[target[2]].add(i)
-
-                    heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
-
-            self.days += 1    
-            return moves
-
-        else:
-            return self.sprinkler_player(unit_id)
-
-    #First Algorithm
-    def sprinkler_player(self, unit_id):
-        moves = []
-        angle_jump = 10
-        angle_start = 45
-        for i in range(len(unit_id[self.player_idx])):
-            distance = 1
-
-            angle = (((i) * (angle_jump) + angle_start ))%90
-
-            moves.append((distance, angle* (math.pi / 180)))
-
-        return [self.transform_move(move) for move in moves]
+        self.days += 1    
+        return moves
 
     #start claculating only after day 40+
     #unlikely to have nearby enemies day 40
