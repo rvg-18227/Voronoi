@@ -635,9 +635,7 @@ class FastMapState:
             connected[mask[1:-1, 1:-1].astype(bool)] = player
         return connected
 
-    def remove_killed_units(
-        self, day, state, unit_pos, unit_id,
-    ) -> tuple[list[list[shapely.geometry.Point]], list[list[int]]]:
+    def remove_killed_units(self, day, state, unit_pos, unit_id) -> tuple[list[list[Point]], list[list[int]]]:
         """Remove killed units and recompute the occupancy map
         Returns:
             units_alive: List of alive units for each player. u[player][pt]
@@ -645,7 +643,6 @@ class FastMapState:
         """
         # killed_units = []
         connectivity_map = self.get_connectivity_map()
-
 
         units_alive = []  # List of list: u[player][pt]
         id_units_alive = []
