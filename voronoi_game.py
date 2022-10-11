@@ -1,5 +1,5 @@
+import cv2
 import logging
-import math
 import os
 import pickle
 import time
@@ -11,6 +11,7 @@ from remi import start
 from voronoi_app import VoronoiApp
 import constants
 from utils import *
+
 from players.default_player import Player as DefaultPlayer
 from players.g1_player import Player as G1_Player
 from players.g2_player import Player as G2_Player
@@ -21,10 +22,7 @@ from players.g6_player import Player as G6_Player
 from players.g7_player import Player as G7_Player
 from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
-
 from voronoi_renderer import VoronoiRender
-from matplotlib import pyplot as plt
-import cv2
 
 
 class VoronoiGame:
@@ -379,55 +377,6 @@ class VoronoiGame:
         self.unit_id[day][1][idx].append(self.unit_id[day][0][idx][unit_idx])
         self.unit_pos[day][1][idx].append(self.unit_pos[day][0][idx][unit_idx])
 
-    # def check_path_home(self, day, idx):
-    #     # idx = player idx
-    #     # adds all valid units from after move state to end state
-    #     a = math.floor(self.base[idx].x)
-    #     b = math.floor(self.base[idx].y)
-    #     if self.map_states[day][1][a][b] == -1:
-    #         self.home_path[day][idx][a][b] = True
-    #     elif self.map_states[day][1][a][b] == (idx+1):
-    #         self.path_map(day, idx, a, b)
-    #         for i in range(len(self.unit_id[day][1][idx])):
-    #             a = math.floor(self.unit_pos[day][1][idx][i].x)
-    #             b = math.floor(self.unit_pos[day][1][idx][i].y)
-    #             if self.home_path[day][idx][a][b]:
-    #                 self.unit_id[day][2][idx].append(self.unit_id[day][1][idx][i])
-    #                 self.unit_pos[day][2][idx].append(self.unit_pos[day][1][idx][i])
-    #             else:
-    #                 self.logger.info("{} unit {} has been cutoff from homebase".format(self.player_names[idx],
-    #                                                                                    self.unit_id[day][1][idx][i]))
-
-    # def path_map(self, day, idx, x, y):
-    #     stack = [(x, y)]
-    #     while len(stack):
-    #         a, b = stack.pop()
-    #         a = int(a)
-    #         b = int(b)
-    #         self.home_path[day][idx][a][b] = True
-    #
-    #         if a == 0:
-    #             x_range = range(2)
-    #         elif a == 99:
-    #             x_range = range(-1, 1)
-    #         else:
-    #             x_range = range(-1, 2)
-    #
-    #         if b == 0:
-    #             y_range = range(2)
-    #         elif b == 99:
-    #             y_range = range(-1, 1)
-    #         else:
-    #             y_range = range(-1, 2)
-    #
-    #         for i in x_range:
-    #             for j in y_range:
-    #                 if not self.home_path[day][idx][a + i][b + j]:
-    #                     if self.map_states[day][1][a + i][b + j] == -1:
-    #                         self.home_path[day][idx][a][b] = True
-    #                     elif self.map_states[day][1][a + i][b + j] == (idx + 1):
-    #                         stack.append((a + i, b + j))
-
     def get_state(self, day, state=0):
         return_dict = dict()
         return_dict["day"] = day+1
@@ -447,7 +396,7 @@ class VoronoiGame:
 class FastMapState:
     def __init__(self, map_size, base_loc):
         self.map_size = map_size
-        self.base_loc = base_loc
+        self.spawn_loc = base_loc
 
         self.cell_origins = self._compute_cell_coords(map_size)
         self.occupancy_map = None  # 2d state map
@@ -616,8 +565,7 @@ class FastMapState:
         occ_map = self.occupancy_map
         connected = np.ones_like(occ_map) * 4  # Default = disputed/empty
         for player in range(4):
-            # start = self.spawn_loc[player]
-            start = self.base_loc[player]
+            start = self.spawn_loc[player]
             start = (int(start[0]), int(start[1]))  # Convert to cell index
 
             if occ_map[start[1], start[0]] != player:
@@ -641,20 +589,17 @@ class FastMapState:
             units_alive: List of alive units for each player. u[player][pt]
             id_units_alive: List of alive ids for each player. u[player][id]
         """
-        # killed_units = []
         connectivity_map = self.get_connectivity_map()
 
+        # build new list of valid units
         units_alive = []  # List of list: u[player][pt]
         id_units_alive = []
-        # for player, unit_dict in self.units.items():
         for player in range(4):
             units_alive_ = []
             id_units_alive_ = []
             for pt, id in zip(unit_pos[day][state][player], unit_id[day][state][player]):
                 pos = pt.coords[:][0]
                 pos_grid = (int(pos[1]), int(pos[0]))
-                # if not connectivity_map[pos_grid] == player:
-                #     killed_units.append((player, pos, id))
                 if connectivity_map[pos_grid] == player:
                     units_alive_.append(pt)
                     id_units_alive_.append(id)
@@ -662,24 +607,4 @@ class FastMapState:
             units_alive.append(units_alive_)
             id_units_alive.append(id_units_alive_)
 
-        # build new list instead
-        # Remove isolated units from unit list
-        # for player, pos, id in killed_units:
-        #     self.units[player].pop(id)
-
-        # Update the occupancy map
-        # self.compute_occupancy_map(connectivity_map > 3)  # Separate step in main logic
-
         return units_alive, id_units_alive
-
-    def plot_occ_map(self, units=None):
-        """Draws a plot of the occupancy map, for live debugging"""
-        grid_rgb = self.renderer.get_colored_occ_map(self.occupancy_map, units)
-        plt.imshow(grid_rgb)
-        plt.show()
-
-    # def plot_connectivity_map(self, units=None):
-    #     """Draws a plot of the occ map, for live debugging"""
-    #     grid_rgb = self.renderer.get_colored_occ_map(self.get_connectivity_map(), units)
-    #     plt.imshow(grid_rgb)
-    #     plt.show()
