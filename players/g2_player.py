@@ -121,23 +121,6 @@ class Player:
         self.otw_to_regions = {}
         self.region_otw = defaultdict(lambda: set())
 
-    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
-        dist, rad_ang = dist_ang
-        return (dist, rad_ang - (math.pi/2 * self.player_idx))
-
-    def point_move(self, p1, p2):
-        dist = min(1, math.dist(p1,p2))
-        angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
-        return (dist, angle)
-    
-    def fixed_formation_moves(self, unit_ids, angles, move_size=1):
-        return {
-            int(unit_id) : 
-                self.transform_move((move_size, angles[idx % len(angles)]*(math.pi / 180)))
-            for idx, unit_id
-            in enumerate(unit_ids)
-        }
-    
     def get_home_coords(self):
         if self.player_idx == 0:
             return Point(0.5, 0.5)
@@ -147,6 +130,76 @@ class Player:
             return Point(99.5, 99.5)
         elif self.player_idx == 3:
             return Point(99.5, 0.5)
+
+    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+        dist, rad_ang = dist_ang
+        return (dist, rad_ang - (math.pi/2 * self.player_idx))
+
+    def point_move(self, p1, p2):
+        dist = min(1, math.dist(p1,p2))
+        angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        return (dist, angle)
+    
+    def fixed_formation_moves(self, unit_ids, angles, move_size=1) -> Dict[float, Tuple[float, float]]:
+        return {
+            int(unit_id) : 
+                self.transform_move((move_size, angles[idx % len(angles)]*(math.pi / 180)))
+            for idx, unit_id
+            in enumerate(unit_ids)
+        }
+
+    def sentinel_moves(self, unit_pos) -> Dict[float, Tuple[float, float]]:
+        danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
+        region_and_score = []
+        moves = {}
+
+        #Move to quadrant with (in priority, highest first):
+        #no units > danger score > closest
+        for r in self.regions:
+            temp = []
+            if r in region_count:
+                temp.append(region_count[r])
+            else:
+                temp.append(0)
+
+            temp[0] += len(self.region_otw[r])
+
+            if r in danger_regions_score:
+                if danger_regions_score[r] != 0:
+                    temp.append(-danger_regions_score[r])
+                else:
+                    temp.append(-float("inf"))
+            else:
+                temp.append(-float("inf"))
+
+            temp.append(r)
+            heapq.heappush(region_and_score,tuple(temp))
+
+        for i in range(len(unit_pos[self.player_idx])):
+            pt = unit_pos[self.player_idx][i]
+            curr = (pt.x, pt.y)
+
+            if i in unit_regions:
+                self.otw_to_regions.pop(i, None)
+                self.region_otw[unit_regions[i]].discard(i)
+                moves[i+1] = self.point_move(curr, unit_regions[i].center_point)
+                continue
+
+            if i in self.otw_to_regions:
+                moves[i+1] = self.point_move(curr, self.otw_to_regions[i])
+                continue
+
+            target = list(heapq.heappop(region_and_score))
+
+            moves[i+1] = self.point_move(curr, target[2].center_point)
+
+            self.otw_to_regions[i] = target[2].center_point
+            # print(i, target[2].center_point)
+            self.region_otw[target[2]].add(i)
+
+            heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
+        
+        return moves
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -172,7 +225,7 @@ class Player:
 
         if self.player_idx == 0:
             # Max takes 0
-            pass
+            moves.update(self.sentinel_moves(unit_pos))
         elif self.player_idx == 1:
             # Abigail takes 1
             pass
@@ -180,73 +233,9 @@ class Player:
             # Noah takes 2
             pass
         elif self.player_idx == 3:
-            pass
-
-
-        # Send fixed scouts to capture early game wins
-        moves.update(self.fixed_formation_moves(unit_id[self.player_idx][0:3], [45.0, 67.5, 22.5]))
- 
-        #if all the moves are fixed formation moves:
-        if len(moves) <= 3:
-            return list(moves.values())
-
-        danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
-
-        region_and_score = []
-
-        #Move to quadrant with (in priority, highest first):
-        #no units > danger score > closest
-        for r in self.regions:
-            temp = []
-
-            if r in region_count:
-                temp.append(region_count[r])
-            else:
-                temp.append(0)
-
-            temp[0] += len(self.region_otw[r])
-
-            if r in danger_regions_score:
-                if danger_regions_score[r] != 0:
-                    temp.append(-danger_regions_score[r])
-                else:
-                    temp.append(-float("inf"))
-            else:
-                temp.append(-float("inf"))
-
-            temp.append(r)
-            heapq.heappush(region_and_score,tuple(temp))
-
-        for i in range(len(unit_id[self.player_idx])):
-            
-            pt = unit_pos[self.player_idx][i]
-            curr = (pt.x, pt.y)
-
-            if i in unit_regions:
-                self.otw_to_regions.pop(i, None)
-                self.region_otw[unit_regions[i]].discard(i)
-                moves[i+1] = self.point_move(curr, unit_regions[i].center_point)
-                continue
-
-            if i in self.otw_to_regions:
-                moves[i+1] = self.point_move(curr, self.otw_to_regions[i])
-                continue
-
-            target = list(heapq.heappop(region_and_score))
-            #print(region_and_score)
-
-            moves[i+1] = self.point_move(curr, target[2].center_point)
-
-            self.otw_to_regions[i] = target[2].center_point
-            print(i, target[2].center_point)
-            self.region_otw[target[2]].add(i)
-
-            heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
+            moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
 
         self.days += 1  
-
-        #print(list(moves.values()))  
-        print(moves)
         return list(moves.values())
 
     def danger_levels(self, unit_pos):
@@ -297,7 +286,7 @@ class Player:
         #unit_regions is which region is a unit in
         return result, danger_regions, region_count, unit_regions
 
-    def wall_forces(self, current_point) -> List[Tuple[float, float], float]:
+    def wall_forces(self, current_point) -> List[Tuple[Tuple[float, float], float]]:
         current_x = current_point.x
         current_y = current_point.y
         dist_to_top = Point(current_x, 0).distance(current_point)
@@ -306,7 +295,7 @@ class Player:
         dist_to_left = Point(100, current_y).distance(current_point)
         return [((current_x, 0), dist_to_top), ((current_x, 100), dist_to_bottom), ((100, current_y), dist_to_right), ((0, current_y), dist_to_left)]
 
-    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> List[Tuple[float, float], float]:
+    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> List[Tuple[Tuple[float, float], float]]:
         if(len(unit_id[self.player_idx]) < 2):
             return None
 
