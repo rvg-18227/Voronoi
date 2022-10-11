@@ -5,6 +5,10 @@ from typing import Tuple
 from abc import ABC, abstractmethod
 from enum import Enum
 import pdb
+import matplotlib.pyplot as plt
+from constants import player_color, tile_color, dispute_color, base
+from matplotlib import colors
+import pandas as pd
 
 
 def point_to_floats(p: Point):
@@ -26,8 +30,44 @@ class GameParameters:
 class StateUpdate:
     """Represents all of the data that changes between turns."""
 
+    params: GameParameters
     unit_id: list[list[str]]
     unit_pos: list[list[Point]]
+
+    def __init__(
+        self,
+        params: GameParameters,
+        unit_id: list[list[str]],
+        unit_pos: list[list[Point]],
+    ):
+        self.params = params
+        self.unit_id = unit_id
+        self.unit_pos = unit_pos
+
+    # =============================
+    # Role Update Utility Functions
+    # =============================
+
+    def own_units(self):
+        return {
+            unit_id: unit_pos
+            for unit_id, unit_pos in zip(
+                self.unit_id[self.params.player_idx],
+                [pos for pos in self.unit_pos[self.params.player_idx]],
+            )
+        }
+
+    def enemy_units(self):
+        return {
+            enemy_id: list(zip(self.unit_id[enemy_id], self.unit_pos[enemy_id]))
+            for enemy_id in range(4)
+            if enemy_id != self.params.player_idx
+        }
+
+    def all_enemy_units(self):
+        return [
+            unit for enemy_units in self.enemy_units().values() for unit in enemy_units
+        ]
 
 
 # =======================
@@ -99,39 +139,12 @@ class Role(ABC):
         return self._params
 
     def turn_moves(self, update: StateUpdate):
-        alive_units = set(self._own_units(update).keys())
+        alive_units = set(update.own_units().keys())
         allocated_set = set(self.__allocated_units)
         dead_units = allocated_set - alive_units
         self.__allocated_units = list(allocated_set - dead_units)
 
         return self._turn_moves(update, dead_units)
-
-    # =============================
-    # Role Update Utility Functions
-    # =============================
-
-    def _own_units(self, update: StateUpdate):
-        return {
-            unit_id: unit_pos
-            for unit_id, unit_pos in zip(
-                update.unit_id[self.params.player_idx],
-                [pos for pos in update.unit_pos[self.params.player_idx]],
-            )
-        }
-
-    def _enemy_units(self, update: StateUpdate):
-        return {
-            enemy_id: list(zip(update.unit_id[enemy_id], update.unit_pos[enemy_id]))
-            for enemy_id in range(4)
-            if enemy_id != self.params.player_idx
-        }
-
-    def _all_enemy_units(self, update: StateUpdate):
-        return [
-            unit
-            for enemy_units in self._enemy_units(update).values()
-            for unit in enemy_units
-        ]
 
     # ===================
     # Role Specialization
@@ -158,8 +171,8 @@ class Defender(Role):
         WALL_INFLUENCE = 1
 
         moves = {}
-        own_units = self._own_units(update)
-        enemy_units = self._all_enemy_units(update)
+        own_units = update.own_units()
+        enemy_units = update.all_enemy_units()
 
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
@@ -211,8 +224,8 @@ class NaiveAttacker(Role):
         WALL_INFLUENCE = 1
 
         moves = {}
-        own_units = self._own_units(update)
-        enemy_units = self._all_enemy_units(update)
+        own_units = update.own_units()
+        enemy_units = update.all_enemy_units()
 
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
@@ -258,6 +271,8 @@ class NaiveAttacker(Role):
 
 class Player:
     params: GameParameters
+    logger: logging.Logger
+    turn: int
 
     def __init__(
         self,
@@ -287,6 +302,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.turn = 0
 
         # Game fundamentals
         self.params = GameParameters()
@@ -313,6 +329,18 @@ class Player:
             min(self.max_dim, max(self.min_dim, y)),
         )
 
+    def risk_distances(self, enemy_location, own_units):
+        self.debug("enemy_location", enemy_location)
+        # self.debug("\thomebase:", self.homebase)
+        # self.debug("\tEnemy location:",enemy_location)
+        # self.debug("\tEnemy distance_d_home_base:",np.linalg.norm(np.subtract(self.homebase,enemy_location)))
+        d_base = np.linalg.norm(np.subtract(self.params.home_base, enemy_location))
+        d_to_closest_unit = 150
+        for unit in own_units:
+            d_our_unit = np.linalg.norm(np.subtract(unit[1], enemy_location))
+            d_to_closest_unit = min(d_our_unit, d_to_closest_unit)
+        return (d_base, d_to_closest_unit)
+
     def play(
         self, unit_id, unit_pos, map_states, current_scores, total_scores
     ) -> list[tuple[float, float]]:
@@ -334,10 +362,33 @@ class Player:
                                         move each unit of the player
         """
 
-        ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 20
-        ALLY_INFLUENCE = 0.5
-        WALL_INFLUENCE = 1
+        # Convert unit positions to floats
+        unit_pos = [
+            [point_to_floats(player_unit_pos) for player_unit_pos in player_units]
+            for player_units in unit_pos
+        ]
+
+        update = StateUpdate(self.params, unit_id, unit_pos)
+
+        own_units = list(update.own_units().items())
+        self.debug(own_units)
+        enemy_unit_locations = [pos for _, pos in update.all_enemy_units()]
+        risk_distances = [
+            self.risk_distances(enemy_location, own_units)
+            for enemy_location in enemy_unit_locations
+        ]
+
+        self.debug("\tRisk distances:", risk_distances)
+
+        risks = list(
+            zip(
+                enemy_unit_locations,
+                [min(100, (750 / (d1) + 750 / (d2))) for d1, d2 in risk_distances],
+            )
+        )
+        visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
+
+        self.debug("\tRisks:", risks)
 
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
@@ -364,16 +415,6 @@ class Player:
             else:
                 self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
 
-        # Convert unit positions to floats
-        unit_pos = [
-            [point_to_floats(player_unit_pos) for player_unit_pos in player_units]
-            for player_units in unit_pos
-        ]
-
-        update = StateUpdate()
-        update.unit_id = unit_id
-        update.unit_pos = unit_pos
-
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
@@ -381,4 +422,44 @@ class Player:
                 role_moves.update(role_group.turn_moves(update))
         for unit_id in unit_id[self.params.player_idx]:
             moves.append(role_moves[unit_id])
+
+        self.turn += 1
         return moves
+
+
+def visualize_risk(risks, enemy_units_locations, own_units, turn):
+    DISPLAY_EVERY_N_ROUNDS = 30
+    HEAT_MAP = True
+
+    if HEAT_MAP and turn % DISPLAY_EVERY_N_ROUNDS == 0:
+
+        c = []
+        for r in risks:
+            c.append(r[1])
+        plt.rcParams["figure.autolayout"] = True
+        x = np.array(enemy_units_locations)[:, 0]
+        y = np.array(enemy_units_locations)[:, 1]
+        c = np.array(c)
+
+        df = pd.DataFrame({"x": x, "y": y, "c": c})
+
+        fig, ax = plt.subplots()  # 1,1, figsize=(20,6))
+        cmap = plt.cm.hot
+        norm = colors.Normalize(vmin=0.0, vmax=100.0)
+        mp = ax.scatter(df.x, df.y, color=cmap(norm(df.c.values)))
+        ax.set_xticks(df.x)
+
+        fig.subplots_adjust(right=0.9)
+        sub_ax = plt.axes([0.8, 0.4, 0.1, 0.4])
+
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        plt.colorbar(sm, cax=sub_ax)
+        ax.invert_yaxis()
+
+        for p in range(1):
+            for num, pos in own_units:
+                ax.scatter(pos[0], pos[1], color="blue")
+
+        np.meshgrid(list(range(100)), list(range(100)))
+        plt.title(f"Day {turn}")
+        plt.savefig(f"risk_{turn}.png")
