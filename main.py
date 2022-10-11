@@ -1,5 +1,7 @@
 import argparse
 from voronoi_game import VoronoiGame
+from pygame_interface import VoronoiInterface
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -22,6 +24,8 @@ if __name__ == '__main__':
     parser.add_argument("--player3", "-p3", default="d", help="Specifying player 3 out of 4")
     parser.add_argument("--player4", "-p4", default="d", help="Specifying player 4 out of 4")
     parser.add_argument("--dump_state", action="store_true", help="Dump game.pkl for rendering")
+    parser.add_argument("--out_video", "-o", action="store_true",
+                        help="If passed, save a video of the run. Slows down the simulation 2x.")
     args = parser.parse_args()
     player_list = tuple([args.player1, args.player2, args.player3, args.player4])
     del args.player1
@@ -34,3 +38,8 @@ if __name__ == '__main__':
             args.log_path = "results.log"
     
     voronoi_game = VoronoiGame(player_list, args)
+    if args.no_gui:
+        voronoi_game.play_game()
+    else:
+        user_interface = VoronoiInterface(player_list, args, game_window_height=800, fps=30)
+        user_interface.run()

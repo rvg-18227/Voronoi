@@ -23,17 +23,13 @@ from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
 
 
-
 class VoronoiGame:
     def __init__(self, player_list, args):
         self.start_time = time.time()
+        self.end_time = None
         self.voronoi_app = None
-        self.use_gui = not args.no_gui
         self.do_logging = not args.disable_logging
-        if not self.use_gui:
-            self.use_timeout = not args.disable_timeout
-        else:
-            self.use_timeout = False
+        self.use_timeout = not args.disable_timeout
 
         self.logger = logging.getLogger(__name__)
         # create file handler which logs even debug messages
@@ -106,57 +102,7 @@ class VoronoiGame:
         self.end_message_printed = False
 
         self.add_players(player_list)
-
-        self.play_game()
-        self.end_time = time.time()
-
-        if self.use_gui:
-            config = dict()
-            config["address"] = args.address
-            config["start_browser"] = not args.no_browser
-            config["update_interval"] = 0.5
-            config["userdata"] = (self, self.logger)
-            if args.port != -1:
-                config["port"] = args.port
-            start(VoronoiApp, **config)
-        else:
-            self.logger.debug("No GUI flag specified")
-
-        result = self.get_state(self.last_day - 1, 2)
-        print("\nDay {} - {}".format(result["day"], result["day_states"]))
-        print("\nPlayers - {}".format(result["player_names"]))
-        print("Day Score - {}".format(result["player_score"]))
-        print("Total Score - {}".format(result["player_total_score"]))
-        print("{} Units - {}".format(result["player_names"][0], result["unit_id"][0]))
-        print("{} Unit Positions - {}".format(result["player_names"][0],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][0]]))
-        print("{} Units - {}".format(result["player_names"][1], result["unit_id"][1]))
-        print("{} Unit Positions - {}".format(result["player_names"][1],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][1]]))
-        print("{} Units - {}".format(result["player_names"][2], result["unit_id"][2]))
-        print("{} Unit Positions - {}".format(result["player_names"][2],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][2]]))
-        print("{} Units - {}".format(result["player_names"][3], result["unit_id"][3]))
-        print("{} Unit Positions - {}".format(result["player_names"][3],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
-        print("\nTime Elapsed - {:.3f}s".format(self.end_time-self.start_time))
-
-        if args.dump_state:
-            with open("game.pkl", "wb+") as f:
-                pickle.dump(
-                    {
-                        "map_states": self.map_states,
-                        "player_names": self.player_names,
-                        "player_score": self.player_score,
-                        "player_total_score": self.player_total_score,
-                        "unit_id": self.unit_id,
-                        "unit_pos": self.unit_pos,
-                        "home_path": self.home_path,
-                        "last_day": self.last_day,
-                        "spawn_day": self.spawn_day
-                    },
-                    f,
-                )
+        self.dump_state = args.dump_state
 
     def add_players(self, player_list):
         player_count = dict()
@@ -244,7 +190,47 @@ class VoronoiGame:
     def play_game(self):
         for i in range(self.last_day):
             self.play_day(i)
-            print("Day {} complete".format(i+1))
+
+        self.print_results()
+
+    def print_results(self):
+        self.end_time = time.time()
+
+        result = self.get_state(self.last_day - 1, 2)
+        print("\nDay {} - {}".format(result["day"], result["day_states"]))
+        print("\nPlayers - {}".format(result["player_names"]))
+        print("Day Score - {}".format(result["player_score"]))
+        print("Total Score - {}".format(result["player_total_score"]))
+        print("{} Units - {}".format(result["player_names"][0], result["unit_id"][0]))
+        print("{} Unit Positions - {}".format(result["player_names"][0],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][0]]))
+        print("{} Units - {}".format(result["player_names"][1], result["unit_id"][1]))
+        print("{} Unit Positions - {}".format(result["player_names"][1],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][1]]))
+        print("{} Units - {}".format(result["player_names"][2], result["unit_id"][2]))
+        print("{} Unit Positions - {}".format(result["player_names"][2],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][2]]))
+        print("{} Units - {}".format(result["player_names"][3], result["unit_id"][3]))
+        print("{} Unit Positions - {}".format(result["player_names"][3],
+                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
+        print("\nTime Elapsed - {:.3f}s".format(self.end_time - self.start_time))
+
+        if args.dump_state:
+            with open("game.pkl", "wb+") as f:
+                pickle.dump(
+                    {
+                        "map_states": self.map_states,
+                        "player_names": self.player_names,
+                        "player_score": self.player_score,
+                        "player_total_score": self.player_total_score,
+                        "unit_id": self.unit_id,
+                        "unit_pos": self.unit_pos,
+                        "home_path": self.home_path,
+                        "last_day": self.last_day,
+                        "spawn_day": self.spawn_day
+                    },
+                    f,
+                )
 
     def play_day(self, day):
         if day != 0:
@@ -314,6 +300,8 @@ class VoronoiGame:
         # Total score
         for i in range(constants.no_of_players):
             self.player_total_score[day][i] = self.player_total_score[day-1][i] + self.player_score[day][2][i]
+
+        print("Day {} complete".format(day))
 
     def spawn_new(self, day, id_name):
         for i in range(constants.no_of_players):
