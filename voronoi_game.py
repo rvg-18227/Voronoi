@@ -256,13 +256,14 @@ class VoronoiGame:
                     self.unit_pos[day][0][i].append(self.unit_pos[day - 1][2][i][j])
 
         if day % self.spawn_day == 0:
+            # new unit spawned. Cannot copy prev day scores. Re-calculate the scores.
             self.spawn_new(day, str((day // self.spawn_day) + 1))
             self.update_occupied_cells(day, 0)  # not req TODO: REMOVE
-            # self.player_score[day][0] = self.update_map_state(day, 0)
             score, map_state = self.fast_map.update_map_state(day, 0, self.unit_pos)
             self.player_score[day][0] = score
             self.map_states[day][0] = map_state
         else:
+            # copy prev day's end state and score to this day's init state and score
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
                     self.map_states[day][0][i][j] = self.map_states[day - 1][2][i][j]
@@ -300,8 +301,8 @@ class VoronoiGame:
                     "{} failed since provided invalid action {}".format(self.player_names[i], returned_action))
                 self.empty_move(day, i)
 
+        # State/score after units have moved
         self.update_occupied_cells(day, 1)
-        # self.player_score[day][1] = self.update_map_state(day, 1)
         score, map_state = self.fast_map.update_map_state(day, 1, self.unit_pos)
         self.player_score[day][1] = score
         self.map_states[day][1] = map_state
@@ -309,11 +310,13 @@ class VoronoiGame:
         for i in range(constants.no_of_players):
             self.check_path_home(day, i)
 
+        # State/score at end of day (killed isolated units)
         self.update_occupied_cells(day, 2)
-        # self.player_score[day][2] = self.update_map_state(day, 2)
         score, map_state = self.fast_map.update_map_state(day, 2, self.unit_pos)
         self.player_score[day][2] = score
         self.map_states[day][2] = map_state
+
+        # Total score
         for i in range(constants.no_of_players):
             self.player_total_score[day][i] = self.player_total_score[day-1][i] + self.player_score[day][2][i]
 
@@ -332,51 +335,6 @@ class VoronoiGame:
                     self.cell_units[day][state][a][b] = i + 1
                 elif self.cell_units[day][state][a][b] != i + 1:
                     self.cell_units[day][state][a][b] = -1
-
-    def update_map_state(self, day, state):
-        count = [0, 0, 0, 0]
-        occupied_cells = []
-        for i in range(constants.no_of_players):
-            for j in range(len(self.unit_id[day][state][i])):
-                a = math.floor(self.unit_pos[day][state][i][j].x)
-                b = math.floor(self.unit_pos[day][state][i][j].y)
-                if self.cell_units[day][state][a][b] > 0:
-                    occupied_cells.append((a, b))
-
-        if len(occupied_cells) == 0:
-            return count
-
-        for i in range(constants.max_map_dim):
-            for j in range(constants.max_map_dim):
-                if self.cell_units[day][state][i][j] != 0:
-                    self.map_states[day][state][i][j] = self.cell_units[day][state][i][j]
-                else:
-                    a, b = occupied_cells[0]
-                    a = int(a)
-                    b = int(b)
-                    min_dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
-                    min_dist_cells = [(a, b)]
-                    min_dist_state = self.cell_units[day][state][a][b]
-                    for k in range(1, len(occupied_cells)):
-                        a, b = occupied_cells[k]
-                        a = int(a)
-                        b = int(b)
-                        dist = ((i - a) * (i - a)) + ((j - b) * (j - b))
-                        if dist < min_dist:
-                            min_dist = dist
-                            min_dist_cells = [(a, b)]
-                            min_dist_state = self.cell_units[day][state][a][b]
-                        elif dist == min_dist:
-                            min_dist_cells.append((a, b))
-                            if min_dist_state != self.cell_units[day][state][a][b]:
-                                min_dist_state = -1
-
-                    self.map_states[day][state][i][j] = min_dist_state
-
-                if self.map_states[day][state][i][j] != -1:
-                    count[self.map_states[day][state][i][j] - 1] += 1
-
-        return count
 
     def check_action(self, returned_action, day, idx):
         if not returned_action:
