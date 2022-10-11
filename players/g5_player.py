@@ -49,7 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
-        self.block_size = 2
+        self.block_size = 5
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -100,10 +100,10 @@ class Player:
 
     def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border):
         border_row, border_col, border_center, border_dist = closest_border
+        #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
         HOME_INFLUENCE = 0.0
         
-
         # if mode == "offense":
         #     BORDER_INFLUENCE = 1
         #     ALLY_INFLUENCE = 0.6
@@ -119,10 +119,11 @@ class Player:
         else:
             ALLY_INFLUENCE = 0.2
         
-        BORDER_INFLUENCE = 1
+        BORDER_INFLUENCE = 1.0
         ENEMY_INFLUENCE = 0.2
+        BOUNDARY_INFLUENCE = 0.2
+
         BOUNDARY_THRESHOLD = 2
-        BOUNDARY_INFLUENCE = 0.4
         
         BOUNDARY_FACTOR = 5
 
@@ -305,6 +306,12 @@ class Player:
         #     for col in range(100 // self.block_size):
         #         if len(block_count[row][col]) >= CLUSTER_THRESHOLD:
         #             clusters.append((row, col, block_count[row][col]))
+        
+        # sparse = []
+        # for row in range(100 // self.block_size):
+        #     for col in range(100 // self.block_size):
+        #         if len(block_count[row][col]) <= 1:
+        #             sparse.append((row, col))
 
         borders = []
         for row in range(100 // self.block_size):
@@ -316,8 +323,9 @@ class Player:
 
         own_units.sort(key=lambda x: x[0])
         border_assignment_set = set()
+        # sparse_assignment_set = set()
         for i, (unit_id, unit_pos) in enumerate(own_units):
-            if i < 5:
+            if i < 8:
                 mode = "offense"
             else:
                 mode = "defense"
@@ -329,6 +337,21 @@ class Player:
             #     if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
             #         closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
             #         closest_cluster = (row, col, ids)
+            # sparse_dist = []
+            # for (row, col) in sparse:
+            #     sparse_center = self.get_block_center(row, col)
+            #     sparse_dist.append((row, col, sparse_center, np.linalg.norm(sparse_center - unit_pos)))
+            # sparse_dist.sort(key=lambda x: x[3])
+            # closest_sparse = None
+
+            # for (row, col, center, dist) in sparse_dist:
+            #     if (row, col) not in sparse_assignment_set:
+            #         sparse_assignment_set.add((row, col))
+            #         closest_sparse = (row, col, center, dist)
+            #         break
+            # if closest_sparse is None:
+            #     closest_sparse = sparse_dist[0]
+
             borders_dist = []
             for (row, col) in borders:
                 border_center = self.get_block_center(row, col)
