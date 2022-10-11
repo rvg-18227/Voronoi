@@ -49,6 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
+        self.block_size = 2
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -79,22 +80,53 @@ class Player:
     def attractive_force(self, p1, p2):
         return -self.repelling_force(p1, p2)
 
+    def is_border_block(self, row, col, map_states):
+        row = row * self.block_size
+        col = col * self.block_size
+        c1 = map_states[col][row]
+        c2 = map_states[col + self.block_size - 1][row]
+        c3 = map_states[col][row + self.block_size - 1]
+        c4 = map_states[col + self.block_size - 1][row + self.block_size - 1]
 
-    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode):
-        
-        HOME_INFLUENCE = 0.2
-        if mode == "offense":
-            ALLY_INFLUENCE = 0.6
-            ENEMY_INFLUENCE = 1
-            BOUNDARY_THRESHOLD = 2
+        s = set([c1, c2, c3, c4])
+        if len(s) > 1 and self.player_idx in s:
+            return True
         else:
-            ALLY_INFLUENCE = 0.0
-            ENEMY_INFLUENCE = 1
-            BOUNDARY_THRESHOLD = 2
+            return False
+    
+    def get_block_center(self, row, col):
+        return np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
+
+
+    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border):
+        border_row, border_col, border_center, border_dist = closest_border
+        
+        HOME_INFLUENCE = 0.0
+        
+
+        # if mode == "offense":
+        #     BORDER_INFLUENCE = 1
+        #     ALLY_INFLUENCE = 0.6
+        #     ENEMY_INFLUENCE = 0.2
+        #     BOUNDARY_THRESHOLD = 2
+        # else:
+        #     BORDER_INFLUENCE = 0.8
+        #     ALLY_INFLUENCE = -0.4
+        #     ENEMY_INFLUENCE = 0.6
+        #     BOUNDARY_THRESHOLD = 2
+        if mode == "defense":
+            ALLY_INFLUENCE = -0.2
+        else:
+            ALLY_INFLUENCE = 0.2
+        
+        BORDER_INFLUENCE = 1
+        ENEMY_INFLUENCE = 0.2
+        BOUNDARY_THRESHOLD = 2
         BOUNDARY_INFLUENCE = 0.4
         
         BOUNDARY_FACTOR = 5
 
+        border_force = self.attractive_force(unit_pos, border_center)
 
         enemy_unit_forces = [
             self.attractive_force(unit_pos, enemy_pos)
@@ -136,13 +168,14 @@ class Player:
                 boundary_force += bottom_repelling_force * BOUNDARY_FACTOR
         
         if unit_pos[0] == self.homebase[0] and unit_pos[1] == self.homebase[1]:
-            home_force = np.array([0.0, 0.0])
+            home_force = self.attractive_force(unit_pos, np.array([50.0, 50.0]))
         else:
             home_force = self.repelling_force(unit_pos, self.homebase)
         
-
+        #print("BORDER FORCE ", border_force)
         total_force = self.normalize(
-            (enemy_force * ENEMY_INFLUENCE)
+            (border_force * BORDER_INFLUENCE)
+            + (enemy_force * ENEMY_INFLUENCE)
             + (home_force * HOME_INFLUENCE)
             + (ally_force * ALLY_INFLUENCE)
             + (boundary_force * BOUNDARY_INFLUENCE)
@@ -150,7 +183,7 @@ class Player:
 
         return self.to_polar(total_force)
 
-    def cluster_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode):
+    def cluster_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode, borders):
         row, col, ids = closest_cluster
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 3
@@ -259,44 +292,59 @@ class Player:
             if player != self.player_idx
         ]
 
-        BLOCK_SIZE = 4
+
         CLUSTER_THRESHOLD = 10
         
-        block_count =  [[set()] * (100 // BLOCK_SIZE) for i in range(100 // BLOCK_SIZE)]
+        block_count =  [[set()] * (100 // self.block_size) for i in range(100 // self.block_size)]
         for enemy, enemy_pos in enemy_units_locations:
             col, row = int(enemy_pos[0]), int(enemy_pos[1])
-            block_count[row // BLOCK_SIZE][col // BLOCK_SIZE].add(enemy)
+            block_count[row // self.block_size][col // self.block_size].add(enemy)
         
         clusters = []
-        for row in range(100 // BLOCK_SIZE):
-            for col in range(100 // BLOCK_SIZE):
-                if len(block_count[row][col]) >= CLUSTER_THRESHOLD:
-                    clusters.append((row, col, block_count[row][col]))
-                
+        # for row in range(100 // self.block_size):
+        #     for col in range(100 // self.block_size):
+        #         if len(block_count[row][col]) >= CLUSTER_THRESHOLD:
+        #             clusters.append((row, col, block_count[row][col]))
+
+        borders = []
+        for row in range(100 // self.block_size):
+            for col in range(100 // self.block_size):
+                if self.is_border_block(row, col, map_states):
+                    borders.append((row, col))
+        print(borders)
         moves = []
 
         own_units.sort(key=lambda x: x[0])
-
+        border_assignment_set = set()
         for i, (unit_id, unit_pos) in enumerate(own_units):
             if i < 5:
                 mode = "offense"
             else:
                 mode = "defense"
-            closest_cluster_distance = float("inf")
-            closest_cluster = None
-            for (row, col, ids) in clusters:
-                cluster_center = np.array([col * BLOCK_SIZE + BLOCK_SIZE / 2, row * BLOCK_SIZE + BLOCK_SIZE / 2])
-                # print(unit_pos, cluster_center, np.linalg.norm(cluster_center - unit_pos))
-                if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
-                    closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
-                    closest_cluster = (row, col, ids)
-            # print("closest_cluster_distance: ", closest_cluster_distance)
-            if closest_cluster_distance > 20:
-                moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
-                                                    own_units, enemy_units_locations, mode))
-            else:
-                print("Switched to cluster strategy: ", self.num_days)
-                moves.append(self.cluster_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
-                                                    own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode))
+            # closest_cluster_distance = float("inf")
+            # closest_cluster = None
+            # for (row, col, ids) in clusters:
+            #     cluster_center = np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
+            #     # print(unit_pos, cluster_center, np.linalg.norm(cluster_center - unit_pos))
+            #     if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
+            #         closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
+            #         closest_cluster = (row, col, ids)
+            borders_dist = []
+            for (row, col) in borders:
+                border_center = self.get_block_center(row, col)
+                borders_dist.append((row, col, border_center, np.linalg.norm(border_center - unit_pos)))
+            
+            borders_dist.sort(key=lambda x: x[3])
+            closest_border = None
+            for (row, col, center, dist) in borders_dist:
+                if (row, col) not in border_assignment_set:
+                    border_assignment_set.add((row, col))
+                    closest_border = (row, col, center, dist)
+                    break
+            if closest_border is None:
+                closest_border = borders_dist[0]
+            
+            moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
+                                               own_units, enemy_units_locations, mode, closest_border))
         return moves
 
