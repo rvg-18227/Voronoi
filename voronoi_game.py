@@ -489,13 +489,18 @@ class FastMapState:
         # Find all neighbors within a radius: If all neigh are same player, cell not disputed
         for disp_cell, radius in zip(disputed_cell_pts, radius_of_dispute):
             # Radius needs padding to conform to < equality.
-            rad_pad = 0.1
+            rad_pad = 1e-5
             d_near_dist, d_near_idx = kdtree.query(disp_cell,
                                                    k=self._num_contested_pts_check,
                                                    distance_upper_bound=radius + rad_pad)
             # We will get exactly as many points as requested. Extra points will have inf dist
             # Need to filter those points that are within radius (dist < inf).
             valid_pts = np.isfinite(d_near_dist)
+            d_near_dist = d_near_dist[valid_pts]
+            d_near_idx = d_near_idx[valid_pts]
+
+            # Additional check - remove those points that are even 1e-5 distance further
+            valid_pts = d_near_dist == d_near_dist[0]
             d_near_idx = d_near_idx[valid_pts]
 
             disputed_ids = player_ids[d_near_idx]  # Get player ids of the contesting cells
