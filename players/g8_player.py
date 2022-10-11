@@ -200,7 +200,9 @@ class Player:
                 self.guard_list = [len(points)-1, len(points)-2, len(points)-3]
                 self.choose_guard = True
             moves = self.move_stay_guard(points, moves)
-
+        for i in range(len(moves)):
+            moves[i] = self.transform_move(moves[i])
+            print("in transform")       
         return moves
 
     def spread_points(
@@ -252,7 +254,6 @@ class Player:
             moves.pop(i)
             guard_point = Point(guard)
             g_s_dist = guard_point.distance(self.spawn_point)
-            print(guard_point, self.spawn_point)
             g_s_ang = self.angle_between(guard_point, self.spawn_point)
             if g_s_dist == 1 and g_s_ang == angel[i]:
                 guard_moves.append((0, 0))
@@ -265,8 +266,6 @@ class Player:
         if sum(is_guard) == 0:
             self.is_stay_guard = True
         moves += guard_moves
-        for i in range(len(moves)):
-            moves[i] = self.transform_move(moves[i])
         return moves
 
     def angle_between(self, p1, p2):
