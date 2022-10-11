@@ -11,7 +11,6 @@ from remi import start
 from voronoi_app import VoronoiApp
 import constants
 from utils import *
-
 from players.default_player import Player as DefaultPlayer
 from players.g1_player import Player as G1_Player
 from players.g2_player import Player as G2_Player
@@ -146,11 +145,14 @@ class VoronoiGame:
                 pickle.dump(
                     {
                         "map_states": self.map_states,
+                        "player_names": self.player_names,
                         "player_score": self.player_score,
                         "player_total_score": self.player_total_score,
                         "unit_id": self.unit_id,
                         "unit_pos": self.unit_pos,
                         "home_path": self.home_path,
+                        "last_day": self.last_day,
+                        "spawn_day": self.spawn_day
                     },
                     f,
                 )
