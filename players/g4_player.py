@@ -1,6 +1,8 @@
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points
 import logging
+import pdb
 from typing import Tuple
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -9,6 +11,8 @@ import matplotlib.pyplot as plt
 from constants import player_color, tile_color, dispute_color, base
 from matplotlib import colors
 import pandas as pd
+
+EPSILON = 0.0000001
 
 
 def point_to_floats(p: Point):
@@ -320,6 +324,129 @@ class Player:
             NaiveAttacker(self.logger, self.params)
         )
 
+    def gather_point(self, units, targets):
+        move = []
+        for i in range(len(units)):
+            unit_vec_target, _ = self.force_vec(units[i], targets)
+            # Calculate weight for cloest point and target point
+            unit_vec_target *= -1
+            move.append(unit_vec_target)
+            move.debug("Move force:", move)
+        move_vec = [self.to_polar((x[0][0], x[0][1])) for x in move]
+        return move_vec
+
+    def attack_point(self, units, target, homebase_mode=True):
+        """Given a list of unit, attack the target point in a line formation.
+
+        Args:
+            units: attack units
+            target: attack target
+            homebase_mode: attack from homebase
+        Return:
+            a list of attack move using units for the target.
+        """
+        # Intuition:
+        #    We want to form an line first before attacking
+        #    But it is not always the optimal move
+        #    Since it takes time to form a line, during which enemy might change formation
+        #    Which might make our attack useless
+        #    We also dont want to shove all attack unit toward the target
+        #    Since that would most likely to be suicidal
+        #    So we want to leverage between forming a formation and moving towards the target
+        #    Solution:
+        #       SCALE BY DISTANCE:
+        #           Unit further away from the expected line foramtion should move closer to line
+        #           Unit closer to the line should move toward the target
+        #    Problem FOR NOW:
+        #        How to space our our unit in a more even/tight manner when points are further away
+        #        Add-on:
+        #           Perhaps grouping point further away from each other to form an attack formation is not a good idea
+        #           The points in the front need to wait for points in the back
+        #           During which enemy formation might change
+        #           We can assume all attack unit are close to each other for now
+        #           Hence the line formation they form would be tight
+        #    Its is better to attack from homebase.
+        #       Forming line that deviate from homebase is suspectiable from side attack from another players
+        #    But attack from the centroid of the units is more effective
+        #    Thus, homebase mode provide the option to attack from centroi or from homebase
+        def get_centroid(units):
+            """
+            Find centroid on a cluster of points
+            """
+            return units.mean(axis=0)
+
+        def find_closest_point(line, point):
+            """
+            Find closest point on line segment given a point
+            """
+            return nearest_points(line, point)[0]
+
+        def compute_attack_vector(units, closest_point, target_point):
+            """Given units, their corresponding cloest point in the attack line, and a target
+            Compute unit vector to attack target in a straight line formation
+
+            Args:
+                units: attack units
+                cloest_point: point in line formation thats cloest to units (1 to 1 mapping)
+                target_point: where to attack
+
+            Return:
+                list of attack move in unit vector form for each units
+            """
+            attack_move = []
+            for i in range(len(units)):
+                unit_vec_closest, mag_closest = self.force_vec(
+                    units[i], closest_point[i].coords
+                )
+                unit_vec_target, mag_target = self.force_vec(units[i], target_point)
+                # Calculate weight for cloest point and target point
+                total_mag = mag_target + mag_closest + EPSILON
+                weight_target = mag_target / total_mag
+                weight_closest = mag_closest / total_mag
+                # Calculate move vec for each units
+                attack_vec = (
+                    unit_vec_closest * weight_closest + unit_vec_target * weight_target
+                )
+                attack_vec = attack_vec / np.linalg.norm(attack_vec + EPSILON)
+                attack_vec *= -1
+                attack_move.append(attack_vec)
+                self.debug("\Attack force:", attack_vec)
+            return attack_move
+
+        if homebase_mode:  # attack from homebase
+            start_point = self.spawn_point
+        else:
+            start_point = get_centroid(units)
+        line = LineString([start_point, target])
+        cloest_points = []
+        for i in units:
+            closest_pt_to_line = find_closest_point(line, Point(i))
+            cloest_points.append(closest_pt_to_line)
+        attack_vec = compute_attack_vector(units, cloest_points, target)
+        attack_vec = [self.to_polar((x[0][0], x[0][1])) for x in attack_vec]
+        return attack_vec
+
+    def find_weak_points(self, num_weak_pts, enemy_units):
+        """
+        Given an enemy player and their unit, find weak points = num_weak_pts
+        """
+        # TODO implement heuristic
+        # Right now we are using the two most sparse point in enemy units as "weak point"
+        # Using rectangular sampling region for now
+        # How to measure "weakness" given enemy formation?
+        # TODO
+        # How to make the sampling region "smarter"?
+        # Random sampling? What about spacing?
+        # NEED HEAT MAP
+        # Given heat map and map state, we can find weak point.
+        return [25, 75], [75, 50]
+
+    def get_enemy_unit(self, enemy_idx, unit_pos):
+        """
+        Given an enemy player index, return the unit location of enemy player i.
+        """
+        return unit_pos[enemy_idx]
+
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
 
@@ -368,6 +495,18 @@ class Player:
             for player_units in unit_pos
         ]
 
+        # Hardcoded attack
+        # ================
+        # attack_move = None
+        # if len(unit_id[0]) > 10:
+        #     #enemy2 = self.get_enemy_unit(1, unit_pos)
+        #     #weak_pt_player_2 = self.find_weak_points(2, enemy2)
+        #     my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
+        #     my_point = my_point[:10, :]
+        #     #self.debug(my_point.shape)
+        #     target = [25, 25]
+        #     attack_move = self.attack_point(my_point, target)
+
         update = StateUpdate(self.params, unit_id, unit_pos)
 
         own_units = list(update.own_units().items())
@@ -388,7 +527,11 @@ class Player:
         )
         visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
 
-        self.debug("\tRisks:", risks)
+        # Hardcoded attack
+        # ================
+        # if attack_move is not None:
+        #     for idx, mv in enumerate(attack_move):
+        #         moves[idx] = mv
 
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
@@ -462,4 +605,5 @@ def visualize_risk(risks, enemy_units_locations, own_units, turn):
 
         np.meshgrid(list(range(100)), list(range(100)))
         plt.title(f"Day {turn}")
+        plt.tight_layout()
         plt.savefig(f"risk_{turn}.png")
