@@ -460,7 +460,7 @@ class FastMapState:
             count[player] = np.count_nonzero(self.occupancy_map == player)
 
         map_state = (self.occupancy_map + 1)
-        map_state[map_state == 5] = 0  # 0 is disputed in map_states var
+        map_state[map_state == 5] = -1  # -1 is disputed in map_states var. 0 is?
         map_state_ = map_state.T.tolist()
         return count, map_state_
 
