@@ -170,10 +170,10 @@ class VoronoiInterface:
 
         # Player Count + msg
         total_score = self.game_state.player_total_score[self.curr_day]
-        info_text = f"Player 1 (G {self.game_state.player_names[0]}): {total_score[0]:,}\n" \
-                    f"Player 2 (G {self.game_state.player_names[1]}): {total_score[1]:,}\n" \
-                    f"Player 3 (G {self.game_state.player_names[2]}): {total_score[2]:,}\n" \
-                    f"Player 4 (G {self.game_state.player_names[3]}): {total_score[3]:,}\n"
+        info_text = f"Player 1 ({self.game_state.player_names[0]}): {total_score[0]:,}\n" \
+                    f"Player 2 ({self.game_state.player_names[1]}): {total_score[1]:,}\n" \
+                    f"Player 3 ({self.game_state.player_names[2]}): {total_score[2]:,}\n" \
+                    f"Player 4 ({self.game_state.player_names[3]}): {total_score[3]:,}\n"
         info_text += self.info_end
         text_lines = info_text.split("\n")
         for idx, line in enumerate(text_lines):
