@@ -5,6 +5,7 @@ import math
 import os
 import pickle
 from typing import List, Tuple
+from xmlrpc.client import Boolean
 
 import numpy as np
 from pyproj import Transformer
@@ -74,6 +75,7 @@ class Player:
         self.is_stay_guard = False
         self.guard_list = []
         self.choose_guard = False
+        self.enemy_distance = 0 ## how far ahead to look for enemy units before moving forward
 
     def play(
             self,
@@ -263,12 +265,13 @@ class Player:
                 angel = g_s_ang
                 guard_moves.append((dist, angel))
         # move the points back to the base so that the coordinates would the right
+        
         if sum(is_guard) == 0:
             self.is_stay_guard = True
         moves += guard_moves
         return moves
 
-    def angle_between(self, p1, p2):
+    def angle_between(self, p1: Point, p2 : Point) -> float:
         p1 = np.array(p1)
         p2 = np.array(p2)
         ang1 = np.arctan2(*p1[::-1])
@@ -278,3 +281,7 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
     
+
+    def is_safe(self) ->  Boolean:
+        #TODO the safety heuristic
+        return False
