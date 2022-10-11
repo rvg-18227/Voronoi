@@ -11,6 +11,9 @@ if __name__ == '__main__':
     parser.add_argument("--seed", "-s", type=int, default=2, help="Seed used by random number generator, specify 0 to "
                                                                   "use no seed and have different random behavior on "
                                                                   "each launch")
+    parser.add_argument("--port", type=int, default=8080, help="Port to start, specify -1 to auto-assign")
+    parser.add_argument("--address", "-a", type=str, default="127.0.0.1", help="Address")
+    parser.add_argument("--no_browser", "-nb", action="store_true", help="Disable browser launching in GUI mode")
     parser.add_argument("--no_gui", "-ng", action="store_true", help="Disable GUI")
     parser.add_argument("--log_path", default="log", help="Directory path to dump log files, filepath if "
                                                           "disable_logging is false")
