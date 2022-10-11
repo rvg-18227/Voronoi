@@ -151,7 +151,7 @@ class VoronoiInterface:
         # Update the game window to see latest changes
         pygame.display.update()
 
-        if self.create_video and self.writer is not None:
+        if self.create_video and self.writer is not None and not self.pause:
             if self.curr_day < self.total_days:
                 # Don't record past end of game
                 pygame.pixelcopy.surface_to_array(self.frame, self.screen)
