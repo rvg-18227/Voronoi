@@ -22,7 +22,6 @@ from players.g6_player import Player as G6_Player
 from players.g7_player import Player as G7_Player
 from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
-from voronoi_renderer import VoronoiRender
 
 
 class VoronoiGame:
@@ -401,10 +400,6 @@ class FastMapState:
         self.cell_origins = self._compute_cell_coords(map_size)
         self.occupancy_map = None  # 2d state map
         self._num_contested_pts_check = 100  # In case of dispute, how many cells at identical dist to check
-
-        # For rendering RGB representations
-        img_size = 800
-        self.renderer = VoronoiRender(map_size=map_size, scale_px=int(img_size / map_size), unit_px=int(5))
 
     def update_map_state(self, day, state, unit_pos) -> tuple[list[int], list[list[int]]]:
         """Replaces func with same name in old logic
