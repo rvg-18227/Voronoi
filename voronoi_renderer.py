@@ -67,7 +67,7 @@ class VoronoiRender:
             occ_map: Occupancy map. Shape: [n, n].
                 Each cell is assigned a number from 0-4: 0-3 represents a player occupying it, 4 means contested
             units: If provided, will draw them on the map.
-                List of shapely Points representing unit pos: u[player][id][pos]].
+                List of shapely Points representing unit pos: u[player][id][pos].  (remove day and state)
             draw_major_lines: Draw grid lines
 
         Return:
@@ -103,8 +103,7 @@ class VoronoiRender:
             # self.unit_pos[day][0] =
             # units[player][pos]]
             for player in range(4):
-                u_list = units[player]
-                for pt in u_list:
+                for pt in units[player]:
                     pos = pt.coords[:][0]
                     # Draw Circle for each unit
                     pos_px = self.metric_to_px(pos)
