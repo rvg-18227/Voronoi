@@ -21,6 +21,11 @@ PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3)
 SCOUT_ALLY_SCALE = 12.0
 SCOUT_BORDER_REPULSION_SCALE = 4.0
 
+COOL_DOWN = 10
+CB_DURATION = 8  # days dedicated to border consolidation in each cycle
+CB_START = 35    # the day to start the first cycle of border consolidation
+
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -76,6 +81,9 @@ class Player:
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
         self.counter = 0
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
+
+        self.cb_scheduled = np.array([CB_START, CB_START + CB_DURATION])
+
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -144,6 +152,10 @@ class Player:
         else:
             return self._move_radially(pt, forward=False)
 
+    def send_to_border(self, unit_id: List[str], soldiers: List[Point], map_states: List[List[int]]) -> List[Tuple[float, float]]:
+        """Sends soldiers to consolidate our bolder."""
+        return [(0., 0.)] * len(soldiers)
+
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -174,25 +186,36 @@ class Player:
 
         # EARLY GAME: form a 2-layer wall
         if self.day_n <= self.initial_radius:
+            self.debug(f'day {self.day_n}: form initial wall')
+
             while len(unit_id[self.us]) > len(self.target_loc):
                 # add new target_locations
                 self.target_loc.append(
                     self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
         
             return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
-        
-        # MID_GAME: adjust formation based on opponents' positions
-        scout_ids = np.arange(self.num_scouts)
+        elif self.day_n >= self.cb_scheduled[0] and self.day_n < self.cb_scheduled[1]:
+            self.debug(f'day {self.day_n}: consoldiate border')
 
-        #start = time.time()
-        defense_moves = self.push(scout_ids)
-        #print('Defense:', time.time()-start)
-        
-        #start = time.time()
-        offense_moves = self.move_scouts(scout_ids)
-        #print('Offense:', time.time()-start)
+            if self.day_n == self.cb_scheduled[1] - 1:
+                self.cb_scheduled += (COOL_DOWN + CB_DURATION)
 
-        return offense_moves + defense_moves
+            return self.send_to_border(unit_id[self.us], unit_pos[self.us], map_states)
+        else:
+            # MID_GAME: adjust formation based on opponents' positions
+            self.debug(f'day {self.day_n}: cool down')
+
+            scout_ids = np.arange(self.num_scouts)
+
+            #start = time.time()
+            defense_moves = self.push(scout_ids)
+            #print('Defense:', time.time()-start)
+            
+            #start = time.time()
+            offense_moves = self.move_scouts(scout_ids)
+            #print('Offense:', time.time()-start)
+
+            return offense_moves + defense_moves
 
 
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
