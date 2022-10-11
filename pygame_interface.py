@@ -85,6 +85,7 @@ class VoronoiInterface:
 
         # Game data
         self.reset = False
+        self.pause = False
 
     def process_input(self):
         """Handle user inputs: events such as mouse clicks and key presses"""
@@ -104,6 +105,11 @@ class VoronoiInterface:
                     self.reset = True
                     self.logger.info(f"Reset the map")
 
+                elif event.key == pygame.K_p:
+                    # Reset map
+                    self.pause = ~self.pause
+                    print(f"Game paused: {bool(self.pause)}")
+
     def update(self):
         """Update the state of the game"""
         if self.reset:
@@ -114,9 +120,10 @@ class VoronoiInterface:
             return
 
         if self.curr_day < self.total_days - 1:
-            self.curr_day += 1
-            self.game_state.play_day(self.curr_day)
-            self.info_end = ""
+            if not self.pause:
+                self.curr_day += 1
+                self.game_state.play_day(self.curr_day)
+                self.info_end = ""
         else:
             self.info_end = "Game ended. Press R to reset, Esc to Quit"
             if self.print_results:
