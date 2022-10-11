@@ -265,6 +265,8 @@ class Player:
         if sum(is_guard) == 0:
             self.is_stay_guard = True
         moves += guard_moves
+        for i in range(len(moves)):
+            moves[i] = self.transform_move(moves[i])
         return moves
 
     def angle_between(self, p1, p2):
@@ -273,4 +275,7 @@ class Player:
         ang1 = np.arctan2(*p1[::-1])
         ang2 = np.arctan2(*p2[::-1])
         return np.rad2deg((ang1 - ang2) % (2 * np.pi))
-
+    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+        dist, rad_ang = dist_ang
+        return (dist, rad_ang - (math.pi/2 * self.player_idx))
+    
