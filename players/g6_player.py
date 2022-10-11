@@ -1,10 +1,226 @@
 import os
 import pickle
+#from turtle import width
 import numpy as np
 import sympy
 import logging
 from typing import Tuple
 from sympy.geometry import Point2D
+from enum import Enum
+from scipy.ndimage import measurements, morphology
+
+
+
+class UnitType(Enum):
+    SPACER = 0
+    ATTACK = 1
+    DEFENSE = 2
+
+class Defense:
+
+    def __init__(self, player_idx, spawn_point):
+        self.unitType = UnitType.DEFENSE
+        self.number_units = 0
+        self.prev_state = None
+        self.spawn_point = (spawn_point.x, spawn_point.y)
+        self.player_idx = player_idx
+        self.day = 0
+        self.scanner_radius = 35
+
+    def update(self, map_state, defenderIdxs, units, enemy_units):
+        self.map_state = map_state
+        #rotate the map state to the bottom left
+        self.number_units = len(defenderIdxs)
+        self.defenderIdxs = defenderIdxs
+        self.unit_locations = [unit for i, unit in enumerate(units) if i in defenderIdxs]
+        self.enemy_units = enemy_units
+        self.day += 1
+
+    def get_moves(self):
+
+        moves = [(0, 0, 0) for i, pos in enumerate(self.unit_locations)]
+        moved = [False for _ in range(self.number_units)]
+        if self.number_units == 0:
+            return []
+
+
+        clusters = self.get_clusters()
+        units_left_to_allocate = self.number_units
+        clusters_to_defend = 0
+
+        # Determine how many clusters to defend
+        for i, cluster in enumerate(clusters):
+            if len(cluster["points"]) < units_left_to_allocate:
+                units_left_to_allocate -= (len(cluster["points"]) + 1)
+                clusters_to_defend += 1
+            else:
+                break
+
+        clusters = clusters[:clusters_to_defend]
+        clusters = sorted(clusters, key=lambda x: x["angle"])
+
+        # for each unit, allocate it to the closest cluster
+        cluster_points_left = [len(cluster["points"]) for cluster in clusters]
+        for i, unit in enumerate(self.unit_locations):
+            distances = sorted([(idx, np.linalg.norm(np.array(unit) - cluster["centroid"])) for idx, cluster in enumerate(clusters)], key=lambda x: x[1])
+
+            for j, (idx, distance) in enumerate(distances):
+                if distance > self.scanner_radius:
+                    break
+                offset_weight = 3
+                if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
+                    offset_weight = 4
+
+                if cluster_points_left[idx] > 0 or offset_weight != 3:
+                    cluster_points_left[idx] -= 1
+                    moved[i] = True
+                    if cluster_points_left[idx] < 0:
+                        cluster_point_distances = [np.linalg.norm(np.array(self.spawn_point) - np.array(point)) for idx, point in enumerate(clusters[idx]["points"])]
+                        min_dist = max(cluster_point_distances).item()
+                        idx_of_closest_cluster_point = cluster_point_distances.index(min_dist)
+                    target_point = clusters[idx]["points"][cluster_points_left[idx] if cluster_points_left[idx] >= 0 else idx_of_closest_cluster_point]
+                    target_point = np.floor(target_point)
+                    target_point += np.array((0.5, 0.5))
+
+                    direction = target_point[0] - unit.x, target_point[1] - unit.y
+
+                    goal_direction = 0 if unit.x < 20 else self.spawn_point[0] - unit.x, 0 if unit.y < 20 else self.spawn_point[1] - unit.y
+                    offset = (0, 0) if np.linalg.norm(goal_direction) == 0 else goal_direction/np.linalg.norm(goal_direction)
+
+                    #TODO: if formation is ready, offset = 0
+                    if self.number_in_circle(self.unit_locations, unit, 1) > self.number_in_circle(self.enemy_units, target_point, 1):
+                        offset_weight -= 3
+
+                    end_direction = direction + offset*offset_weight
+                    distance_to_goal = np.linalg.norm(end_direction)
+
+                    moves[i] = distance_to_goal, end_direction[0], end_direction[1]
+                    break
+            # move adding the offset here
+            # for loop
+            # if cluster not all true
+            # add offset
+
+        c_x, c_y = (np.array([50, 50]) - self.spawn_point)*(3/4)
+        c_dist = np.array(np.linalg.norm(np.array([c_x, c_y])))
+        center_angle = np.arctan2(c_y, c_x)
+        hover_point_angles = [center_angle]
+        for i in range(1, 6):
+            angle = (np.pi/24)*i
+            hover_point_angles.append(center_angle + angle)
+            hover_point_angles.append(center_angle - angle)
+        hover_points = [self.spawn_point/c_dist + np.array((np.cos(angle), np.sin(angle))) for angle in hover_point_angles]
+        n_hover = len(hover_points)
+        i = 0
+        direction_to_spawn = (self.spawn_point - np.array([50, 50]))/np.linalg.norm(self.spawn_point - np.array([50, 50]))
+        for j, unit in enumerate(self.unit_locations):
+            if moved[j] == False:
+                moves[j] = 1, hover_points[i%n_hover][0]*(c_dist - (i//n_hover)*2*direction_to_spawn[0]) - unit.x, hover_points[i%n_hover][1]*(c_dist - (i//n_hover)*2*direction_to_spawn[1]) - unit.y
+                i += 1
+        
+        # TODO:
+        # change hover points
+        # smaller radius
+        # if path to homme width is < some X, retreat to hover point
+        
+        # go to location - some offset (maybe calc trajectory)
+        # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
+        # once all units are in place - (current loc to calc place ~=, for all units in this one match)
+        # hold the line (aka offset becomes 0)
+
+
+        #does any of this work for diagonal?
+        # self.prev_state = self.map_state
+        return moves
+
+    def number_in_circle(self, units, center, radius):
+        units = set([tuple(np.floor(unit)) for unit in units])
+        return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
+    
+    def get_clusters(self):
+        """Returns a list of clusters of points"""  
+        floored_enemy = [(np.floor(unit.x), np.floor(unit.y)) for unit in self.enemy_units]
+        binary_enemy_unit_map = [[1 if (i, j) in floored_enemy else 0 for j, _ in enumerate(row)] for i, row in enumerate(self.map_state)]
+        lw, num = measurements.label(binary_enemy_unit_map)
+        clusters = [{
+            "points": []
+        } for _ in range(num)]
+        num_added = 0
+
+        for i, row in enumerate(lw):
+            for j, cell in enumerate(row):
+                if cell != 0:
+                    clusters[cell-1]["points"].append((i, j))
+                    num_added += 1
+
+        clusters = [cluster for cluster in clusters if len(cluster["points"]) > 0]
+
+        for cluster in clusters:
+            cluster["centroid"] = np.mean(cluster["points"], axis=0)
+            cluster["distance"] = np.linalg.norm(cluster["centroid"] - self.spawn_point)
+            cluster["angle"] = np.arctan2(cluster["centroid"][1] - self.spawn_point[1], cluster["centroid"][0] - self.spawn_point[0])
+
+        clusters = sorted(clusters, key=lambda x: x["distance"])
+        return clusters
+
+class Attacker:
+
+    def __init__(self, id, position, target="RIGHT"):
+        self.id = id
+        self.x = float(position.x)
+        self.y = float(position.y)
+        self.unit_type = UnitType.ATTACK
+        self.target = target # always either left or right
+
+    def get_move(self, game, positions):
+        # print("ATTACKING MOVE")
+        if self.target == "LEFT":
+            current_x = int(np.floor(self.x))
+            current_y = int(np.floor(self.y))
+            if game[current_x][current_y] == -1 or 0:
+                print("DISPUTED CELL")
+                # The current state is disputed OR there is an enemy within surrounding 9 tiles
+                unit_count = 0
+                for pos in positions:
+                    if pos == Point2D(current_x, current_y):
+                        unit_count += 1
+                        print("Unit Count: ", unit_count)
+                if unit_count > 1:
+                    pass
+                    # send one forward
+                    # check if its still disputed (if not, then we killed the enemy)
+                    # keep advancing until disputed again 
+                else:
+                    return 1, 0, 0 # Does not move if alone in a disputed cell
+            else:
+                return 1, 0, 1
+        
+        elif self.target == "RIGHT":
+            current_x = int(np.floor(self.x))
+            current_y = int(np.floor(self.y))
+            if game[current_x][current_y] == -1:
+                print("DISPUTED CELL")
+                # The current state is disputed
+                unit_count = 0
+                for pos in positions:
+                    if pos == Point2D(current_x, current_y):
+                        unit_count += 1
+                        print("Unit Count: ", unit_count)
+                if unit_count > 1:
+                    pass
+                    # send one forward
+                    # check if its still disputed (if not, then we killed the enemy)
+                    # keep advancing until disputed again 
+                else:
+                    return 0, 1, 0 # Does not move if alone in a disputed cell
+            else:
+                return 0, 1, 1
+        
+        return self.x, self.y, 1
+
+
+
+
 
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
@@ -42,6 +258,40 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
+        self.total_days = total_days
+        self.spawn_days = spawn_days
+        self.spawn_point = spawn_point
+
+        self.current_turn = 0
+        self.PHASE_ONE_OUTPUT = [UnitType.SPACER]
+        self.PHASE_TWO_OUTPUT = [UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+        self.PHASE_THREE_OUTPUT = [UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
+
+        testing = True
+        if testing:
+            testingType = UnitType.ATTACK if self.player_idx == 0 else UnitType.DEFENSE
+            self.PHASE_ONE_OUTPUT = [testingType]
+            self.PHASE_TWO_OUTPUT = [testingType]
+            self.PHASE_THREE_OUTPUT = [testingType]
+        #change these based on how much land we have? aka if more ppl are targeting us vs less?
+        # if less land it means our defense is losing so we need more
+        # if more land it means we want to attack more?
+
+
+        self.number_units_total = total_days//spawn_days
+        self.PHASE_ONE_UNITS = 5
+        self.PHASE_TWO_UNITS = int(np.floor((self.number_units_total-5)*0.6))
+        self.PHASE_THREE_UNITS = self.number_units_total - self.PHASE_ONE_UNITS - self.PHASE_TWO_UNITS
+
+        #locations of units
+        self.unit_types = {
+            UnitType.SPACER: {},
+            UnitType.ATTACK: {},
+            UnitType.DEFENSE: {}
+        }
+
+
+        self.defense = Defense(self.player_idx, self.spawn_point)
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -61,20 +311,55 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
-        current_unit_pos = {(np.floor(x[0]), np.floor(x[1])) for x in unit_pos[self.player_idx]}
+        self.add_spawn_units_if_needed(unit_id[self.player_idx])
+        spacer, attacker, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
+
+        enemy_ids, enemy_units = self.get_enemy_units(unit_id, unit_pos)
+
+        # 3 roles
+        # attackers - Identify weak enemy, how to kill a unit? where to attack? when to attack? hover at border until enough units? whats the best formation?
+        # defenders - kmeans number of units around/units in a radius, most important!!!, so be able to use other groups if needed
+        # space gain people - look at group 4's code or come up wiht a new generic strategy
+
+        # 3 phases
+        # in intro phase allocate X spacegain until 5 units?
+        # in main phase allocate X attackers and Y defenders and Z spacegain 2:2:1, maybe change ratio based on if we're being attacked or not
+        # in end phase allocate X attackers and Y defenders in some proportion 
 
         self.map_states = map_states
-        moves = []
+        self.unit_pos = unit_pos
+        self.left_right_count = 0
 
-        ## Everything is in the frame of 0, 0 on a normal x, y axis. We call transform_move to transform the moves to the correct direction
-        for unit in unit_pos[self.player_idx]:
-            move = self.transform_move(1, 1)
-            new_pos = self.simulate_move(unit, move)
-            if self.check_square(new_pos) != self.player_idx:
-                moves.append(self.transform_move(0, 0, 0))
-            else:
-                moves.append(move)
+        moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
+        for idx in spacer:
+            moves[idx] = self.transform_move(1, 1, 1) #spacer.move_function(unit, idx, etc)
 
+        for idx in attacker:
+            target_param = ""
+            if self.left_right_count < 3:
+                target_param = "RIGHT"
+                self.left_right_count += 1
+            elif self.left_right_count < 6:
+                target_param = "LEFT"
+                self.left_right_count += 1
+            
+            if self.left_right_count > 5:
+                self.left_right_count = 0
+
+
+            attacker = Attacker(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx], target_param)
+            x, y, dist = attacker.get_move(self.map_states, self.unit_pos)
+
+            # moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
+            moves[idx] = self.transform_move(x, y, dist)
+
+        self.defense.update(self.map_states, defenders, unit_pos[self.player_idx], enemy_units)
+        defensiveMoves = self.defense.get_moves()
+        for defensive_move_idx, real_idx in enumerate(defenders):
+            dist, x, y = defensiveMoves[defensive_move_idx]
+            moves[real_idx] = (dist if dist <= 1 else 1, np.arctan2(y, x))
+
+        self.current_turn += 1
         return moves
 
     def simulate_move(self, unit_pos, move) -> tuple[float, float]:
@@ -97,7 +382,7 @@ class Player:
         """
         return self.map_states[np.floor(pos[0])][np.floor(pos[1])] - 1 # -1 because the map states are 1 indexed
 
-    def transform_move(self, x: float, y: float, distance=1) -> tuple[float, float]:
+    def transform_move(self, x: float, y: float, distance) -> tuple[float, float]:
         """Transforms the distance and angle to the correct format for the game engine
                 Args:
                     angle (float): angle in radians
@@ -114,3 +399,54 @@ class Player:
             return (distance, angle + np.pi)
         else:# self.player_idx == 3:
             return (distance, angle + np.pi / 2)
+
+    def add_spawn_units_if_needed(self, unit_ids):
+        if self.current_turn % self.spawn_days == 0:
+            if self.current_turn <= self.PHASE_ONE_UNITS * self.spawn_days:
+                unitToAdd = self.PHASE_ONE_OUTPUT[(self.current_turn//self.number_units_total )%len(self.PHASE_ONE_OUTPUT)]
+            elif self.current_turn <= (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days:
+                numberDaysThisPhase = self.current_turn - self.PHASE_ONE_UNITS * self.spawn_days - 1
+                unitToAdd = self.PHASE_TWO_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_TWO_OUTPUT)]
+            else:
+                numberDaysThisPhase = int(self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1)
+                unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
+            self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
+
+        for i, unit_id in enumerate(unit_ids):
+            if unit_id in self.unit_types[UnitType.SPACER]:
+                self.unit_types[UnitType.SPACER][unit_id] = i 
+            elif unit_id in self.unit_types[UnitType.ATTACK]:
+                self.unit_types[UnitType.ATTACK][unit_id] = i
+            elif unit_id in self.unit_types[UnitType.DEFENSE]:
+                self.unit_types[UnitType.DEFENSE][unit_id] = i
+
+    def get_unit_indexes(self, unit_ids):
+        """Returns the indexes of the units in the unit_pos list by type
+                Args:
+                    unit_ids (list(str)): list of unit ids
+                Returns:
+                    Tuple[list(Point2D), list(Point2D), list(Point2D))]: indexes of the units in the unit_pos list by type
+        """
+        spacer = [idx for id, idx in self.unit_types[UnitType.SPACER].items() if id in unit_ids]
+        attacker = [idx for id, idx in self.unit_types[UnitType.ATTACK].items() if id in unit_ids]
+        defender = [idx for id, idx in self.unit_types[UnitType.DEFENSE].items() if id in unit_ids]
+
+        return spacer, attacker, defender
+
+    def get_enemy_units(self, unit_id, unit_pos):
+        """Returns list of coords of enemy units
+                Args:
+                    unit_id (list(int)): list of unit ids
+                    unit_pos (list(Point2D)): list of unit positions
+                Returns:
+                    Tuple[list(int), list(Point2D)]: indexes of the enemy units and coords of the enemy units
+        """
+        enemy_unit_ids = []
+        enemy_unit_pos = []
+
+        for i in range(len(unit_pos)):
+            if i != self.player_idx:
+                enemy_unit_ids += unit_id[i]
+                enemy_unit_pos += unit_pos[i]
+
+        return enemy_unit_ids, enemy_unit_pos
