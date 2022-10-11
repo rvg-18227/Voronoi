@@ -92,8 +92,6 @@ class VoronoiGame:
 
         self.map_states = [[[[0 for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j in
                             range(constants.day_states)] for i in range(self.last_day)]
-        self.cell_units = [[[[0 for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j in
-                            range(constants.day_states)] for i in range(self.last_day)]
 
         self.player_score = [[[0 for k in range(constants.no_of_players)] for j in range(constants.day_states)] for i in
                              range(self.last_day)]
@@ -150,7 +148,6 @@ class VoronoiGame:
                 pickle.dump(
                     {
                         "map_states": self.map_states,
-                        "cell_units": self.cell_units,
                         "player_score": self.player_score,
                         "player_total_score": self.player_total_score,
                         "unit_id": self.unit_id,
@@ -258,7 +255,6 @@ class VoronoiGame:
         if day % self.spawn_day == 0:
             # new unit spawned. Cannot copy prev day scores. Re-calculate the scores.
             self.spawn_new(day, str((day // self.spawn_day) + 1))
-            self.update_occupied_cells(day, 0)  # not req TODO: REMOVE
             score, map_state = self.fast_map.update_map_state(day, 0, self.unit_pos)
             self.player_score[day][0] = score
             self.map_states[day][0] = map_state
@@ -267,7 +263,6 @@ class VoronoiGame:
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
                     self.map_states[day][0][i][j] = self.map_states[day - 1][2][i][j]
-                    self.cell_units[day][0][i][j] = self.cell_units[day - 1][2][i][j]
 
             for i in range(constants.no_of_players):
                 self.player_score[day][0][i] = self.player_score[day - 1][2][i]
@@ -302,7 +297,6 @@ class VoronoiGame:
                 self.empty_move(day, i)
 
         # State/score after units have moved
-        self.update_occupied_cells(day, 1)
         score, map_state = self.fast_map.update_map_state(day, 1, self.unit_pos)
         self.player_score[day][1] = score
         self.map_states[day][1] = map_state
@@ -311,7 +305,6 @@ class VoronoiGame:
             self.check_path_home(day, i)
 
         # State/score at end of day (killed isolated units)
-        self.update_occupied_cells(day, 2)
         score, map_state = self.fast_map.update_map_state(day, 2, self.unit_pos)
         self.player_score[day][2] = score
         self.map_states[day][2] = map_state
@@ -324,17 +317,6 @@ class VoronoiGame:
         for i in range(constants.no_of_players):
             self.unit_id[day][0][i].append(id_name)
             self.unit_pos[day][0][i].append(self.base[i])
-
-    def update_occupied_cells(self, day, state):
-        # self.cell_units not used anywhere else
-        for i in range(constants.no_of_players):
-            for j in range(len(self.unit_id[day][state][i])):
-                a = math.floor(self.unit_pos[day][state][i][j].x)
-                b = math.floor(self.unit_pos[day][state][i][j].y)
-                if self.cell_units[day][state][a][b] == 0:
-                    self.cell_units[day][state][a][b] = i + 1
-                elif self.cell_units[day][state][a][b] != i + 1:
-                    self.cell_units[day][state][a][b] = -1
 
     def check_action(self, returned_action, day, idx):
         if not returned_action:
@@ -450,7 +432,6 @@ class VoronoiGame:
         return_dict["day"] = day+1
         return_dict["day_states"] = constants.day_state_labels[state]
         return_dict["map_states"] = self.map_states[day][state]
-        return_dict["cell_units"] = self.cell_units[day][state]
         return_dict["player_names"] = self.player_names
         return_dict["player_score"] = self.player_score[day][state]
         return_dict["player_total_score"] = self.player_total_score[day]
