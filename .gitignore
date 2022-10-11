@@ -13,3 +13,4 @@ render/
 # IDE files
 .idea/
 .vscode/
+Brewfile
