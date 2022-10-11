@@ -451,7 +451,7 @@ class FastMapState:
 
         self.cell_origins = self._compute_cell_coords(map_size)
         self.occupancy_map = None  # 2d state map
-        self._num_contested_pts_check = 10  # In case of dispute, how many cells at identical dist to check
+        self._num_contested_pts_check = 100  # In case of dispute, how many cells at identical dist to check
 
         # For rendering RGB representations
         img_size = 800
