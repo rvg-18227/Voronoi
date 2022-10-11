@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from constants import player_color, tile_color, dispute_color, base
 from matplotlib import colors
 import pandas as pd
+from random import uniform
 
 EPSILON = 0.0000001
 
@@ -100,8 +101,25 @@ def repelling_force(p1, p2) -> tuple[float, float]:
     return dir * 1 / (mag)
 
 
-def linear_attracting_force(p1, p2):
-    return force_vec(p2, p1)
+EASING_EXP = 5
+
+
+def ease_in(x):
+    if x > 1:
+        return 1
+    elif x < 0:
+        return 0
+    else:
+        return x**EASING_EXP
+
+
+def ease_out(x):
+    if x > 1:
+        return 0
+    elif x < 0:
+        return 1
+    else:
+        return 1 - ((1 - x) ** EASING_EXP)
 
 
 class RoleType(Enum):
@@ -167,49 +185,72 @@ class Role(ABC):
         pass
 
 
-class Defender(Role):
+class RadialDefender(Role):
+    __radius: float
+    # TODO: Currently assuming that newly added units are coming from spawn
+    # But they might be re-allocations from other roles
+    __spawn_jitter: dict[str, tuple[float, float]]
+
+    def __init__(self, logger, params, radius):
+        super().__init__(logger, params)
+        self.__radius = radius
+        self.__spawn_jitter = {}
+
+    @property
+    def radius(self):
+        return self.__radius
+
+    def towards_radius(self, unit_pos: Point):
+        dist = np.linalg.norm(unit_pos - self.params.home_base)
+        if dist > self.__radius:
+            in_vec, _ = force_vec(self.params.home_base, unit_pos)
+            dr = dist - self.__radius
+            # Easing between radius and 2 * radius, max out beyond 2 * radius
+            return in_vec * ease_out(dr / (self.__radius * 2))
+        else:
+            out_vec, _ = force_vec(unit_pos, self.params.home_base)
+            dr = self.__radius - dist
+            # Easing between 0 and radsiu, maxing out at 0
+            return out_vec * ease_in((self.__radius - dr) / self.__radius)
+
     def _turn_moves(self, update, dead_units):
-        ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 20
+        RADIAL_INFLUENCE = 5
         ALLY_INFLUENCE = 0.5
-        WALL_INFLUENCE = 1
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.all_enemy_units()
 
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
 
-            enemy_unit_forces = [
-                repelling_force(unit_pos, enemy_pos) for _, enemy_pos in enemy_units
-            ]
-            enemy_force = np.add.reduce(enemy_unit_forces)
+            # Add decaying random direction bias
+            if not unit_id in self.__spawn_jitter:
+                self.__spawn_jitter[unit_id] = np.array(
+                    (uniform(0.1, 1), uniform(0, 0.9))
+                )
+
+            jitter_force = self.__spawn_jitter[unit_id]
+            self.__spawn_jitter[unit_id] *= 0.5
 
             ally_forces = [
                 repelling_force(unit_pos, ally_pos)
                 for ally_id, ally_pos in own_units.items()
-                if ally_id != unit_id
+                if ally_id != unit_id and ally_id in self.units
             ]
             ally_force = np.add.reduce(ally_forces)
 
-            home_force = repelling_force(unit_pos, self.params.home_base)
+            # disable ally repulsion when traveling to designated radius
+            dist_from_home = np.linalg.norm(unit_pos - self.params.home_base)
+            dist_from_radius = np.abs(dist_from_home - self.__radius)
+            if np.abs(dist_from_radius) > 2:
+                ally_force *= 0
 
-            ux, uy = unit_pos
-            wall_normals = [
-                (ux, self.params.min_dim),
-                (ux, self.params.max_dim),
-                (self.params.min_dim, uy),
-                (self.params.max_dim, uy),
-            ]
-            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
-            wall_force = np.add.reduce(wall_forces)
+            radius_maintenance = self.towards_radius(unit_pos)
 
             total_force = normalize(
-                (enemy_force * ENEMY_INFLUENCE)
-                + (home_force * HOME_INFLUENCE)
-                + (ally_force * ALLY_INFLUENCE)
-                + (wall_force * WALL_INFLUENCE)
+                ally_force * ALLY_INFLUENCE
+                + radius_maintenance * RADIAL_INFLUENCE
+                + jitter_force
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -319,7 +360,9 @@ class Player:
         self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
 
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
-        self.role_groups[RoleType.DEFENDER].append(Defender(self.logger, self.params))
+        self.role_groups[RoleType.DEFENDER].append(
+            RadialDefender(self.logger, self.params, radius=10)
+        )
         self.role_groups[RoleType.ATTACKER].append(
             NaiveAttacker(self.logger, self.params)
         )
@@ -457,10 +500,6 @@ class Player:
         )
 
     def risk_distances(self, enemy_location, own_units):
-        self.debug("enemy_location", enemy_location)
-        # self.debug("\thomebase:", self.homebase)
-        # self.debug("\tEnemy location:",enemy_location)
-        # self.debug("\tEnemy distance_d_home_base:",np.linalg.norm(np.subtract(self.homebase,enemy_location)))
         d_base = np.linalg.norm(np.subtract(self.params.home_base, enemy_location))
         d_to_closest_unit = 150
         for unit in own_units:
@@ -495,29 +534,14 @@ class Player:
             for player_units in unit_pos
         ]
 
-        # Hardcoded attack
-        # ================
-        # attack_move = None
-        # if len(unit_id[0]) > 10:
-        #     #enemy2 = self.get_enemy_unit(1, unit_pos)
-        #     #weak_pt_player_2 = self.find_weak_points(2, enemy2)
-        #     my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
-        #     my_point = my_point[:10, :]
-        #     #self.debug(my_point.shape)
-        #     target = [25, 25]
-        #     attack_move = self.attack_point(my_point, target)
-
         update = StateUpdate(self.params, unit_id, unit_pos)
 
         own_units = list(update.own_units().items())
-        self.debug(own_units)
         enemy_unit_locations = [pos for _, pos in update.all_enemy_units()]
         risk_distances = [
             self.risk_distances(enemy_location, own_units)
             for enemy_location in enemy_unit_locations
         ]
-
-        self.debug("\tRisk distances:", risk_distances)
 
         risks = list(
             zip(
@@ -526,12 +550,6 @@ class Player:
             )
         )
         visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
-
-        # Hardcoded attack
-        # ================
-        # if attack_move is not None:
-        #     for idx, mv in enumerate(attack_move):
-        #         moves[idx] = mv
 
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
@@ -543,20 +561,35 @@ class Player:
         )
         free_units = own_units - allocated_units
 
-        # Naive split allocation between attackers and defenders
+        RING_SPACING = 2
         for uid in free_units:
-            total_defenders = sum(
-                len(defenders.units)
-                for defenders in self.role_groups[RoleType.DEFENDER]
-            )
-            total_attackers = sum(
-                len(attackers.units)
-                for attackers in self.role_groups[RoleType.ATTACKER]
-            )
-            if total_defenders >= total_attackers:
-                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
-            else:
-                self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+            last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
+
+            # (1/4 circle circumference) / (spacing between units) = units in ring
+            target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
+            if len(last_ring.units) >= target_density:
+                self.debug(
+                    f"Creating new Defender ring with radius {last_ring.radius * 2}"
+                )
+                last_ring = RadialDefender(
+                    self.logger, self.params, last_ring.radius * 2
+                )
+                self.role_groups[RoleType.DEFENDER].append(last_ring)
+
+            last_ring.allocate_unit(uid)
+            # Naive split allocation between attackers and defenders
+            # total_defenders = sum(
+            #     len(defenders.units)
+            #     for defenders in self.role_groups[RoleType.DEFENDER]
+            # )
+            # total_attackers = sum(
+            #     len(attackers.units)
+            #     for attackers in self.role_groups[RoleType.ATTACKER]
+            # )
+            # if total_defenders >= total_attackers:
+            #     self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+            # else:
+            #     self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
 
         moves: list[tuple[float, float]] = []
         role_moves = {}
@@ -572,7 +605,7 @@ class Player:
 
 def visualize_risk(risks, enemy_units_locations, own_units, turn):
     DISPLAY_EVERY_N_ROUNDS = 30
-    HEAT_MAP = True
+    HEAT_MAP = False
 
     if HEAT_MAP and turn % DISPLAY_EVERY_N_ROUNDS == 0:
 
