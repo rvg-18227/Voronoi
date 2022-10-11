@@ -201,6 +201,7 @@ class VoronoiInterface:
         print(f"\nStarting pygame.")
         print(f"Keybindings:\n"
               f"  Esc: Quit the game.\n"
+              f"  P: Pause the game.\n"
               f"  R: Reset game\n")
 
         while self.running:
