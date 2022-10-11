@@ -22,6 +22,9 @@ from players.g7_player import Player as G7_Player
 from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
 
+from voronoi_renderer import VoronoiRender
+from matplotlib import pyplot as plt
+
 
 class VoronoiGame:
     def __init__(self, player_list, args):
@@ -259,6 +262,7 @@ class VoronoiGame:
             score, map_state = self.fast_map.update_map_state(day, 0, self.unit_pos)
             self.player_score[day][0] = score
             self.map_states[day][0] = map_state
+            self.fast_map.plot_occ_map(self.unit_pos[day][0])
         else:
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
@@ -507,6 +511,8 @@ class FastMapState:
         self.cell_origins = self._compute_cell_coords(map_size)
         self.occupancy_map = None
         self.map_size = map_size
+        img_size = 800
+        self.renderer = VoronoiRender(map_size=map_size, scale_px=int(img_size / map_size), unit_px=int(5))
 
     def update_map_state(self, day, state, unit_pos) -> tuple[list[int], list[list[int]]]:
         count = [0, 0, 0, 0]
@@ -640,3 +646,15 @@ class FastMapState:
                             occ_map[pos_grid] = 4
 
         return occ_map
+
+    def plot_occ_map(self, units=None):
+        """Draws a plot of the occupancy map, for live debugging"""
+        grid_rgb = self.renderer.get_colored_occ_map(self.occupancy_map, units)
+        plt.imshow(grid_rgb)
+        plt.show()
+
+    # def plot_connectivity_map(self, units=None):
+    #     """Draws a plot of the occ map, for live debugging"""
+    #     grid_rgb = self.renderer.get_colored_occ_map(self.get_connectivity_map(), units)
+    #     plt.imshow(grid_rgb)
+    #     plt.show()
