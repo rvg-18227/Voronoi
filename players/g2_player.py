@@ -7,8 +7,9 @@ import sympy
 import logging
 from typing import Tuple, List, Dict
 import math
-from shapely.geometry import Point
+from shapely.geometry import Point, MultiPoint
 from shapely.geometry.polygon import Polygon
+from shapely.ops import nearest_points
 
 from scipy.spatial.distance import cdist
 import heapq
@@ -116,10 +117,16 @@ class Player:
         self.logger = logger
         self.player_idx = player_idx
         self.days = 1
+        self.ally_units = {}
+        self.enemy_units = {}
 
+        # Sentinel variables
         self.regions = get_interest_regions(player_idx)
         self.otw_to_regions = {}
         self.region_otw = defaultdict(lambda: set())
+
+        # Platoon variables
+        self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
 
     def get_home_coords(self):
         if self.player_idx == 0:
@@ -139,6 +146,9 @@ class Player:
         dist = min(1, math.dist(p1,p2))
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
+
+    def shapely_point_move(self, p1, p2):
+        return self.point_move((p1.x, p1.y), (p2.x, p2.y))
     
     def fixed_formation_moves(self, unit_ids, angles, move_size=1) -> Dict[float, Tuple[float, float]]:
         return {
@@ -147,6 +157,34 @@ class Player:
             for idx, unit_id
             in enumerate(unit_ids)
         }
+    
+    def platoon_moves(self, unit_ids)  -> Dict[float, Tuple[float, float]]:
+        moves = {}
+
+        # Draft units into platoons
+        drafted_unit_ids = [uid for platoon in self.platoons.values() for uid in platoon['unit_ids']]
+        undrafted_unit_ids = [uid for uid in unit_ids if uid not in drafted_unit_ids]
+        for unit_id in undrafted_unit_ids:
+            newest_platon_id = max(list(self.platoons.keys()))
+            newest_platoon = self.platoons[newest_platon_id]
+            if len(newest_platoon['unit_ids']) < 3:
+                newest_platoon['unit_ids'].append(unit_id)
+            else:
+                self.platoons[newest_platon_id+1] = {'unit_ids': [unit_id], 'target': None}
+
+        enemy_unit_points = MultiPoint(list(self.enemy_units.values()))
+        for platoon in self.platoons.values():
+            if not platoon['target'] and len(platoon['unit_ids']) == 3:
+                leader_point = self.ally_units[platoon['unit_ids'][0]]
+                nearest_enemy_point = nearest_points(leader_point, enemy_unit_points)[1]
+                platoon['target'] = nearest_enemy_point
+            
+            elif platoon['target']:
+                for uid in platoon['unit_ids']:
+                    moves[uid] = self.shapely_point_move(platoon['target'], self.ally_units[uid])
+
+        return {int(uid): self.transform_move(move) for uid, move in moves.items()}
+
 
     def sentinel_moves(self, unit_pos) -> Dict[float, Tuple[float, float]]:
         danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
@@ -220,8 +258,14 @@ class Player:
                                                 move each unit of the player
                 """
 
+        for idx in range(4):
+            if self.player_idx == idx:
+                self.ally_units.update({uid: pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
+            else:
+                self.enemy_units.update({f"{idx}-{uid}": pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
+
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
-        moves = {int(id): None for id in unit_id[self.player_idx]}
+        moves = {int(id): (0, 0) for id in unit_id[self.player_idx]}
 
         if self.player_idx == 0:
             # Max takes 0
@@ -231,10 +275,10 @@ class Player:
             pass
         elif self.player_idx == 2:
             # Noah takes 2
-            pass
+            moves.update(self.platoon_moves(unit_id[self.player_idx]))
         elif self.player_idx == 3:
             moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
-
+ 
         self.days += 1  
         return list(moves.values())
 
