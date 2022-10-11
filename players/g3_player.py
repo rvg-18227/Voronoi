@@ -3,7 +3,6 @@ import math
 import os
 import pickle
 from typing import Tuple, List
-import copy
 import time
 
 import numpy as np
@@ -81,10 +80,6 @@ class Player:
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
     
-    # def get_radius(self, point: Tuple[float, float]) -> float:
-    #     """Returns the radial distance of our soldier at @point to our homebase."""
-    #     return np.linalg.norm(np.array(point) - self.homebase)
-
     def get_radius(self, points):
         """Returns the radial distance of our soldier at @point to our homebase."""
         return np.sqrt(((points - self.homebase) ** 2).sum(axis=1))
@@ -208,11 +203,6 @@ class Player:
         return (x, y)
 
     def explore(self, scout_unit, ally_units):
-        # enemy_k = min(50, math.ceil(self.enemy_units.shape[0]/2))
-        # enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units).cluster_centers_
-        # ally_k = min(15, math.ceil(ally_units.shape[0]/2))
-        # ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units).cluster_centers_
-
         # change to random selection to speed up
         enemy_clusters = self.enemy_units[np.random.choice(np.arange(self.enemy_units.shape[0]), min(self.enemy_units.shape[0], 50), replace=False)]
         ally_clusters = ally_units[np.random.choice(np.arange(ally_units.shape[0]), min(ally_units.shape[0], 15), replace=False)]
@@ -240,7 +230,7 @@ class Player:
                 # explore
                 scout_moves[i] = self.explore(scout_units[i], ally_units)
 
-        return scout_moves.tolist()
+        return ndarray_to_moves(scout_moves)
 
 
 # -----------------------------------------------------------------------------
@@ -279,23 +269,6 @@ def inverse_force(v):
     mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True))
     force = (v / mag / mag).sum(axis=0)
     return force
-    
-# -----------------------------------------------------------------------------
-#   Force
-# -----------------------------------------------------------------------------
-# NOTE: The code below are referenced from Group 4
-
-def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[float], float]:
-    v = np.array(p1) - np.array(p2)
-    mag = np.linalg.norm(v)
-    unit = v / mag
-    return unit, mag
-
-
-# -----------------------------------------------------------------------------
-#   Strategies
-# -----------------------------------------------------------------------------
-
 
 
 # -----------------------------------------------------------------------------
@@ -330,13 +303,6 @@ def get_pressure_level(force: List[float]) -> int:
     else:
         return PRESSURE_HI
 
-# def get_pressure_level(force):
-#     p = np.sqrt((force ** 2).sum(axis=1))
-#     a = np.zeros_like(p)
-#     a[np.where(p<=PRESSURE_LO_THRESHOLD)[0]] = PRESSURE_LO
-#     a[np.where(p>PRESSURE_LO_THRESHOLD && p<PRESSURE_HI_THRESHOLD)[0]] = PRESSURE_MID
-#     a[np.where(p>=PRESSURE_HI)[0]] = PRESSURE_HI
-#     return a
 
 # -----------------------------------------------------------------------------
 #   Helper functions
@@ -433,3 +399,10 @@ def get_base_angles(player_idx: int) -> Tuple[float, float]:
     base = (1 - player_idx) * math.pi / 2
 
     return base, base - math.pi / 2
+
+def ndarray_to_moves(moves: List[List[float]]) -> List[Tuple[float, float]]:
+    """Converts numpy adarray into list of 2-tuple of floats.
+    
+    Only 2-tuple of floats are accepted as valid actions by the simulator.
+    """
+    return list(map(tuple, moves))
