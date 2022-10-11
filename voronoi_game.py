@@ -145,11 +145,14 @@ class VoronoiGame:
                     {
                         "map_states": self.map_states,
                         "cell_units": self.cell_units,
+                        "player_names": self.player_names,
                         "player_score": self.player_score,
                         "player_total_score": self.player_total_score,
                         "unit_id": self.unit_id,
                         "unit_pos": self.unit_pos,
                         "home_path": self.home_path,
+                        "last_day": self.last_day,
+                        "spawn_day": self.spawn_day
                     },
                     f,
                 )
@@ -271,9 +274,9 @@ class VoronoiGame:
                     map_states=self.map_states[day][0],
                     current_scores=self.player_score[day][0],
                     total_scores=self.player_total_score[day])
-                returned_action = [(float(dist), float(angle)) for dist, angle in returned_action]
 
             if self.check_action(returned_action, day, i):
+                returned_action = [(float(dist), float(angle)) for dist, angle in returned_action]
                 for j in range(len(returned_action)):
                     if self.check_move(returned_action[j]):
                         distance, angle = returned_action[j]
@@ -283,9 +286,8 @@ class VoronoiGame:
                         self.move_unit(distance, angle, day, i, j)
                     else:
                         self.logger.info(
-                            "{} {} failed since provided invalid move {}".format(self.player_names[i],
-                                                                                 self.unit_id[day][0][i][j],
-                                                                                 returned_action[j]))
+                            "{} {} failed since provided invalid move {} (must contain tuples of finite value)".format(
+                                self.player_names[i], self.unit_id[day][0][i][j], returned_action[j]))
                         self.empty_move_unit(day, i, j)
             else:
                 self.logger.info(
@@ -366,6 +368,9 @@ class VoronoiGame:
     def check_action(self, returned_action, day, idx):
         if not returned_action:
             return False
+        if not isinstance(returned_action[0], tuple):
+            return False  # Ensure no one is using sympy
+
         is_valid = False
         if len(returned_action) == len(self.unit_id[day][0][idx]):
             is_valid = True
