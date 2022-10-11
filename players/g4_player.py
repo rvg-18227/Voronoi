@@ -361,7 +361,7 @@ class Player:
 
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
         self.role_groups[RoleType.DEFENDER].append(
-            RadialDefender(self.logger, self.params, radius=10)
+            RadialDefender(self.logger, self.params, radius=40)
         )
         self.role_groups[RoleType.ATTACKER].append(
             NaiveAttacker(self.logger, self.params)
@@ -561,7 +561,7 @@ class Player:
         )
         free_units = own_units - allocated_units
 
-        RING_SPACING = 2
+        RING_SPACING = 5
         for uid in free_units:
             last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
 
@@ -569,12 +569,14 @@ class Player:
             target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
             if len(last_ring.units) >= target_density:
                 self.debug(
-                    f"Creating new Defender ring with radius {last_ring.radius * 2}"
+                    f"Creating new Defender ring with radius {last_ring.radius / 2}"
                 )
                 last_ring = RadialDefender(
-                    self.logger, self.params, last_ring.radius * 2
+                    self.logger, self.params, last_ring.radius / 2
                 )
                 self.role_groups[RoleType.DEFENDER].append(last_ring)
+
+                # TODO: Bottom out at some radius
 
             last_ring.allocate_unit(uid)
             # Naive split allocation between attackers and defenders
