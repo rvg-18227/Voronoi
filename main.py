@@ -14,6 +14,7 @@ if __name__ == '__main__':
     parser.add_argument("--port", type=int, default=8080, help="Port to start, specify -1 to auto-assign")
     parser.add_argument("--address", "-a", type=str, default="127.0.0.1", help="Address")
     parser.add_argument("--no_browser", "-nb", action="store_true", help="Disable browser launching in GUI mode")
+    parser.add_argument("--web_gui", action="store_true", help="Use web gui interface")
     parser.add_argument("--no_gui", "-ng", action="store_true", help="Disable GUI")
     parser.add_argument("--log_path", default="log", help="Directory path to dump log files, filepath if "
                                                           "disable_logging is false")
@@ -38,7 +39,7 @@ if __name__ == '__main__':
             args.log_path = "results.log"
     
     voronoi_game = VoronoiGame(player_list, args)
-    if args.no_gui:
+    if args.no_gui or args.web_gui:
         voronoi_game.play_game()
     else:
         user_interface = VoronoiInterface(player_list, args, game_window_height=800, fps=30)

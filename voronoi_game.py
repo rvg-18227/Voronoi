@@ -102,6 +102,18 @@ class VoronoiGame:
         self.end_message_printed = False
 
         self.add_players(player_list)
+
+        if self.use_gui and args.web_gui:
+            # Use the web gui
+            config = dict()
+            config["address"] = args.address
+            config["start_browser"] = not args.no_browser
+            config["update_interval"] = 0.5
+            config["userdata"] = (self, self.logger)
+            if args.port != -1:
+                config["port"] = args.port
+            start(VoronoiApp, **config)
+
         self.dump_state = args.dump_state
 
     def add_players(self, player_list):
