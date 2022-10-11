@@ -3,6 +3,7 @@ import math
 import os
 import pickle
 import time
+import scipy
 import signal
 import numpy as np
 from shapely.geometry import Point
@@ -80,6 +81,8 @@ class VoronoiGame:
         self.base = []
         for i in range(constants.no_of_players):
             self.base.append(Point(constants.base[i]))
+
+        self.fast_map = FastMapState(constants.max_map_dim)
 
         self.players = []
         self.player_names = []
@@ -251,8 +254,11 @@ class VoronoiGame:
 
         if day % self.spawn_day == 0:
             self.spawn_new(day, str((day // self.spawn_day) + 1))
-            self.update_occupied_cells(day, 0)
-            self.player_score[day][0] = self.update_map_state(day, 0)
+            self.update_occupied_cells(day, 0)  # not req TODO: REMOVE
+            # self.player_score[day][0] = self.update_map_state(day, 0)
+            score, map_state = self.fast_map.update_map_state(day, 0, self.unit_pos)
+            self.player_score[day][0] = score
+            self.map_states[day][0] = map_state
         else:
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
@@ -292,13 +298,19 @@ class VoronoiGame:
                 self.empty_move(day, i)
 
         self.update_occupied_cells(day, 1)
-        self.player_score[day][1] = self.update_map_state(day, 1)
+        # self.player_score[day][1] = self.update_map_state(day, 1)
+        score, map_state = self.fast_map.update_map_state(day, 1, self.unit_pos)
+        self.player_score[day][1] = score
+        self.map_states[day][1] = map_state
 
         for i in range(constants.no_of_players):
             self.check_path_home(day, i)
 
         self.update_occupied_cells(day, 2)
-        self.player_score[day][2] = self.update_map_state(day, 2)
+        # self.player_score[day][2] = self.update_map_state(day, 2)
+        score, map_state = self.fast_map.update_map_state(day, 2, self.unit_pos)
+        self.player_score[day][2] = score
+        self.map_states[day][2] = map_state
         for i in range(constants.no_of_players):
             self.player_total_score[day][i] = self.player_total_score[day-1][i] + self.player_score[day][2][i]
 
@@ -308,6 +320,7 @@ class VoronoiGame:
             self.unit_pos[day][0][i].append(self.base[i])
 
     def update_occupied_cells(self, day, state):
+        # self.cell_units not used anywhere else
         for i in range(constants.no_of_players):
             for j in range(len(self.unit_id[day][state][i])):
                 a = math.floor(self.unit_pos[day][state][i][j].x)
@@ -422,6 +435,7 @@ class VoronoiGame:
         self.unit_pos[day][1][idx].append(self.unit_pos[day][0][idx][unit_idx])
 
     def check_path_home(self, day, idx):
+        # idx = player idx
         a = math.floor(self.base[idx].x)
         b = math.floor(self.base[idx].y)
         if self.map_states[day][1][a][b] == -1:
@@ -485,3 +499,144 @@ class VoronoiGame:
     
     def set_app(self, voronoi_app):
         self.voronoi_app = voronoi_app
+
+
+class FastMapState:
+    def __init__(self, map_size):
+        self._num_contested_pts_check = 10  # In case of dispute, how many cells at identical dist to check
+        self.cell_origins = self._compute_cell_coords(map_size)
+        self.occupancy_map = None
+        self.map_size = map_size
+
+    def update_map_state(self, day, state, unit_pos) -> tuple[list[int], list[list[int]]]:
+        count = [0, 0, 0, 0]
+
+        self.compute_occupancy_map(day, unit_pos, state)
+        for player in range(4):
+            count[player] = np.count_nonzero(self.occupancy_map == player)
+
+        map_state = (self.occupancy_map + 1)
+        map_state[map_state == 5] = 0  # 0 is disputed in map_states var
+        map_state_ = map_state.tolist()
+        return count, map_state_
+
+    def compute_occupancy_map(self, day, unit_pos, state, mask_grid_pos: np.ndarray = None):
+        """Calculates the occupancy status of each cell in the grid
+
+        Args:
+            day: int. Which day to compute for.
+            unit_pos: List - unit_pos[day][state][player][id] - shapely.geometry.Point
+            state: int. Which state of day to use (init, after unit move, after unit kill).
+                Note: state end is same as init state of next day.
+            mask_grid_pos: Shape: [N, N]. If provided, only occupancy of these cells will be computed.
+                Used when updating occupancy map.
+        """
+        # Which cells contain units
+        occ_map = self.get_unit_occupied_cells(day, unit_pos, state)
+        occ_cell_pts = self.cell_origins[occ_map < 4]  # list of unit
+        player_ids = occ_map[occ_map < 4]  # Shape: [N,]. player id for each occ cell
+        if player_ids.shape[0] < 1:
+            raise ValueError(f"No units on the map")
+
+        # Create KD-tree with all occupied cells
+        kdtree = scipy.spatial.KDTree(occ_cell_pts)
+
+        # Query points: coords of each cell whose occupancy is not computed yet
+        if mask_grid_pos is None:
+            mask = (occ_map > 4)  # Not computed points
+        else:
+            mask = (occ_map > 4) & mask_grid_pos
+            occ_map = self.occupancy_map  # Update existing map
+        candidate_cell_pts = self.cell_origins[mask]  # Shape: [N, 2]
+
+        # For each query pt, get associated player (nearest cell with unit)
+        # Find nearest 2 points to identify if multiple cells at same dist
+        near_dist, near_idx = kdtree.query(candidate_cell_pts, k=2)
+
+        # Resolve disputes for cells with more than 1 occupied cells at same distance
+        disputed = np.isclose(near_dist[:, 1] - near_dist[:, 0], 0)
+        disputed_cell_pts = candidate_cell_pts[disputed]  # Shape: [N, 2].
+        if disputed_cell_pts.shape[0] > 0:
+            # Distance of the nearest cell will be radius of our search
+            radius_of_dispute = near_dist[disputed, 0]  # Shape: [N, ]
+            occ_map = self._filter_disputes(occ_map, kdtree, disputed_cell_pts, radius_of_dispute, player_ids)
+
+        # For the rest of the cells (undisputed), mark occupancy
+        not_disputed_ids = player_ids[near_idx[~disputed, 0]]  # Get player id of the nearest cell
+        not_disputed_cells = candidate_cell_pts[~disputed].astype(int)  # cell idx from coords of occupied cells
+        occ_map[not_disputed_cells[:, 0], not_disputed_cells[:, 1]] = not_disputed_ids
+
+        self.occupancy_map = occ_map
+        return
+
+    def _filter_disputes(self, occ_map, kdtree, disputed_cell_pts, radius_of_dispute, player_ids):
+        """For each cell with multiple nearby neighbors, resolve dispute
+        Split into a func for profiling
+        """
+        # Find all neighbors within a radius: If all neigh are same player, cell not disputed
+        for disp_cell, radius in zip(disputed_cell_pts, radius_of_dispute):
+            # Radius needs padding to conform to < equality.
+            rad_pad = 0.1
+            d_near_dist, d_near_idx = kdtree.query(disp_cell,
+                                                   k=self._num_contested_pts_check,
+                                                   distance_upper_bound=radius + rad_pad)
+            # We will get exactly as many points as requested. Extra points will have inf dist
+            # Need to filter those points that are within radius (dist < inf).
+            valid_pts = np.isfinite(d_near_dist)
+            d_near_idx = d_near_idx[valid_pts]
+
+            disputed_ids = player_ids[d_near_idx]  # Get player ids of the contesting cells
+            all_same_ids = np.all(disputed_ids == disputed_ids[0])
+            if all_same_ids:
+                # Mark cell belonging to this player
+                player = disputed_ids[0]
+            else:
+                # Mark cell as contested
+                player = 4
+            disp_cell = disp_cell.astype(int)  # Shape: [2,]
+            occ_map[disp_cell[0], disp_cell[1]] = player
+
+        return occ_map
+
+    @staticmethod
+    def _compute_cell_coords(map_size) -> np.ndarray:
+        """Calculates the origin for each cell.
+        Each cell is 1km wide and origin is in the center.
+
+        Return:
+            coords: Shape: [100, 100, 2]. Coords for each cell in grid.
+        """
+        x = np.arange(0.5, map_size, 1.0)
+        y = x
+        xx, yy = np.meshgrid(x, y, indexing="ij")
+        coords = np.stack((xx, yy), axis=-1)
+        return coords
+
+    def get_unit_occupied_cells(self, day, unit_pos, state) -> np.ndarray:
+        """Colculate which cells contain units and are occupied/disputed
+
+        Args:
+            unit_pos: List - unit_pos[day][state][player][id] - shapely.geometry.Point
+            state: int. Which state of day to use (init, after unit move, after unit kill).
+
+        Returns:
+            unit_occupancy_map: Shape: [N, N]. Maps cells to players/dispute, before nearest neighbor calculations.
+                0-3: Player. 4: Disputed. 5: Not computed
+        """
+        occ_map = np.ones((self.map_size, self.map_size), dtype=np.uint8) * 5  # 0-3 = player, 5 = not computed
+
+        pts_hash = {}
+        for player in range(4):
+            player_units = [tuple(x.coords) for x in unit_pos[day][state][player]]
+            for pl_units in player_units:
+                for (x, y) in pl_units:
+                    pos_grid = (int(y), int(x))  # Quantize unit pos to cell idx
+                    if pos_grid not in pts_hash:
+                        pts_hash[pos_grid] = player
+                        occ_map[pos_grid] = player
+                    else:
+                        player_existing = pts_hash[pos_grid]
+                        if player_existing != player:  # Same cell, multiple players
+                            occ_map[pos_grid] = 4
+
+        return occ_map
