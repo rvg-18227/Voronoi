@@ -61,6 +61,17 @@ class Player:
             self.homebase = (101, 101)
         else:
             self.homebase = (101, -1)
+    
+    def gather_point(self, units, targets):        
+        move = []
+        for i in range(len(units)):
+            unit_vec_target, _ = self.force_vec(units[i], targets)
+            # Calculate weight for cloest point and target point
+            unit_vec_target *= -1
+            move.append(unit_vec_target)
+            move.debug("Move force:", move)
+        move_vec = [self.to_polar((x[0][0], x[0][1])) for x in move]
+        return move_vec
         
     
     def attack_point(self, units, target, homebase_mode=True):
@@ -126,15 +137,15 @@ class Player:
                 unit_vec_closest, mag_closest = self.force_vec(units[i], closest_point[i].coords)
                 unit_vec_target, mag_target = self.force_vec(units[i], target_point)
                 # Calculate weight for cloest point and target point
-                total_mag = mag_target + mag_closest
+                total_mag = mag_target + mag_closest + EPSILON
                 weight_target = mag_target/total_mag
                 weight_closest = mag_closest/total_mag
                 # Calculate move vec for each units
                 attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
-                attack_vec = attack_vec/np.linalg.norm(attack_vec)
+                attack_vec = attack_vec/np.linalg.norm(attack_vec + EPSILON)
                 attack_vec *= -1
                 attack_move.append(attack_vec)
-                self.debug("\Attach force:", attack_vec)
+                self.debug("\Attack force:", attack_vec)
             return attack_move
             
         if homebase_mode:# attack from homebase
@@ -196,7 +207,7 @@ class Player:
     def repelling_force(self, p1, p2):
         dir, mag = self.force_vec(p1, p2)
         # Inverse magnitude: closer things apply greater force
-        return dir * 1 / (mag)
+        return dir * 1 / (mag + EPSILON)
 
     def play(
         self, unit_id, unit_pos, map_states, current_scores, total_scores
@@ -233,15 +244,15 @@ class Player:
             if player != self.player_idx
         ]
         
+        attack_move = None
         if len(unit_id[0]) > 10:
-            #pdb.set_trace()
-            # assume we are always player 1
-            # assume we are attacking player 2 with all we have (singular enemy)
-            enemy2 = self.get_enemy_unit(1, unit_pos)
-            weak_pt_player_2 = self.find_weak_points(2, enemy2)
+            #enemy2 = self.get_enemy_unit(1, unit_pos)
+            #weak_pt_player_2 = self.find_weak_points(2, enemy2)
             my_point = np.stack([sympy_p_float(pos) for pos in unit_pos[self.player_idx]], axis=0)
-            attack_move = self.attack_point(my_point, weak_pt_player_2[0], False)
-            return attack_move
+            my_point = my_point[:10, :]
+            #self.debug(my_point.shape)
+            target = [25, 25]
+            attack_move = self.attack_point(my_point, target)
 
         ENEMY_INFLUENCE = 1
         HOME_INFLUENCE = 20
@@ -275,5 +286,9 @@ class Player:
             self.debug("\tTotal force:", total_force)
 
             moves.append(self.to_polar(total_force))
+        
+        if attack_move is not None:
+            for idx, mv in enumerate(attack_move):
+                moves[idx] = mv
 
         return moves
