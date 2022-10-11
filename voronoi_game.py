@@ -145,11 +145,14 @@ class VoronoiGame:
                     {
                         "map_states": self.map_states,
                         "cell_units": self.cell_units,
+                        "player_names": self.player_names,
                         "player_score": self.player_score,
                         "player_total_score": self.player_total_score,
                         "unit_id": self.unit_id,
                         "unit_pos": self.unit_pos,
                         "home_path": self.home_path,
+                        "last_day": self.last_day,
+                        "spawn_day": self.spawn_day
                     },
                     f,
                 )
