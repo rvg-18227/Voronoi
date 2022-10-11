@@ -7,7 +7,8 @@ import scipy
 import signal
 import numpy as np
 from shapely.geometry import Point
-
+from remi import start
+from voronoi_app import VoronoiApp
 import constants
 from utils import *
 from players.default_player import Player as DefaultPlayer
