@@ -46,6 +46,9 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
+        self.spawn_days = spawn_days
+        self.total_days = total_days
+        self.num_days = 0
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -77,15 +80,22 @@ class Player:
         return -self.repelling_force(p1, p2)
 
 
-    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations):
-        ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 20
-        ALLY_INFLUENCE = 0.6
-        BOUNDARY_INFLUENCE = 1
-        BOUNDARY_THRESHOLD = 1
-        BOUNDARY_FACTOR = 10
-
+    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode):
         
+        HOME_INFLUENCE = 0.2
+        if mode == "offense":
+            ALLY_INFLUENCE = 0.6
+            ENEMY_INFLUENCE = 1
+            BOUNDARY_THRESHOLD = 2
+        else:
+            ALLY_INFLUENCE = 0.0
+            ENEMY_INFLUENCE = 1
+            BOUNDARY_THRESHOLD = 2
+        BOUNDARY_INFLUENCE = 0.4
+        
+        BOUNDARY_FACTOR = 5
+
+
         enemy_unit_forces = [
             self.attractive_force(unit_pos, enemy_pos)
             for _, enemy_pos in enemy_units_locations
@@ -140,15 +150,15 @@ class Player:
 
         return self.to_polar(total_force)
 
-    def cluster_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, closest_cluster, closest_cluster_distance):
+    def cluster_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode):
         row, col, ids = closest_cluster
         ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 20
-        ALLY_INFLUENCE = 0.4
+        HOME_INFLUENCE = 3
+        ALLY_INFLUENCE = 1
         CLUSTER_ENEMY_INFLUENCE = 5 * (1 / closest_cluster_distance)
         BOUNDARY_INFLUENCE = 1
-        BOUNDARY_THRESHOLD = 1
-        BOUNDARY_FACTOR = 10
+        BOUNDARY_THRESHOLD = 0.1
+        BOUNDARY_FACTOR = 1
         
         cluster_enemy_unit_forces = [
             self.repelling_force(unit_pos, enemy_pos)
@@ -233,6 +243,7 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
+        self.num_days += 1
 
         own_units = list(
             zip(
@@ -264,25 +275,28 @@ class Player:
                 
         moves = []
 
-        if len(clusters) <= 3:
-            for unit_id, unit_pos in own_units:
-                moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations))
-        else:
-            for unit_id, unit_pos in own_units:
-                closest_cluster_distance = float("inf")
-                closest_cluster = None
-                for (row, col, ids) in clusters:
-                    cluster_center = np.array([col * BLOCK_SIZE + BLOCK_SIZE / 2, row * BLOCK_SIZE + BLOCK_SIZE / 2])
-                    # print(unit_pos, cluster_center, np.linalg.norm(cluster_center - unit_pos))
-                    if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
-                        closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
-                        closest_cluster = (row, col, ids)
-                # print("closest_cluster_distance: ", closest_cluster_distance)
-                if closest_cluster_distance > 20:
-                    moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
-                                                       own_units, enemy_units_locations))
-                else:
-                    moves.append(self.cluster_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
-                                                       own_units, enemy_units_locations, closest_cluster, closest_cluster_distance))
+        own_units.sort(key=lambda x: x[0])
+
+        for i, (unit_id, unit_pos) in enumerate(own_units):
+            if i < 5:
+                mode = "offense"
+            else:
+                mode = "defense"
+            closest_cluster_distance = float("inf")
+            closest_cluster = None
+            for (row, col, ids) in clusters:
+                cluster_center = np.array([col * BLOCK_SIZE + BLOCK_SIZE / 2, row * BLOCK_SIZE + BLOCK_SIZE / 2])
+                # print(unit_pos, cluster_center, np.linalg.norm(cluster_center - unit_pos))
+                if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
+                    closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
+                    closest_cluster = (row, col, ids)
+            # print("closest_cluster_distance: ", closest_cluster_distance)
+            if closest_cluster_distance > 20:
+                moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
+                                                    own_units, enemy_units_locations, mode))
+            else:
+                print("Switched to cluster strategy: ", self.num_days)
+                moves.append(self.cluster_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
+                                                    own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode))
         return moves
 
