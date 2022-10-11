@@ -49,7 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
-        self.block_size = 5
+        self.block_size = 10
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -365,6 +365,7 @@ class Player:
                     closest_border = (row, col, center, dist)
                     break
             if closest_border is None:
+                assert len(borders_dist) > 0
                 closest_border = borders_dist[0]
             
             moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
