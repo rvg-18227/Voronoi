@@ -107,7 +107,6 @@ class VoronoiRender:
                 for pt in u_list:
                     pos = pt.coords[:][0]
                     # Draw Circle for each unit
-                    print(f"pos: {pos}")
                     pos_px = self.metric_to_px(pos)
                     cv2.circle(grid_rgb, pos_px, self.unit_size_px, self.player_colors[player], -1)
 

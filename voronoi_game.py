@@ -262,7 +262,6 @@ class VoronoiGame:
             score, map_state = self.fast_map.update_map_state(day, 0, self.unit_pos)
             self.player_score[day][0] = score
             self.map_states[day][0] = map_state
-            self.fast_map.plot_occ_map(self.unit_pos[day][0])
         else:
             for i in range(constants.max_map_dim):
                 for j in range(constants.max_map_dim):
@@ -523,7 +522,7 @@ class FastMapState:
 
         map_state = (self.occupancy_map + 1)
         map_state[map_state == 5] = 0  # 0 is disputed in map_states var
-        map_state_ = map_state.tolist()
+        map_state_ = map_state.T.tolist()
         return count, map_state_
 
     def compute_occupancy_map(self, day, unit_pos, state, mask_grid_pos: np.ndarray = None):
