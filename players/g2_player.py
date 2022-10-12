@@ -225,7 +225,7 @@ class Player:
             moves[i+1] = self.point_move(curr, target[2].center_point)
 
             self.otw_to_regions[i] = target[2].center_point
-            print(i, target[2].center_point)
+            #print(i, target[2].center_point)
             self.region_otw[target[2]].add(i)
 
             heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
@@ -233,7 +233,7 @@ class Player:
         self.days += 1  
 
         #print(list(moves.values()))  
-        print(moves)
+        #print(moves)
         return list(moves.values())
 
     def danger_levels(self, unit_pos):
