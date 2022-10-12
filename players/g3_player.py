@@ -18,11 +18,12 @@ PRESSURE_HI_THRESHOLD = 3
 PRESSURE_LO_THRESHOLD = 1.5
 PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3) 
 
-SCOUT_ALLY_SCALE = 12.0
-SCOUT_BORDER_REPULSION_SCALE = 4.0
+SCOUT_HOMEBASE_SCALE = 10.0
+SCOUT_ENEMY_SCALE = 1
+SCOUT_BORDER_SCALE = 5.0
 
-COOL_DOWN = 10
-CB_DURATION = 8  # days dedicated to border consolidation in each cycle
+COOL_DOWN = 15
+CB_DURATION = 0  # days dedicated to border consolidation in each cycle
 CB_START = 35    # the day to start the first cycle of border consolidation
 
 
@@ -177,7 +178,7 @@ class Player:
 
         self.day_n += 1
 
-        self.map_states = map_states
+        self.map_states = np.array(map_states) - 1
 
         float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
         self.enemy_offsets = np.array([len(unit_pos[i]) for i in range(4) if i != self.us])
@@ -207,16 +208,15 @@ class Player:
 
             scout_ids = np.arange(self.num_scouts)
 
-            #start = time.time()
+            start = time.time()
             defense_moves = self.push(scout_ids)
-            #print('Defense:', time.time()-start)
+            self.debug(f'Defense: {time.time()-start}s')
             
-            #start = time.time()
+            start = time.time()
             offense_moves = self.move_scouts(scout_ids)
-            #print('Offense:', time.time()-start)
+            self.debug(f'Offense: {time.time()-start}s')
 
             return offense_moves + defense_moves
-
 
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
         """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
@@ -225,16 +225,71 @@ class Player:
         y = self.homebase[1] + dist * math.sin(angle)
         return (x, y)
 
-    def explore(self, scout_unit, ally_units):
+    def get_border(self):
+        """Get border of our territory"""
+        # trace along x axis to find the starting point
+        if self.us < 2: # 0, 1
+            for i in range(100):
+                if self.map_states[i, 99*self.us] != self.us:
+                    pt = (i-1, 99*self.us)
+                    break
+        else: # 2, 3
+            for i in range(100):
+                if self.map_states[99-i, 99*(3-self.us)] != self.us:
+                    pt = (99-i+1, 99*(3-self.us))
+                    break
+
+        border = set()
+        self._trace_border(pt, border)
+        return np.array(list(border))
+
+    def _trace_border(self, curr_pt, border_pts):
+        """From a point, recurse through neighbors to find all border cells"""
+        if curr_pt in border_pts:
+            return
+        else:
+            border_pts.add(curr_pt)
+
+        # check all 8 neighbors
+        xmax, ymax = self.map_states.shape
+        for x in range(3):
+            for y in range(3):
+                neighbor = (max(min(curr_pt[0]-1+x, xmax-1), 0), 
+                            max(min(curr_pt[1]-1+y, ymax-1), 0))
+                if neighbor != curr_pt and self._on_border((neighbor)):
+                    self._trace_border(neighbor, border_pts)
+
+    def _on_border(self, pt):
+        """Check if given point is on the border"""
+        # currently ignoring disputed cells
+        if self.map_states[pt] != self.us: 
+            return False
+
+        xmax, ymax = self.map_states.shape
+        neighbors = np.array([[min(pt[0]+1, xmax-1), pt[1]], 
+            [max(pt[0]-1, 0), pt[1]],
+            [pt[0], min(pt[1]+1, ymax-1)],
+            [pt[0], max(pt[1]-1, 0)]])
+        return any(self.map_states[neighbors[:, 0], neighbors[:, 1]] != self.us)
+
+    def _explore(self, scout_unit, enemy_clusters, ally_clusters):
+        homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
+        force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters) \
+            + SCOUT_BORDER_SCALE * border_repulsion(scout_unit, xmax=self.map_states.shape[0], ymax=self.map_states.shape[1]) \
+            + SCOUT_HOMEBASE_SCALE * homebase_force
+        return np.array([1, np.arctan2(force[1], force[0])])
+
+    def _get_clusters(self, ally_units):
+        # keep this incase we need it later
+        # enemy_k = min(50, math.ceil(self.enemy_units.shape[0]/2))
+        # enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units).cluster_centers_
+        # ally_k = min(15, math.ceil(ally_units.shape[0]/2))
+        # ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units).cluster_centers_
+
         # change to random selection to speed up
         enemy_clusters = self.enemy_units[np.random.choice(np.arange(self.enemy_units.shape[0]), min(self.enemy_units.shape[0], 50), replace=False)]
         ally_clusters = ally_units[np.random.choice(np.arange(ally_units.shape[0]), min(ally_units.shape[0], 15), replace=False)]
-
-        homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
-        force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters) \
-            + border_repulsion(scout_unit, xmax=len(self.map_states), ymax=len(self.map_states[0])) \
-            + SCOUT_ALLY_SCALE * homebase_force
-        return np.array([1, np.arctan2(force[1], force[0])])
+        return enemy_clusters, ally_clusters
 
     def move_scouts(self, scout_ids):
         scout_units = self.our_units[scout_ids]
@@ -243,15 +298,17 @@ class Player:
         ally_units = np.delete(self.our_units, scout_ids, axis=0)
         ally_dist = ((scout_units.reshape(-1, 1, 2) - ally_units.reshape(1, -1, 2)) ** 2).sum(axis=2)
         min_ally_id = ally_dist.argmin(axis=1)
-        min_enemy_dist = ((scout_units.reshape(-1, 1, 2) - self.enemy_units.reshape(1, -1, 2)) ** 2).sum(axis=2).argmin(axis=1)
+        min_enemy_dist = ((scout_units.reshape(-1, 1, 2) - self.enemy_units.reshape(1, -1, 2)) ** 2).sum(axis=2).min(axis=1)
+
+        enemy_clusters, ally_clusters = self._get_clusters(ally_units)
         for i in range(scout_units.shape[0]):
-            if ally_dist[i, min_ally_id[i]] >= min_enemy_dist[i]:
+            if ally_dist[i, min_ally_id[i]] >= min_enemy_dist[i] * 2:
                 # retreat
                 to_x, to_y = ally_units[min_ally_id[i]] - scout_units[i]
                 scout_moves[i] = np.array([1, np.arctan2(to_y, to_x)])
             else:
                 # explore
-                scout_moves[i] = self.explore(scout_units[i], ally_units)
+                scout_moves[i] = self._explore(scout_units[i], enemy_clusters, ally_clusters)
 
         return ndarray_to_moves(scout_moves)
 
@@ -281,16 +338,16 @@ def exploration_force(curr_pt, enemy_pts, ally_pts=None):
         ally_force = inverse_force(ally_v)
     enemy_v = curr_pt - enemy_pts
     enemy_force = inverse_force(enemy_v)
-    return ally_force + enemy_force
+    return ally_force + SCOUT_ENEMY_SCALE * enemy_force
 
-def border_repulsion(curr_pt, xmax, ymax, scale=SCOUT_BORDER_REPULSION_SCALE):
+def border_repulsion(curr_pt, xmax, ymax):
     border_pts = np.array([[0, curr_pt[1]], [xmax, curr_pt[1]], [curr_pt[0], 0], [curr_pt[0], ymax]])
     border_v = curr_pt - border_pts
-    return scale * inverse_force(border_v)
+    return inverse_force(border_v)
 
 def inverse_force(v):
     mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True))
-    force = (v / mag / mag).sum(axis=0)
+    force = (v / (mag+1e-7) / (mag+1e-7)).sum(axis=0)
     return force
 
 
