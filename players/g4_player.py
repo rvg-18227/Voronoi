@@ -1,16 +1,16 @@
-import numpy as np
-from shapely.geometry import LineString, Point
-from shapely.ops import nearest_points
 import logging
 import pdb
-from typing import Tuple
 from abc import ABC, abstractmethod
 from enum import Enum
-import pdb
+from random import randint, uniform
+from typing import Tuple
+
 import matplotlib.pyplot as plt
-from matplotlib import colors
+import numpy as np
 import pandas as pd
-from random import uniform, randint
+from matplotlib import colors
+from shapely.geometry import LineString, Point, MultiPoint, Polygon, box
+from shapely.ops import nearest_points, voronoi_diagram
 
 EPSILON = 0.0000001
 
@@ -182,6 +182,90 @@ class Role(ABC):
     @abstractmethod
     def deallocation_candidate(self, target_point: tuple[float, float]) -> str:
         """Returns a suitable allocated unit to be de-allocated and used for other roles."""
+        pass
+
+
+class LatticeDefender(Role):
+    __spawn_jitter: dict[str, tuple[float, float]]
+    __radius: float
+    counter: int
+
+    def __init__(self, logger, params, radius):
+        super().__init__(logger, params)
+        self.__radius = radius
+        self.__spawn_jitter = {}
+        self.counter = 0
+
+    def inside_radius(self, unit_pos: Point):
+        dist = np.linalg.norm(unit_pos - self.params.home_base)
+        if dist > self.__radius:
+            in_vec, _ = force_vec(self.params.home_base, unit_pos)
+            return in_vec
+        return np.array([0, 0])
+
+    def _turn_moves(self, update, dead_units):
+        self.counter += 1
+        envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
+        points = MultiPoint(
+            [Point(pos) for pos in update.unit_pos[self.params.player_idx]]
+        )
+        voronoi_polys = list(voronoi_diagram(points, envelope=envelope))
+
+        # Credit: G1
+        fixed_voronoi_polys = []
+        for region in voronoi_polys:
+            region_bounded = region.intersection(envelope)
+            if region_bounded.area > 0:
+                fixed_voronoi_polys.append(region_bounded)
+
+        # Visualize Voronoi regions
+        # plt.clf()
+        # for poly in fixed_voronoi_polys:
+        #     plt.fill(
+        #         *list(zip(*poly.exterior.coords)),
+        #         facecolor="#ffffcc",
+        #         edgecolor="black",
+        #         linewidth=1,
+        #     )
+        # plt.savefig(f"debug/{self.counter}.png")
+
+        defender_positions = {
+            id: pos
+            for id, pos in zip(
+                update.unit_id[self.params.player_idx],
+                update.unit_pos[self.params.player_idx],
+            )
+            if id in self.units
+        }
+
+        moves = {}
+        found = 0
+        for uid, pos in defender_positions.items():
+            # Add decaying random direction bias
+            if not uid in self.__spawn_jitter:
+                # self.__spawn_jitter[uid] = np.array((uniform(0.1, 1), uniform(0, 0.9)))
+                self.__spawn_jitter[uid] = np.array([0.0, 0.0])
+
+            jitter_force = self.__spawn_jitter[uid]
+            self.__spawn_jitter[uid] *= 0.5
+
+            unit_point = Point(pos[0], pos[1])
+            target = pos
+            for poly in fixed_voronoi_polys:
+                if poly.contains(unit_point):
+                    found += 1
+                    target = np.array([poly.centroid.x, poly.centroid.y])
+                    continue
+            moves[uid] = to_polar(
+                normalize(
+                    jitter_force
+                    + normalize(target - pos)
+                    + (100 * self.inside_radius(pos))
+                )
+            )
+        return moves
+
+    def deallocation_candidate(self, target_point):
         pass
 
 
@@ -474,7 +558,8 @@ class Player:
 
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
         self.role_groups[RoleType.DEFENDER].append(
-            RadialDefender(self.logger, self.params, radius=30)
+            # RadialDefender(self.logger, self.params, radius=30)
+            LatticeDefender(self.logger, self.params, 40)
         )
         self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
         self.role_groups[RoleType.SCOUT].append(Scout(self.logger, self.params))
@@ -554,54 +639,56 @@ class Player:
         MIN_RADIUS = 5
         idle = 0
         for uid in free_units:
-            assigned = False
+            self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+        # for uid in free_units:
+        #     assigned = False
 
-            # TODO: framework for prioritizing allocation rules
+        #     # TODO: framework for prioritizing allocation rules
 
-            # Currently assuming all defenders are RadialDefender
-            # Also assumes that defenders are ordered by priority for reinforcement
-            for ring in reversed(self.role_groups[RoleType.DEFENDER]):
-                target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
-                if len(ring.units) < target_density:
-                    ring.allocate_unit(uid)
-                    assigned = True
+        #     # Currently assuming all defenders are RadialDefender
+        #     # Also assumes that defenders are ordered by priority for reinforcement
+        #     for ring in reversed(self.role_groups[RoleType.DEFENDER]):
+        #         target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
+        #         if len(ring.units) < target_density:
+        #             ring.allocate_unit(uid)
+        #             assigned = True
 
-            if assigned:
-                continue
+        #     if assigned:
+        #         continue
 
-            last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
-            # (1/4 circle circumference) / (spacing between units) = units in ring
-            target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
-            next_radius = last_ring.radius / 2
-            if len(last_ring.units) >= target_density and next_radius >= MIN_RADIUS:
-                self.debug(f"Creating new Defender ring with radius {next_radius}")
-                last_ring = RadialDefender(self.logger, self.params, next_radius)
-                self.role_groups[RoleType.DEFENDER].append(last_ring)
+        #     last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
+        #     # (1/4 circle circumference) / (spacing between units) = units in ring
+        #     target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
+        #     next_radius = last_ring.radius / 2
+        #     if len(last_ring.units) >= target_density and next_radius >= MIN_RADIUS:
+        #         self.debug(f"Creating new Defender ring with radius {next_radius}")
+        #         last_ring = RadialDefender(self.logger, self.params, next_radius)
+        #         self.role_groups[RoleType.DEFENDER].append(last_ring)
 
-                last_ring.allocate_unit(uid)
-                assigned = True
+        #         last_ring.allocate_unit(uid)
+        #         assigned = True
 
-            if assigned:
-                continue
+        #     if assigned:
+        #         continue
 
-            total_scouts = sum(
-                len(scouts.units) for scouts in self.role_groups[RoleType.SCOUT]
-            )
-            total_attackers = sum(
-                len(attackers.units)
-                for attackers in self.role_groups[RoleType.ATTACKER]
-            )
-            if total_scouts >= total_attackers:
-                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
-                assigned = True
-            else:
-                self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
-                assigned = True
+        #     total_scouts = sum(
+        #         len(scouts.units) for scouts in self.role_groups[RoleType.SCOUT]
+        #     )
+        #     total_attackers = sum(
+        #         len(attackers.units)
+        #         for attackers in self.role_groups[RoleType.ATTACKER]
+        #     )
+        #     if total_scouts >= total_attackers:
+        #         self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+        #         assigned = True
+        #     else:
+        #         self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
+        #         assigned = True
 
-            if assigned:
-                continue
+        #     if assigned:
+        #         continue
 
-            idle += 1
+        #     idle += 1
 
         if idle > 0:
             self.debug(f"Turn {self.turn}: {idle} idle units")
