@@ -186,58 +186,116 @@ class Defense:
 
 class Attacker:
 
-    def __init__(self, id, position, target="RIGHT"):
-        self.id = id
+    def __init__(self, id, position):
+        self.unitType = UnitType.ATTACK
+        self.number_units = 0
+        self.prev_state = None
+        self.player_id = id
         self.x = float(position.x)
         self.y = float(position.y)
-        self.unit_type = UnitType.ATTACK
-        self.target = target # always either left or right
+        self.day = 0
+        self.real_ids = []
+        
+        self.seen = []
+        self.lr_counter = 0
 
-    def get_move(self, game, positions):
-        # print("ATTACKING MOVE")
-        if self.target == "LEFT":
-            current_x = int(np.floor(self.x))
-            current_y = int(np.floor(self.y))
-            if game[current_x][current_y] == -1 or 0:
-                print("DISPUTED CELL")
-                # The current state is disputed OR there is an enemy within surrounding 9 tiles
-                unit_count = 0
-                for pos in positions:
-                    if pos == Point2D(current_x, current_y):
-                        unit_count += 1
-                        print("Unit Count: ", unit_count)
-                if unit_count > 1:
-                    pass
-                    # send one forward
-                    # check if its still disputed (if not, then we killed the enemy)
-                    # keep advancing until disputed again 
-                else:
-                    return 1, 0, 0 # Does not move if alone in a disputed cell
-            else:
-                return 1, 0, 1
+        self.left_list = []
+        self.right_list = []
+        self.tmp_left_list = []
+        self.tmp_right_list = []
+        self.final_left_list = []
+        self.final_right_list = []
         
-        elif self.target == "RIGHT":
-            current_x = int(np.floor(self.x))
-            current_y = int(np.floor(self.y))
-            if game[current_x][current_y] == -1:
-                print("DISPUTED CELL")
-                # The current state is disputed
-                unit_count = 0
-                for pos in positions:
-                    if pos == Point2D(current_x, current_y):
-                        unit_count += 1
-                        print("Unit Count: ", unit_count)
-                if unit_count > 1:
-                    pass
-                    # send one forward
-                    # check if its still disputed (if not, then we killed the enemy)
-                    # keep advancing until disputed again 
-                else:
-                    return 0, 1, 0 # Does not move if alone in a disputed cell
+
+
+
+    def update(self, map_state, attackerIdxs, units, enemy_units, unit_id):
+        self.map_state = map_state
+        #rotate the map state to the bottom left
+        self.number_units = len(attackerIdxs)
+        self.attackerIdxs = attackerIdxs
+        self.unit_id = unit_id
+        self.real_ids = self.unit_id[self.player_id]
+
+        self.unit_locations = [(unit,i) for i, unit in enumerate(units) if i in attackerIdxs]
+
+
+        for i, (unit,pos) in enumerate(self.unit_locations):
+            real_id = self.real_ids[pos]
+
+            if real_id not in self.seen:
+                self.lr_counter += 1
+                self.seen.append(real_id)
+
+                if 1 <= self.lr_counter <= 3:    
+                    self.left_list.append(real_id)
+                elif 4 <= self.lr_counter <= 6:
+                    self.right_list.append(real_id)
+                    if self.lr_counter == 6:
+                        self.lr_counter = 0
+
+
+        self.enemy_units = enemy_units
+        self.day += 1
+
+    def get_moves(self):
+        moves = [(0, 0, 0) for i, (unit,pos) in enumerate(self.unit_locations)]
+        moved = [False for _ in range(self.number_units)]
+        if self.number_units == 0:
+            return []
+
+
+        for i, (unit,pos) in enumerate(self.unit_locations):
+            real_id = self.real_ids[pos]
+            triplet_no = (self.seen.index(real_id)) % 3 # Is the unit 1, 2, or 3 in the triplet to determine special movement
+
+            # # Code to group up triplets
+            # if real_id in self.left_list and real_id not in self.final_left_list:
+            #     if triplet_no == 0 or triplet_no == 1:
+            #         moves[i] = 1, 1, 0 # Move left
+            #         self.tmp_left_list.append(real_id)
+            #         self.left_list.remove(real_id)
+            #     else:
+            #         moves[i] = 1, 1, 0
+            #         self.left_list.remove(real_id)
+            #         self.final_left_list.append(real_id)
+            #         self.final_left_list.extend(self.left_list)
+            #         self.left_list.clear()
+
+            # elif real_id in self.final_left_list:
+            #     moves[i] = 1, 1, 0 
+
+
+            # elif real_id in self.right_list and real_id not in self.final_right_list:
+            #     if triplet_no == 0 or triplet_no == 1:
+            #         moves[i] = 1, 0, 1 # Move right
+            #         self.tmp_right_list.append(real_id)
+            #         self.right_list.remove(real_id)
+            #     else:
+            #         moves[i] = 1, 0, 1
+            #         self.right_list.remove(real_id)
+            #         self.final_right_list.append(real_id)
+            #         self.final_right_list.extend(self.right_list)
+            #         self.right_list.clear()
+
+            # elif real_id in self.final_right_list:
+            #     moves[i] = 1, 0, 1 
+
+
+
+            if real_id in self.left_list:
+                # Even - LEFT attacking troops
+                moves[i] = 1, 1, 0 
+            elif real_id in self.right_list:
+                # Odd - RIGHT attacking troops
+                moves[i] = 1, 0, 1 #distance_to_goal, end_direction[0], end_direction[1]  - Pos x only (right)
+
             else:
-                return 0, 1, 1
-        
-        return self.x, self.y, 1
+                moves[i] = 0, 0, 1 # Does not move
+
+
+        return moves
+
 
 
 
@@ -266,7 +324,7 @@ class Spacer:
         moves = {}
         if self.number_units == 0:
             return moves
-        print()
+        # print()
         # Adapted from group 4 Code
         ENEMY_INFLUENCE = 1 # TODO: change influence values for best spacers!
         HOME_INFLUENCE = 20
@@ -349,7 +407,7 @@ class Player:
         self.PHASE_TWO_OUTPUT = [UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
         self.PHASE_THREE_OUTPUT = [UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
 
-        testing = True
+        testing = False
         if testing:
             testingType = UnitType.DEFENSE
             self.PHASE_ONE_OUTPUT = [testingType]
@@ -374,8 +432,9 @@ class Player:
 
         self.spacer = Spacer(self.player_idx, self.spawn_point)
         self.defense = Defense(self.player_idx, self.spawn_point)
+        self.attack = Attacker(self.player_idx, self.spawn_point)
 
-    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
+    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
                 Args:
@@ -394,7 +453,7 @@ class Player:
                                                 move each unit of the player
                 """
         self.add_spawn_units_if_needed(unit_id[self.player_idx])
-        spacers, attacker, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
+        spacers, attackers, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
 
         enemy_ids, enemy_units = self.get_enemy_units(unit_id, unit_pos)
 
@@ -420,27 +479,14 @@ class Player:
         # print(spacerMoves)
         
         for real_idx in spacers:
-            print("i")
+            # print("i")
             moves[real_idx] = spacerMoves[real_idx]
 
-        for idx in attacker:
-            target_param = ""
-            if self.left_right_count < 3:
-                target_param = "RIGHT"
-                self.left_right_count += 1
-            elif self.left_right_count < 6:
-                target_param = "LEFT"
-                self.left_right_count += 1
-            
-            if self.left_right_count > 5:
-                self.left_right_count = 0
-
-
-            attacker = Attacker(unit_id[self.player_idx][idx], unit_pos[self.player_idx][idx], target_param)
-            x, y, dist = attacker.get_move(self.map_states, self.unit_pos)
-
-            # moves[idx] = self.transform_move(0, 1) #attacker.move_function(unit, idx, etc)
-            moves[idx] = self.transform_move(x, y, dist)
+        self.attack.update(self.map_states, attackers, unit_pos[self.player_idx], enemy_units, unit_id)
+        attackingMoves = self.attack.get_moves()
+        for attacking_move_idx, real_idx in enumerate(attackers):
+            dist, x, y = attackingMoves[attacking_move_idx]
+            moves[real_idx] = (dist if dist <= 1 else 1, np.arctan2(y, x))
 
         self.defense.update(self.map_states, defenders, unit_pos[self.player_idx], enemy_units)
         defensiveMoves = self.defense.get_moves()
@@ -451,7 +497,7 @@ class Player:
         self.current_turn += 1
         return moves
 
-    def simulate_move(self, unit_pos, move) -> tuple[float, float]:
+    def simulate_move(self, unit_pos, move) -> Tuple[float, float]:
         """Simulates the move and returns the new position
                 Args:
                     unit_pos (Point2D(float, float)): current position of the unit
@@ -471,7 +517,7 @@ class Player:
         """
         return self.map_states[np.floor(pos[0])][np.floor(pos[1])] - 1 # -1 because the map states are 1 indexed
 
-    def transform_move(self, x: float, y: float, distance) -> tuple[float, float]:
+    def transform_move(self, x: float, y: float, distance) -> Tuple[float, float]:
         """Transforms the distance and angle to the correct format for the game engine
                 Args:
                     angle (float): angle in radians
