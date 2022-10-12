@@ -7,8 +7,9 @@ import sympy
 import logging
 from typing import Tuple, List, Dict
 import math
-from shapely.geometry import Point, MultiPoint
+from shapely.geometry import Point, MultiPoint, LineString
 from shapely.geometry.polygon import Polygon
+from shapely.affinity import scale, rotate
 from shapely.ops import nearest_points
 
 from scipy.spatial.distance import cdist
@@ -136,8 +137,12 @@ class Player:
         self.logger = logger
         self.player_idx = player_idx
         self.days = 1
-        self.ally_units = {}
-        self.enemy_units = {}
+        self.ally_units: Dict[str, Point] = {}
+        self.ally_units_yesterday: Dict[str, Point] = {}
+        self.ally_killed_unit_ids = []
+        self.enemy_units: Dict[str, Point] = {}
+        self.enemy_units_yesterday: Dict[str, Point] = {}
+        self.enemy_killed_unit_ids = []
 
         self.far_radius = OUTER_RADIUS
         self.scissor_bounds = self.create_bounds(self.far_radius)
@@ -200,19 +205,70 @@ class Player:
             else:
                 self.platoons[newest_platon_id+1] = {'unit_ids': [unit_id], 'target': None}
 
-        enemy_unit_points = MultiPoint(list(self.enemy_units.values()))
         for platoon in self.platoons.values():
-            if not platoon['target'] and len(platoon['unit_ids']) == 3:
+            # Remove killed units
+            for uid in self.ally_killed_unit_ids:
+                if uid in platoon['unit_ids']:
+                    platoon['unit_ids'].remove(uid)
+            
+            # Remove target when it has been killed
+            if platoon['target'] in self.enemy_killed_unit_ids:
+                platoon['target'] = None
+
+            # Assign targets for ready platoons
+            if not platoon['target']  and len(platoon['unit_ids']) == 3:
+                untargetted_enemy_unit_poss = [pos for uid, pos in self.enemy_units.items() if uid not in [p['target'] for p in self.platoons.values()]]
+                enemy_unit_points = MultiPoint(untargetted_enemy_unit_poss)
+
                 leader_point = self.ally_units[platoon['unit_ids'][0]]
                 nearest_enemy_point = nearest_points(leader_point, enemy_unit_points)[1]
-                platoon['target'] = nearest_enemy_point
+                platoon['target'] = list(self.enemy_units.keys())[list(self.enemy_units.values()).index(nearest_enemy_point)]
             
+            # Generate moves for units in assigned platoons
             elif platoon['target']:
-                for uid in platoon['unit_ids']:
-                    moves[uid] = self.shapely_point_move(platoon['target'], self.ally_units[uid])
+                platoon_unit_ids = platoon['unit_ids']
+                for uid in platoon_unit_ids:
+                    platoon_unit_idx = platoon_unit_ids.index(uid)
+                    intersept_angle = self.intercept_angle(platoon['target'], uid, platoon_unit_idx)
+                    if platoon_unit_idx == 0 and self.ally_units[platoon_unit_ids[1]] == self.get_home_coords():
+                        moves[uid] = (0, intersept_angle)
+                    else:
+                        moves[uid] = (1, intersept_angle)
 
-        return {int(uid): self.transform_move(move) for uid, move in moves.items()}
+        return {int(uid): move for uid, move in moves.items()}
 
+    def intercept_angle(self, target_unit_id, chaser_unit_id, platoon_unit_idx=None) -> float:
+        target_pos = self.enemy_units[target_unit_id]
+        target_prev_pos = self.enemy_units_yesterday[target_unit_id]
+        target_vec = LineString([target_prev_pos, target_pos])
+        scaled_target_vec = scale(target_vec, xfact=100, yfact=100, origin=target_prev_pos)
+
+        chaser_pos = self.ally_units[chaser_unit_id]
+        chaser_vec = LineString([chaser_pos, (chaser_pos.x+1, chaser_pos.y)])
+
+        intersect_pos = target_pos
+        if target_pos != target_prev_pos:
+            best_dist = math.inf
+            for angle in range(360):
+                rotated_chaser_vec = rotate(chaser_vec, angle, origin=chaser_pos)
+                scaled_chaser_vec = scale(rotated_chaser_vec, xfact=100, yfact=100, origin=chaser_pos)
+                new_intersect_pos = scaled_chaser_vec.intersection(scaled_target_vec)
+                intersect_dist = chaser_pos.distance(new_intersect_pos)
+                if intersect_dist < best_dist and intersect_dist > 0:
+                    intersect_pos = new_intersect_pos
+                    best_dist = intersect_dist
+        
+        if target_pos != intersect_pos:
+            chaser_to_intersect = LineString([chaser_pos, intersect_pos])
+            left_flank = chaser_to_intersect.parallel_offset(4, 'left').boundary[1]
+            right_flank = chaser_to_intersect.parallel_offset(4, 'right').boundary[0]
+
+            if platoon_unit_idx == 1:
+                intersect_pos = left_flank
+            elif platoon_unit_idx == 2:
+                intersect_pos = right_flank            
+        
+        return math.atan2(intersect_pos.y-chaser_pos.y, intersect_pos.x-chaser_pos.x)
 
     def sentinel_moves(self, unit_pos, unit_id) -> Dict[float, Tuple[float, float]]:
 
@@ -352,11 +408,22 @@ class Player:
                                                 move each unit of the player
                 """
 
+        # Cache previous day's unit positions
+        self.ally_units_yesterday = self.ally_units.copy()
+        self.enemy_units_yesterday = self.enemy_units.copy()
+
+        # Update current unit positions
+        self.ally_units = {}
+        self.enemy_units = {}
         for idx in range(4):
             if self.player_idx == idx:
                 self.ally_units.update({uid: pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
             else:
                 self.enemy_units.update({f"{idx}-{uid}": pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
+
+        # Detect killed units
+        self.ally_killed_unit_ids = [id for id in list(self.ally_units_yesterday.keys()) if id not in list(self.ally_units.keys())]
+        self.enemy_killed_unit_ids = [id for id in list(self.enemy_units_yesterday.keys()) if id not in list(self.enemy_units.keys())]
 
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
         moves = {int(id): (0, 0) for id in unit_id[self.player_idx]}
@@ -367,16 +434,15 @@ class Player:
         elif self.player_idx == 1:
             self.get_forces(unit_id, unit_pos)
             # Abigail takes 1
-            pass
+            moves.update(self.fixed_formation_moves(unit_id[self.player_idx][:1], [45.0], 0 if unit_pos[self.player_idx][0].x >= 25 else 1)) 
         elif self.player_idx == 2:
             # Noah takes 2
             moves.update(self.platoon_moves(unit_id[self.player_idx]))
 
         elif self.player_idx == 3:
-            moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
- 
-        self.days += 1
-        #print(moves)
+            pass
+
+        self.days += 1  
         return list(moves.values())
 
     #what is the enemy_count team_count for a given point
