@@ -1,7 +1,7 @@
 import os
 import pickle
 from turtle import width
-from time import clock_settime
+#from time import clock_settime
 import numpy as np
 import sympy
 import logging
@@ -248,7 +248,7 @@ class Spacer:
         self.unitType = UnitType.SPACER
         self.number_units = 0
         self.prev_state = None
-        self.spawn_point = (spawn_point.x, spawn_point.y)
+        self.spawn_point = spawn_point
         self.player_idx = player_idx
         self.day = 0
         self.scanner_radius = 50
@@ -265,27 +265,44 @@ class Spacer:
         moves = {}
         if self.number_units == 0:
             return moves
-        print()
+        #print()
         # Adapted from group 4 Code
         ENEMY_INFLUENCE = 1 # TODO: change influence values for best spacers!
         HOME_INFLUENCE = 20
         ALLY_INFLUENCE = 0.5
 
         for i, unit in enumerate(self.unit_locations):
-
-            enemy_force = np.add.reduce([self.repelling_force(unit,enemy) for enemy in self.enemy_units])
-            home_force = self.repelling_force(unit, self.spawn_point)
-            ally_force = np.add.reduce([self.repelling_force(unit,ally) for ally in self.unit_locations if not unit]) ###TODO: currently only looks at other SPACERS as ally's not all. Need to change this.
-
+            unit = np.array(unit)
+            #print('u', unit)
+            enemy_force = np.add.reduce([self.repelling_force(unit,np.array(enemy)) for enemy in self.enemy_units])
+            #print('sp',(self.spawn_point))
+            home_force = self.repelling_force(unit, np.array(self.spawn_point))
+            #print('hghgh',enemy_force, home_force)
+            ally_forces_list = []
+            for ally in self.unit_locations:
+                ally = np.array(ally)
+                #print('ally',ally)
+                if not np.array_equal(ally, unit): 
+                    #print('not ally')
+                    ally_forces_list.append(self.repelling_force(unit,ally))
+            ally_force = np.add.reduce(ally_forces_list)
+            #ally_force = np.add.reduce([self.repelling_force(unit,ally) for ally in self.unit_locations if not unit]) ###TODO: currently only looks at other SPACERS as ally's not all. Need to change this.
+            #print(('ally force:', ally_force))
             total_force = self.normalize((enemy_force * ENEMY_INFLUENCE)
                                          + (home_force * HOME_INFLUENCE)
                                          + (ally_force * ALLY_INFLUENCE)
                                          )
-            moves[unit] = self.to_polar(total_force)
+            #print(unit)
+            #print(type(unit))
+            #print(total_force)
+            moves[i] = self.to_polar(total_force)
+        #print('moves',moves)
+        return moves
 
     def force_vec(self, p1, p2):
         v = p1 - p2
         mag = np.linalg.norm(v)
+        #print(v,'over',mag)
         unit = v / mag
         return unit, mag
 
@@ -297,6 +314,9 @@ class Spacer:
         return v / np.linalg.norm(v)
 
     def repelling_force(self, p1, p2):
+
+        if np.array_equal(p1,p2): 
+            return 0
         dir, mag = self.force_vec(p1, p2)
         return dir * 1 / (mag)        
 
@@ -348,7 +368,7 @@ class Player:
         self.PHASE_TWO_OUTPUT = [UnitType.SPACER, UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
         self.PHASE_THREE_OUTPUT = [UnitType.ATTACK, UnitType.DEFENSE, UnitType.ATTACK, UnitType.DEFENSE]
 
-        testing = True
+        testing = False
         if testing:
             testingType = UnitType.DEFENSE
             self.PHASE_ONE_OUTPUT = [testingType]
@@ -414,13 +434,13 @@ class Player:
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
 
         self.spacer.update(self.map_states, spacers, unit_pos[self.player_idx], enemy_units)
-        print(self.spacer.number_units)
+        #print(spacers)
+        #print('self.spacer.number_units',self.spacer.number_units)
         spacerMoves = self.spacer.get_moves()
-        print(spacerMoves)
+        #print('spacerMoves',spacerMoves)
         
-        for real_idx in spacers:
-            print("i")
-            moves[real_idx] = spacerMoves[real_idx]
+        for spacermoveidx, real_idx in enumerate(spacers):
+            moves[real_idx] = spacerMoves[spacermoveidx]
 
         for idx in attacker:
             target_param = ""
