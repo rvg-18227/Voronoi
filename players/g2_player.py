@@ -358,8 +358,10 @@ class Player:
                 if int(min_home) == 0:
                     break
         if min_home != math.inf:
-            least_pop_region_id = unit_forces[min_unit_id][3][0]
-            self.scout[least_pop_region_id] = min_unit_id
+            least_pop_region_id = unit_forces[min_unit_id][3][0][0]
+            if least_pop_region_id is not None:
+                    #print(least_pop_region_id)
+                self.scout[least_pop_region_id] = min_unit_id
 
         for region in self.scout:
             # Remove killed units
@@ -368,23 +370,27 @@ class Player:
                     self.scout[region] = None
 
             # Assign movement path towards empty region for scout
-            for region in self.scout:
-                move_dist = None
-                angle = None
-                if self.scout[region] != None:
-                    player_idx = unit_ids[self.player_idx].index(self.scout[region])
-                    current_scout_pos = unit_pos[self.player_idx][player_idx]
-                    region_center_point = unit_forces[self.scout[region]][3][0][1]
-                    if current_scout_pos.distance(Point(region_center_point)) == 0:
-                        move_dist = 0
-                        angle = 0
-                    else:
-                        move_dist = 1
-                        angle = sympy.atan2(region_center_point[1] - current_scout_pos.y,
-                                            region_center_point[0] - current_scout_pos.x)
+        for region in self.scout:
+            #print(region, self.scout[region], "Hello")
+            move_dist = None
+            angle = None
+            if self.scout[region] != None:
+                player_idx = unit_ids[self.player_idx].index(self.scout[region])
+                current_scout_pos = unit_pos[self.player_idx][player_idx]
+                region_center_point = self.entire_board_regions[region].centroid #unit_forces[self.scout[region]][3][0][1]
+                region_center_point = (region_center_point.x, region_center_point.y)
+                #print(region, region_center_point)
+                if current_scout_pos.distance(Point(region_center_point)) == 0:
+                    move_dist = 0
+                    angle = 0
+                else:
+                    move_dist = 1
+                    angle = sympy.atan2(region_center_point[1] - current_scout_pos.y,
+                                        region_center_point[0] - current_scout_pos.x)
 
-                    moves[self.scout[region]] = (move_dist, angle)
+                moves[self.scout[region]] = (move_dist, angle)
         #print(moves)
+        #print(self.scout)
         return {int(uid): move for uid, move in moves.items()}
 
     def intercept_angle(self, target_unit_id, chaser_unit_id, platoon_unit_idx=None) -> float:
@@ -674,12 +680,34 @@ class Player:
     def least_popular_region_force(self, unit_pos):
         number_regions = len(self.entire_board_regions)
         unit_per_region = np.zeros(number_regions)
+        unclaimed_regions = [region_id for region_id in self.scout if self.scout[region_id] is None]
+        if not unclaimed_regions:
+            '''
+            for index in range(number_regions):
+                current_poly = self.entire_board_regions[index]
+                for player_num in range(4):
+                    for unit in unit_pos[player_num]:
+                        if current_poly.contains(unit):
+                            unit_per_region[index] += 1
+
+            index_min_region = int(np.argmin(unit_per_region))
+            min_poly = self.entire_board_regions[index_min_region]
+            center = min_poly.centroid
+            # print(center)
+            return [(index_min_region, (center.x, center.y))]
+            '''
+            return [(None, None)]
+
         for index in range(number_regions):
-            current_poly = self.entire_board_regions[index]
-            for player_num in range(4):
-                for unit in unit_pos[player_num]:
-                    if current_poly.contains(unit):
-                        unit_per_region[index] += 1
+            if index in unclaimed_regions:
+                current_poly = self.entire_board_regions[index]
+                for player_num in range(4):
+                    for unit in unit_pos[player_num]:
+                        if current_poly.contains(unit):
+                            unit_per_region[index] += 1
+            else:
+                unit_per_region[index] = math.inf
+
         index_min_region = int(np.argmin(unit_per_region))
         min_poly = self.entire_board_regions[index_min_region]
         center = min_poly.centroid
