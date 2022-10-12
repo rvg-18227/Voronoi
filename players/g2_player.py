@@ -113,9 +113,22 @@ def find_increment(new_radius, a):
 def increment_bounds(bound, incrementl, incrementr):
     return ((bound[0][0]+incrementl[0], bound[0][1]+incrementl[1]),(bound[1][0]+incrementr[0], bound[1][1]+incrementr[1]))
 
+def get_home_coords(team_idx):
+    if team_idx == 0:
+        return Point(0.5, 0.5)
+    elif team_idx == 1:
+        return Point(0.5, 99.5)
+    elif team_idx == 2:
+        return Point(99.5, 99.5)
+    elif team_idx == 3:
+        return Point(99.5, 0.5)
+
 def create_bounds(radius_from_origin, team_idx):
 
     scizzor_angle = np.linspace(0, 90, SCISSOR_ZONE_COUNT+1)
+
+    home_base = get_home_coords(team_idx)
+    home = (home_base.x, home_base.y)
 
     #change angles to Radians
     #make them agnostic to player idx
@@ -124,7 +137,7 @@ def create_bounds(radius_from_origin, team_idx):
     bounds = []
 
     for a in angles:
-        bounds.append((radius_from_origin*math.cos(a),radius_from_origin*math.sin(a)))
+        bounds.append((radius_from_origin*math.cos(a)+home[0],radius_from_origin*math.sin(a)+home[1]))
 
     return bounds, angles
 
@@ -430,7 +443,7 @@ class Player:
         #no units > danger score > closest
         pqueue = []
 
-        print(self.regions)
+        #print(self.regions)
 
         #create priority list
         for r in self.regions:
