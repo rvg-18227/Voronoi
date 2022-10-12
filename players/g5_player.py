@@ -305,7 +305,7 @@ class Player:
             col, row = int(enemy_pos[0]), int(enemy_pos[1])
             block_count[row // self.block_size][col // self.block_size].add(enemy)
         
-        clusters = []
+        # clusters = []
         # for row in range(100 // self.block_size):
         #     for col in range(100 // self.block_size):
         #         if len(block_count[row][col]) >= CLUSTER_THRESHOLD:
@@ -329,7 +329,7 @@ class Player:
         border_assignment_set = set()
         # sparse_assignment_set = set()
         for i, (unit_id, unit_pos) in enumerate(own_units):
-            if i < 9 and len(own_units) > 8:
+            if i < 9 and len(own_units) > 9:
                 mode = "offense"
             else:
                 mode = "defense"
