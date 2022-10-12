@@ -69,7 +69,7 @@ class Defense:
                 if distance > self.scanner_radius:
                     break
                 offset_weight = 3
-                if cluster_points_left[idx] == 0 and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
+                if cluster_points_left[idx] == 0:# and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
                     offset_weight = 4
 
                 if cluster_points_left[idx] > 0 or offset_weight != 3:
@@ -155,6 +155,7 @@ class Defense:
 
     def number_in_circle(self, units, center, radius):
         units = set([tuple(np.floor(unit)) for unit in units])
+        units.add(tuple(np.floor(center)))
         return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
     
     def get_clusters(self):
@@ -414,9 +415,9 @@ class Player:
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
 
         self.spacer.update(self.map_states, spacers, unit_pos[self.player_idx], enemy_units)
-        print(self.spacer.number_units)
+        # print(self.spacer.number_units)
         spacerMoves = self.spacer.get_moves()
-        print(spacerMoves)
+        # print(spacerMoves)
         
         for real_idx in spacers:
             print("i")
