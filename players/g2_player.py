@@ -80,6 +80,23 @@ def get_interest_regions_points(center_point, i):
     x, y = center_point
     return InterestRegion(center_point, Polygon([(x-10, y-10), (x+10, y-10), (x+10, y+10), (x-10,y+10)]), i)
 
+def get_board_regions(region_number):
+    region_size = 100/region_number
+    index = 0
+    regions_by_id = {}
+    for row_step in range(region_number):
+        right_top_corner = (0, row_step*region_size)
+        for column_step in range(region_number):
+            left_top_corner = (right_top_corner[0] + region_size, right_top_corner[1])
+            right_bottom_corner = (right_top_corner[0], right_top_corner[1] + region_size)
+            left_bottom_corner = (right_top_corner[0] + region_size, right_top_corner[1] + region_size)
+            #print(right_top_corner, left_top_corner, right_bottom_corner, left_bottom_corner)
+            regions_by_id[index] = Polygon([right_top_corner, right_bottom_corner, left_bottom_corner,
+                                                left_top_corner])
+            right_top_corner = left_top_corner
+            index += 1
+    return regions_by_id
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -127,6 +144,9 @@ class Player:
 
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
+
+        #dictionary of entire board broken up into regions
+        self.entire_board_regions = get_board_regions(5)
 
     def get_home_coords(self):
         if self.player_idx == 0:
@@ -271,6 +291,7 @@ class Player:
             # Max takes 0
             moves.update(self.sentinel_moves(unit_pos))
         elif self.player_idx == 1:
+            self.get_forces(unit_id, unit_pos)
             # Abigail takes 1
             pass
         elif self.player_idx == 2:
@@ -352,18 +373,34 @@ class Player:
             dist = friend_unit_pos.distance(current_pos)
             if dist < closest_unit_dist:
                 closest_unit_dist = dist
-        return [(friend_unit_pos, closest_unit_dist)]
+        return [((friend_unit_pos.x, friend_unit_pos.y), closest_unit_dist)]
 
-    def get_forces(self, unit_id, unit_pos, danger_regions):
+    def least_popular_region_force(self, unit_pos):
+        number_regions = len(self.entire_board_regions)
+        unit_per_region = np.zeros(number_regions)
+        for index in range(number_regions):
+            current_poly = self.entire_board_regions[index]
+            for player_num in range(4):
+                for unit in unit_pos[player_num]:
+                    if current_poly.contains(unit):
+                        unit_per_region[index] += 1
+        index_min_region = int(np.argmin(unit_per_region))
+        min_poly = self.entire_board_regions[index_min_region]
+        center = min_poly.centroid
+        #print(center)
+        return [(index_min_region, (center.x, center.y))]
+
+
+    def get_forces(self, unit_id, unit_pos):# danger_regions):
         forces = {id: [] for id in unit_id[self.player_idx]}
         for i in range(len(unit_id[self.player_idx])):
             unit = unit_id[self.player_idx][i]
             current_pos = unit_pos[self.player_idx][i]
             home_coords = self.get_home_coords()
             
-            forces[unit].append((Tuple(home_coords), home_coords.distance(current_pos)))
+            forces[unit].append([(home_coords.x, home_coords.y), home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
             forces[unit].append(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
-            forces[unit].append(danger_regions)
-
+            #forces[unit].append(danger_regions)
+            forces[unit].append(self.least_popular_region_force(unit_pos))
         return forces
