@@ -10,3 +10,6 @@ scikit-learn
 opencv-python
 pandas
 pygame
+opencv-python
+imageio_ffmpeg
+

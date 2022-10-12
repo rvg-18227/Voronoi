@@ -1,9 +1,9 @@
 import atexit
 import datetime
-import logging
 from typing import Optional, List, Tuple
 
 import cv2
+import imageio_ffmpeg
 import numpy as np
 import matplotlib as mpl
 import pygame
@@ -14,9 +14,7 @@ from voronoi_game import VoronoiGame
 
 
 class VoronoiInterface:
-    # def __init__(self, player_list, total_days=100, map_size=100, player_timeout=120, game_window_height=800,
-    #              save_video=None, fps=60, spawn_freq=1, seed=0):
-    def __init__(self, player_list, args, game_window_height=800, fps=60):
+    def __init__(self, player_list, args, game_window_height=800, fps=16):
         """Interface for the Voronoi Game.
         Uses pygame to launch an interactive window
 
@@ -79,9 +77,10 @@ class VoronoiInterface:
                 player_str += p
             self.video_path = f"videos/{now}-game-p{player_str}.mp4"
             self.frame = np.empty((s_width, s_height, 3), dtype=np.uint8)
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Codec. Alt: 'avc1'
-            self.writer = cv2.VideoWriter(self.video_path, apiPreference=0, fourcc=fourcc,
-                                          fps=self.fps, frameSize=(s_width, s_height))
+            # disable warning (due to frame size not being a multiple of 16)
+            self.writer = imageio_ffmpeg.write_frames(self.video_path, (s_width, s_height), ffmpeg_log_level="error",
+                                                      fps=fps, quality=9)
+            self.writer.send(None)  # Seed the generator
 
         # Game data
         self.reset = False
@@ -128,6 +127,11 @@ class VoronoiInterface:
             self.info_end = "Game ended. Press R to reset, Esc to Quit"
             if self.print_results:
                 self.game_state.print_results()
+
+                self.writer.close()
+                self.writer = None
+                print(f"Saved video to: {self.video_path}")
+
                 self.print_results = False  # Print results only once
             # self.running = False
 
@@ -155,9 +159,8 @@ class VoronoiInterface:
             if self.curr_day < self.total_days:
                 # Don't record past end of game
                 pygame.pixelcopy.surface_to_array(self.frame, self.screen)
-                frame = np.swapaxes(self.frame, 0, 1)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                self.writer.write(frame)
+                frame = np.ascontiguousarray(np.swapaxes(self.frame, 0, 1))
+                self.writer.send(frame)
 
     def draw_text(self):
         # Draw Info text on screen surface
@@ -185,14 +188,15 @@ class VoronoiInterface:
         text_lines = info_text.split("\n")
         for idx, line in enumerate(text_lines):
             text_surf = self.font.render(line, True, color)
-            text_rect = text_surf.get_rect(left=box_rect.left+pad_left, top=box_rect.top)  # Position surface at center of text box
+            # Position Text left-aligned and spaced out
+            text_rect = text_surf.get_rect(left=box_rect.left+pad_left, top=box_rect.top)
             text_rect.top += pad_top + (pad_v * (idx + 1))
             self.text_box_surf.blit(text_surf, text_rect.topleft)  # Draw text on text box
 
     def cleanup(self):
         # video - release and destroy windows
-        if self.create_video and self.writer:
-            self.writer.release()
+        if self.create_video and self.writer is not None:
+            self.writer.close()
             self.writer = None
             print(f"Saved video to: {self.video_path}")
         pygame.quit()
