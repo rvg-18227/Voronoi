@@ -15,4 +15,3 @@ render/
 .vscode/
 Brewfile
 players/g2_player.py
-players/prob_player.py

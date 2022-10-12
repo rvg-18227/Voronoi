@@ -131,6 +131,7 @@ class Player:
         newest_point = points[-1]
         p_new, p_base = Point(newest_point), Point(base_point)
         current_radius = 0
+        print(map_states[50])
         if len(points) > 1:
             point1 = points[1]
             p1 = Point(point1)
