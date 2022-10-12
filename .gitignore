@@ -12,8 +12,4 @@ render/
 
 # IDE files
 .idea/
-.vscode/
-Brewfile
-players/g2_player.py
-render_game_100.py
-run_and_render_100.sh
+.vscode
