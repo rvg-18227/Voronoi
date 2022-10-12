@@ -1,0 +1,15 @@
+# Allows changing this script and not having to worry about adding modified version to PR.
+run_and_render.sh
+
+*.mp4
+*.png
+*.pkl
+log/
+**/__pycache__/
+players/__pycache__/
+render/
+.DS_Store
+
+# IDE files
+.idea/
+.vscode/
