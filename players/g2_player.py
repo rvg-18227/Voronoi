@@ -21,7 +21,6 @@ DANGER_ZONE_RADIUS = 20
 OUTER_RADIUS = 50
 
 #ANGLES FOR SCISSOR ZONE
-SCISSOR_ZONE_ANGLE = [0, 18, 36, 54, 72, 90]
 SCISSOR_ZONE_COUNT = 5
 
 #priority of regions
@@ -83,33 +82,6 @@ def get_corner(idx):
     elif idx == 3:
         return (100, 0)
 
-def get_interest_regions(idx) -> List[InterestRegion]:
-    x, y = get_corner(idx)
-    regions = []
-
-    regions.append(get_interest_regions_points((50,50),0))
-
-    if x == 0:
-        regions.append(get_interest_regions_points((10,50),1))
-        regions.append(get_interest_regions_points((30,50),2))
-    elif x == 100:
-        regions.append(get_interest_regions_points((90,50),1))
-        regions.append(get_interest_regions_points((70,50),2))
-
-    if y == 0:
-        regions.append(get_interest_regions_points((50,10),3))
-        regions.append(get_interest_regions_points((50,30),4))
-    elif y == 100:
-        regions.append(get_interest_regions_points((50,90),3))
-
-        regions.append(get_interest_regions_points((50,70),4))
-
-    return regions
-
-def get_interest_regions_points(center_point, i):
-    x, y = center_point
-    return InterestRegion(center_point, Polygon([(x-10, y-10), (x+10, y-10), (x+10, y+10), (x-10,y+10)]), i)
-
 def get_board_regions(region_number):
     region_size = 100/region_number
     index = 0
@@ -166,10 +138,6 @@ class Player:
         self.days = 1
         self.ally_units = {}
         self.enemy_units = {}
-
-        #self.regions = get_interest_regions(player_idx)
-        #self.otw_to_regions = {}
-        #self.region_otw = defaultdict(lambda: set())
 
         self.far_radius = OUTER_RADIUS
         self.scissor_bounds = self.create_bounds(self.far_radius)
@@ -438,7 +406,7 @@ class Player:
         
         return danger_score
 
-    #returns a dict of dicts
+    #returns a dict of dicts, for the danger regions of all u_id
     #dict key is team_idx
     #dict val is dict {u_id : danger_score}
     def danger_levels(self, unit_pos, unit_id) -> Dict[float, Dict[float, float]]:
@@ -511,6 +479,5 @@ class Player:
             forces[unit].append([(home_coords.x, home_coords.y), home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
             forces[unit].append(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
-            #forces[unit].append(danger_regions)
             forces[unit].append(self.least_popular_region_force(unit_pos))
         return forces
