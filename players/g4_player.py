@@ -468,8 +468,10 @@ class Player:
 
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
         self.role_groups[RoleType.DEFENDER].append(
-            RadialDefender(self.logger, self.params, radius=40)
+            RadialDefender(self.logger, self.params, radius=30)
         )
+        self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
+        self.role_groups[RoleType.SCOUT].append(Scout(self.logger, self.params))
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -571,6 +573,23 @@ class Player:
                 self.role_groups[RoleType.DEFENDER].append(last_ring)
 
                 last_ring.allocate_unit(uid)
+                assigned = True
+
+            if assigned:
+                continue
+
+            total_scouts = sum(
+                len(scouts.units) for scouts in self.role_groups[RoleType.SCOUT]
+            )
+            total_attackers = sum(
+                len(attackers.units)
+                for attackers in self.role_groups[RoleType.ATTACKER]
+            )
+            if total_scouts >= total_attackers:
+                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+                assigned = True
+            else:
+                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
                 assigned = True
 
             if assigned:
