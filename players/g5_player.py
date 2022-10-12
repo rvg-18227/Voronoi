@@ -49,7 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
-        self.block_size = 10
+        self.block_size = 2
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -87,7 +87,6 @@ class Player:
         c2 = map_states[col + self.block_size - 1][row]
         c3 = map_states[col][row + self.block_size - 1]
         c4 = map_states[col + self.block_size - 1][row + self.block_size - 1]
-
         s = set([c1, c2, c3, c4])
         if len(s) > 1 and self.player_idx in s:
             return True
@@ -278,7 +277,7 @@ class Player:
                                                 move each unit of the player
                 """
         self.num_days += 1
-
+    
         own_units = list(
             zip(
                 unit_id[self.player_idx],
@@ -318,7 +317,7 @@ class Player:
             for col in range(100 // self.block_size):
                 if self.is_border_block(row, col, map_states):
                     borders.append((row, col))
-        print(borders)
+        #print(borders)
         moves = []
 
         own_units.sort(key=lambda x: x[0])
@@ -365,8 +364,11 @@ class Player:
                     closest_border = (row, col, center, dist)
                     break
             if closest_border is None:
-                assert len(borders_dist) > 0
-                closest_border = borders_dist[0]
+                if len(borders_dist) > 0:
+                    closest_border = borders_dist[0]
+                else:
+                    closest_border = (50 // self.block_size, 50 // self.block_size, np.array([50.0, 50.0]), 
+                                      np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
             
             moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
                                                own_units, enemy_units_locations, mode, closest_border))
