@@ -124,6 +124,7 @@ def ease_out(x):
 class RoleType(Enum):
     DEFENDER = 1
     ATTACKER = 2
+    SCOUT = 3
 
 
 class Role(ABC):
@@ -260,51 +261,36 @@ class RadialDefender(Role):
         pass
 
 
-class NaiveAttacker(Role):
+class Scout(Role):
     def _turn_moves(self, update, dead_units):
-        ENEMY_INFLUENCE = -1
-        HOME_INFLUENCE = 20
-        ALLY_INFLUENCE = 0.5
-        WALL_INFLUENCE = 1
-
-        moves = {}
+        HOME_INFLUENCE = 30
         own_units = update.own_units()
         enemy_units = update.all_enemy_units()
-
+        moves = {}
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
-
-            enemy_unit_forces = [
-                repelling_force(unit_pos, enemy_pos) for _, enemy_pos in enemy_units
-            ]
-            enemy_force = np.add.reduce(enemy_unit_forces)
-
-            ally_forces = [
-                repelling_force(unit_pos, ally_pos)
-                for ally_id, ally_pos in own_units.items()
-                if ally_id != unit_id
-            ]
-            ally_force = np.add.reduce(ally_forces)
-
             home_force = repelling_force(unit_pos, self.params.home_base)
 
             ux, uy = unit_pos
-            wall_normals = [
-                (ux, self.params.min_dim),
-                (ux, self.params.max_dim),
-                (self.params.min_dim, uy),
-                (self.params.max_dim, uy),
-            ]
-            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
-            wall_force = np.add.reduce(wall_forces)
+            if self.params.player_idx == 0:
+                wall_normals = [(ux, self.params.min_dim), (self.params.min_dim, uy)]
+            else:
+                pass
+
+            horizontal_influence = np.random.randint(40) - 10
+            if int(unit_id) % 2 == 0:
+                horizontal_force = repelling_force(unit_pos, wall_normals[0])
+            else:
+                horizontal_force = repelling_force(unit_pos, wall_normals[1])
+
+            if int(unit_id) % 4 == 0 or int(unit_id) % 4 == 1:
+                horizontal_influence = np.random.randint(30) - 10
 
             total_force = normalize(
-                (enemy_force * ENEMY_INFLUENCE)
-                + (home_force * HOME_INFLUENCE)
-                + (ally_force * ALLY_INFLUENCE)
-                + (wall_force * WALL_INFLUENCE)
+                (home_force * HOME_INFLUENCE)
+                + (horizontal_force * horizontal_influence)
             )
-
+            # self._logger.debug("force", total_force)
             moves[unit_id] = to_polar(total_force)
 
         return moves
@@ -362,9 +348,6 @@ class Player:
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
         self.role_groups[RoleType.DEFENDER].append(
             RadialDefender(self.logger, self.params, radius=40)
-        )
-        self.role_groups[RoleType.ATTACKER].append(
-            NaiveAttacker(self.logger, self.params)
         )
 
     def gather_point(self, units, targets):
