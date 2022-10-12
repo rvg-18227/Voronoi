@@ -139,7 +139,12 @@ class Player:
             # new point spanwed!!! time to spread :)
             current_radius += 1
             # some code to spread
-        print(len(self.guard_list))
+        new_guard = []
+        for i in range(len(self.guard_list)):
+                guard = self.guard_list[i]
+                if guard  in ids:
+                    new_guard.append(guard)
+        self.guard_list = new_guard
         if self.current_day >= 40 and len(self.guard_list) <guard_num:
             # the three guards as index in the points
             #grab the last three id and insert them into the list 
@@ -148,11 +153,7 @@ class Player:
                 if ids[cur_guard] not in self.guard_list:
                     self.guard_list.append( ids[cur_guard])
                 cur_guard -=1
-            for i in range(len(self.guard_list)):
-                guard = self.guard_list[i]
-                if guard not in ids:
-                    print(guard)
-                    self.guard_list.remove(guard)
+            
 
         moves = self.spread_points(current_radius, points)
         for i in range(len(moves)):
