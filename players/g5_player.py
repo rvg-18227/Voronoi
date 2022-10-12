@@ -62,7 +62,10 @@ class Player:
     def force_vec(self, p1, p2):
         v = p1 - p2
         mag = np.linalg.norm(v)
-        unit = v / mag
+        if mag == 0:
+            unit = v
+        else:
+            unit = v / mag
         return unit, mag
 
     def to_polar(self, p):
@@ -97,7 +100,7 @@ class Player:
         return np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
 
 
-    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border):
+    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist):
         border_row, border_col, border_center, border_dist = closest_border
         #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
@@ -126,7 +129,9 @@ class Player:
         
         BOUNDARY_FACTOR = 5
 
-        border_force = self.attractive_force(unit_pos, border_center)
+        border_forces = [self.attractive_force(unit_pos, border_center) for row, col, border_center, border_dist in borders_dist]
+        
+        border_force = np.add.reduce(border_forces)
 
         enemy_unit_forces = [
             self.attractive_force(unit_pos, enemy_pos)
@@ -324,7 +329,7 @@ class Player:
         border_assignment_set = set()
         # sparse_assignment_set = set()
         for i, (unit_id, unit_pos) in enumerate(own_units):
-            if i < 8:
+            if i < 9 and len(own_units) > 8:
                 mode = "offense"
             else:
                 mode = "defense"
@@ -371,6 +376,6 @@ class Player:
                                       np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
             
             moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
-                                               own_units, enemy_units_locations, mode, closest_border))
+                                               own_units, enemy_units_locations, mode, closest_border, borders_dist))
         return moves
 
