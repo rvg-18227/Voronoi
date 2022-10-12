@@ -81,7 +81,7 @@ def force_vec(p1, p2):
     """Vector direction and magnitude pointing from `p2` to `p1`"""
     v = p1 - p2
     mag = np.linalg.norm(v)
-    unit = v / mag
+    unit = v / (mag + EPSILON)
     return unit, mag
 
 
@@ -97,7 +97,7 @@ def normalize(v):
 def repelling_force(p1, p2) -> tuple[float, float]:
     dir, mag = force_vec(p1, p2)
     # Inverse magnitude: closer things apply greater force
-    return dir * 1 / (mag)
+    return dir * 1 / (mag + EPSILON)
 
 
 EASING_EXP = 5
@@ -274,6 +274,12 @@ class Scout(Role):
             ux, uy = unit_pos
             if self.params.player_idx == 0:
                 wall_normals = [(ux, self.params.min_dim), (self.params.min_dim, uy)]
+            elif self.params.player_idx == 1:
+                wall_normals = [(ux, self.params.max_dim), (self.params.min_dim, uy)]
+            elif self.params.player_idx == 2:
+                wall_normals = [(ux, self.params.max_dim), (self.params.max_dim, uy)]
+            elif self.params.player_idx == 3:
+                wall_normals = [(ux, self.params.min_dim), (self.params.max_dim, uy)]
             else:
                 pass
 
@@ -589,7 +595,7 @@ class Player:
                 self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
                 assigned = True
             else:
-                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+                self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
                 assigned = True
 
             if assigned:
