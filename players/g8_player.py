@@ -4,8 +4,11 @@ import logging
 import math
 import os
 import pickle
+from re import L
 from typing import List, Tuple
 from xmlrpc.client import Boolean
+
+from traitlets import Float
 
 import numpy as np
 from pyproj import Transformer
@@ -74,9 +77,12 @@ class Player:
         self.precomp_dir = precomp_dir
         self.is_stay_guard = False
         self.guard_list = []
-        self.choose_guard = False
-        self.enemy_distance = 0 ## how far ahead to look for enemy units before moving forward
 
+        self.enemy_distance = 0 ## how far ahead to look for enemy units before moving forward
+        angels = [0,45,90]
+        self.angels = []
+        for angel in angels:
+             self.angels.append(angel  - (math.pi/2 * self.player_idx))
     def play(
             self,
             unit_id,
@@ -108,67 +114,20 @@ class Player:
                                        distance and angle in radians to move
                                        each unit of the player
         """
-
+        guard_num = 3 # number of guards to protect the base
         moves = []
-
-        # for i in range(len(unit_id[self.player_idx])):
-        #     if self.player_idx == 0:
-        #         distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-        #         angle = sympy.atan2(100 - unit_pos[self.player_idx][i].y,
-        #                             100 - unit_pos[self.player_idx][i].x)
-        #         moves.append((distance, angle))
-#            elif self.player_idx == 1:
-#                distance = sympy.Min(1, 100 - unit_pos[self.player_idx][i].x)
-#                angle = sympy.atan2(0.5 - unit_pos[self.player_idx][i].y,
-#                                    0.5 - unit_pos[self.player_idx][i].x)
-#                moves.append((distance, angle))
-#            elif self.player_idx == 2:
-#                distance = sympy.Min(1, self.rng.random())
-#                angle = sympy.atan2(-self.rng.random(), -self.rng.random())
-#                moves.append((distance, angle))
-#            else:
-#                distance = sympy.Min(1, 0)
-#                angle = sympy.atan2(0, 1)
-#                moves.append((distance, angle))
-
-        # return moves
-
-        # current_days/total_days = current_points/total points
-
         points = unit_pos[self.player_idx]
+        ids = unit_id[self.player_idx]
         base_point = points[0]
         self.total_points = self.total_days//self.spawn_days
         self.current_day = (len(points)/(self.total_days //
                             self.spawn_days) * self.total_days)//1  # rough estimate
-        print(self.current_day)
         min_distance = 0.5
-
+        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
         max_distance = math.pi * radius / 2 * time
-        # if len(points) == 1:  # the day when we first spawn dont move
-        #     distance = sympy.Min(1, 0)
-        #     angle = sympy.atan2(0, 1)
-        #     moves.append((distance, angle))
-        # elif len(points) == 2:
-        #     # we have two units now!
-
-        #     time = self.total_days//self.spawn_days
-        #     # in this case 3 is just we are taking 1/3 of the area
-        #     radius = self.spawn_days * (self.max_dim ** 2) * \
-        #         f / (6 * time * math.pi ** 2)-0.5
-        #     # move each troop outward in the form of a circle?
-        #     distance = sympy.Min(radius)
-        #     angle1 = sympy.atan2(100 - points[0].y,
-        #                          100 - points[0].x)
-        #     angle2 = sympy.atan2(100 - points[1].y,
-        #                          100 - points[1].x)
-        #     moves.append((distance, angle1))
-        #     moves.append((distance, angle2))
-        # else:
-        # start spreading to other places
-
         newest_point = points[-1]
         p_new, p_base = Point(newest_point), Point(base_point)
         current_radius = 0
@@ -180,32 +139,40 @@ class Player:
             # new point spanwed!!! time to spread :)
             current_radius += 1
             # some code to spread
-        moves = self.spread_points(current_radius, points)
-        #point_dist_list = []
-        # for i, item in enumerate(points):
-        #     if i == 0:
-        #         continue
-        #     p1, p2 = points[i - 1], points[i]
-        #     point_dist_list.append(p1.distance(p2))
-        # if (min(point_dist_list) <= min_distance
-        #         or max(point_dist_list) >= max_distance):
-        #moves = self.spread_points(current_radius, points)
-        # else:
-        #     # dont move
-        #     distance = sympy.Min(1, 0)
-        #     angle = sympy.atan2(0, 1)
-        #     moves.append((distance, angle))
+        print(len(self.guard_list))
+        if self.current_day >= 40 and len(self.guard_list) <guard_num:
+            # the three guards as index in the points
+            #grab the last three id and insert them into the list 
+            cur_guard = len(ids)-1
+            while len(self.guard_list) < guard_num and cur_guard > -1:
+                if ids[cur_guard] not in self.guard_list:
+                    self.guard_list.append( ids[cur_guard])
+                cur_guard -=1
+            for i in range(len(self.guard_list)):
+                guard = self.guard_list[i]
+                if guard not in ids:
+                    print(guard)
+                    self.guard_list.remove(guard)
 
-        if self.current_day >= 40 and self.is_stay_guard == False:
-            if self.choose_guard == False:
-                # the three guards as index in the points
-                self.guard_list = [len(points)-1, len(points)-2, len(points)-3]
-                self.choose_guard = True
-            moves = self.move_stay_guard(points, moves)
+        moves = self.spread_points(current_radius, points)
         for i in range(len(moves)):
             moves[i] = self.transform_move(moves[i])
-            print("in transform")       
         return moves
+
+
+
+
+
+
+
+    def make_point_dict(self,
+    units:List[Tuple[float, float]]
+    ,ids:List[int]):
+    ## creates the look up dictionary for id and unit location
+        point_dict = {}
+        for i in range(len(ids)):
+            point_dict[ids[i]] = units[i]
+        self.point_dict = point_dict
 
     def spread_points(
         self,
@@ -230,53 +197,50 @@ class Player:
         # variable base on the number of points that will be geenrated total
         angle_jump = size/self.total_points*10
         angle_start = 45
-        for item in points:
+        guard_index = 0
+        guard_dict = {}
+        for guard in self.guard_list:
+            guard_dict[guard]= self.point_dict[guard]
+        for i in points:
             index += 1
             distance = 1
             angle = (((index) * (angle_jump) + angle_start)) % 90
-            if index in self.guard_list:
-                distance = 0
+            if i in guard_dict.items() and self.is_stay_guard == False: ## call the move guard function
+                distance,angle = self.move_stay_guard(i,self.angles[guard_index])
+                guard_index += 1
             moves.append((distance, angle*(math.pi / 180)))
 
         return moves
 
     def move_stay_guard(
         self,
-        points: List[Tuple[float, float]],
-        moves: List[Tuple[float, float]]
+        guard_point: Point,
+        angle : Float
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         # with the coordinate (1,0); (1,1) : (0,1)
         # remove the last three points
-        guard_moves = []
+        move = []
         is_guard = []
-        angles = [0, 45, 90]
-        for i in range(len(self.guard_list)):
-            guard = points[i]
-            moves.pop(i)
-            guard_point = Point(guard)
-            g_s_dist = guard_point.distance(self.spawn_point)
-            g_s_ang = self.angle_between(guard_point, self.spawn_point)
-            if g_s_dist == 1 and g_s_ang == angel[i]:
-                guard_moves.append((0, 0))
+        g_s_dist = math.abs(guard_point.distance(self.spawn_point))
+        g_s_ang = abs(angle-self.angle_between(guard_point, self.spawn_point))
+        if g_s_dist == 1 and g_s_ang == angle:
+                move.append((0, 0))
                 is_guard.append(0)
-            else:
+        else:
                 dist = min(g_s_dist, 1)
                 angel = g_s_ang
-                guard_moves.append((dist, angel))
+                move.append((dist, angel))
         # move the points back to the base so that the coordinates would the right
-        
-        if sum(is_guard) == 0:
-            self.is_stay_guard = True
-        moves += guard_moves
-        return moves
+        return move
 
     def angle_between(self, p1: Point, p2 : Point) -> float:
         p1 = np.array(p1)
         p2 = np.array(p2)
-        ang1 = np.arctan2(*p1[::-1])
-        ang2 = np.arctan2(*p2[::-1])
-        return np.rad2deg((ang1 - ang2) % (2 * np.pi))
+        dy = p1[1]-p2[1]
+        dx = p1[0]-p2[0]
+        angel = math.atan2(dy, dx)
+        return angel
     def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
