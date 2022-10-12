@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from enum import Enum
 import pdb
 import matplotlib.pyplot as plt
-from constants import player_color, tile_color, dispute_color, base
 from matplotlib import colors
 import pandas as pd
 from random import uniform
@@ -347,6 +346,7 @@ class Player:
 
         self.rng = rng
         self.logger = logger
+        self.player_idx = player_idx
         self.turn = 0
 
         # Game fundamentals
@@ -562,36 +562,43 @@ class Player:
         free_units = own_units - allocated_units
 
         RING_SPACING = 5
+        MIN_RADIUS = 5
+        idle = 0
         for uid in free_units:
-            last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
+            assigned = False
 
+            # TODO: framework for prioritizing allocation rules
+
+            # Currently assuming all defenders are RadialDefender
+            # Also assumes that defenders are ordered by priority for reinforcement
+            for ring in reversed(self.role_groups[RoleType.DEFENDER]):
+                target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
+                if len(ring.units) < target_density:
+                    ring.allocate_unit(uid)
+                    assigned = True
+
+            if assigned:
+                continue
+
+            last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
             # (1/4 circle circumference) / (spacing between units) = units in ring
             target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
-            if len(last_ring.units) >= target_density:
-                self.debug(
-                    f"Creating new Defender ring with radius {last_ring.radius / 2}"
-                )
-                last_ring = RadialDefender(
-                    self.logger, self.params, last_ring.radius / 2
-                )
+            next_radius = last_ring.radius / 2
+            if len(last_ring.units) >= target_density and next_radius >= MIN_RADIUS:
+                self.debug(f"Creating new Defender ring with radius {next_radius}")
+                last_ring = RadialDefender(self.logger, self.params, next_radius)
                 self.role_groups[RoleType.DEFENDER].append(last_ring)
 
-                # TODO: Bottom out at some radius
+                last_ring.allocate_unit(uid)
+                assigned = True
 
-            last_ring.allocate_unit(uid)
-            # Naive split allocation between attackers and defenders
-            # total_defenders = sum(
-            #     len(defenders.units)
-            #     for defenders in self.role_groups[RoleType.DEFENDER]
-            # )
-            # total_attackers = sum(
-            #     len(attackers.units)
-            #     for attackers in self.role_groups[RoleType.ATTACKER]
-            # )
-            # if total_defenders >= total_attackers:
-            #     self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
-            # else:
-            #     self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+            if assigned:
+                continue
+
+            idle += 1
+
+        if idle > 0:
+            self.debug(f"Turn {self.turn}: {idle} idle units")
 
         moves: list[tuple[float, float]] = []
         role_moves = {}
@@ -599,7 +606,10 @@ class Player:
             for role_group in self.role_groups[role]:
                 role_moves.update(role_group.turn_moves(update))
         for unit_id in unit_id[self.params.player_idx]:
-            moves.append(role_moves[unit_id])
+            if not unit_id in role_moves:
+                moves.append((0, 0))
+            else:
+                moves.append(role_moves[unit_id])
 
         self.turn += 1
         return moves
