@@ -23,6 +23,7 @@ from players.g8_player import Player as G8_Player
 from players.g9_player import Player as G9_Player
 
 
+
 class VoronoiGame:
     def __init__(self, player_list, args):
         self.start_time = time.time()
