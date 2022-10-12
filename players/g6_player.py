@@ -128,6 +128,8 @@ class Defense:
 
     def get_hover_points(self, n):
         hover_points = []
+        if n == 0:
+            n = 1
         step = 90/n
 
         degrees_to_hover = [(step*i) + 90/(n+1) for i in range(n)]
