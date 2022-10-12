@@ -256,6 +256,8 @@ class Player:
 
         #dictionary of entire board broken up into regions
         self.entire_board_regions = get_board_regions(5)
+        #dict of scouts and their current region id occupied
+        self.scout = dict.fromkeys(region_id for region_id in self.entire_board_regions)
 
     def get_home_coords(self):
         if self.player_idx == 0:
@@ -336,6 +338,53 @@ class Player:
                     else:
                         moves[uid] = (1, intersept_angle)
 
+        return {int(uid): move for uid, move in moves.items()}
+
+    def scout_moves(self, unit_ids, unit_pos) -> Dict[float, Tuple[float, float]]:
+        moves = {}
+        unit_forces = self.get_forces(unit_ids, unit_pos)
+
+        # Draft units into platoons
+        #print(self.scout)
+        current_scout_ids = [scout_id for scout_id in self.scout.values()]
+        free_unit_ids = [uid for uid in unit_ids[self.player_idx] if uid not in current_scout_ids]
+        min_home = math.inf
+        min_unit_id = math.inf
+        for unit_id in free_unit_ids:
+            current_dist_home = unit_forces[unit_id][0][1]
+            if current_dist_home < min_home:
+                min_home = current_dist_home
+                min_unit_id = unit_id
+                if int(min_home) == 0:
+                    break
+        if min_home != math.inf:
+            least_pop_region_id = unit_forces[min_unit_id][3][0]
+            self.scout[least_pop_region_id] = min_unit_id
+
+        for region in self.scout:
+            # Remove killed units
+            for uid in self.ally_killed_unit_ids:
+                if uid == self.scout[region]:
+                    self.scout[region] = None
+
+            # Assign movement path towards empty region for scout
+            for region in self.scout:
+                move_dist = None
+                angle = None
+                if self.scout[region] != None:
+                    player_idx = unit_ids[self.player_idx].index(self.scout[region])
+                    current_scout_pos = unit_pos[self.player_idx][player_idx]
+                    region_center_point = unit_forces[self.scout[region]][3][0][1]
+                    if current_scout_pos.distance(Point(region_center_point)) == 0:
+                        move_dist = 0
+                        angle = 0
+                    else:
+                        move_dist = 1
+                        angle = sympy.atan2(region_center_point[1] - current_scout_pos.y,
+                                            region_center_point[0] - current_scout_pos.x)
+
+                    moves[self.scout[region]] = (move_dist, angle)
+        #print(moves)
         return {int(uid): move for uid, move in moves.items()}
 
     def intercept_angle(self, target_unit_id, chaser_unit_id, platoon_unit_idx=None) -> float:
@@ -535,15 +584,18 @@ class Player:
             # Max takes 0
             moves.update(self.sentinel_moves(unit_pos, unit_id))
         elif self.player_idx == 1:
-            self.get_forces(unit_id, unit_pos)
+            #self.get_forces(unit_id, unit_pos)
             # Abigail takes 1
-            moves.update(self.fixed_formation_moves(unit_id[self.player_idx][:1], [45.0], 0 if unit_pos[self.player_idx][0].x >= 25 else 1)) 
+            #moves.update(self.scout_moves(unit_id, unit_pos))
+            moves.update(self.sentinel_moves(unit_pos, unit_id))
         elif self.player_idx == 2:
             # Noah takes 2
-            moves.update(self.platoon_moves(unit_id[self.player_idx]))
+            #moves.update(self.platoon_moves(unit_id[self.player_idx]))
+            moves.update(self.sentinel_moves(unit_pos, unit_id))
 
         elif self.player_idx == 3:
-            moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
+            #moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
+            moves.update(self.sentinel_moves(unit_pos, unit_id))
  
         return list(moves.values())
 
