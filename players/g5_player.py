@@ -79,9 +79,16 @@ class Player:
         dir, mag = self.force_vec(p1, p2)
         # Inverse magnitude: closer things apply greater force
         return dir * 1 / (mag)
+    
+    def repelling_force_2(self, p1, p2):
+        dir, mag = self.force_vec(p1, p2)
+        return dir * 1 / (mag ** 2)
 
     def attractive_force(self, p1, p2):
         return -self.repelling_force(p1, p2)
+    
+    def attractive_force_2(self, p1, p2):
+        return -self.repelling_force_2(p1, p2)
 
     def is_border_block(self, row, col, map_states):
         row = row * self.block_size
@@ -100,7 +107,7 @@ class Player:
         return np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
 
 
-    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist):
+    def initial_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean):
         border_row, border_col, border_center, border_dist = closest_border
         #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
@@ -118,10 +125,15 @@ class Player:
         #     BOUNDARY_THRESHOLD = 2
         if mode == "defense":
             ALLY_INFLUENCE = -0.2
+            ARC_MEAN_INFLUENCE = 0.5
+           
         else:
             ALLY_INFLUENCE = 0.2
+            ARC_MEAN_INFLUENCE = 0.0
         
-        BORDER_INFLUENCE = 1.0
+        BORDER_INFLUENCE = 1
+        
+        
         ENEMY_INFLUENCE = 0.2
         BOUNDARY_INFLUENCE = 0.2
 
@@ -129,9 +141,15 @@ class Player:
         
         BOUNDARY_FACTOR = 5
 
-        border_forces = [self.attractive_force(unit_pos, border_center) for row, col, border_center, border_dist in borders_dist]
+        #border_forces = [self.attractive_force(unit_pos, border_center) for row, col, border_center, border_dist in borders_dist]
         
-        border_force = np.add.reduce(border_forces)
+        #border_force = np.add.reduce(border_forces)
+        border_force = self.attractive_force(unit_pos, border_center)
+        
+        if self.num_days // self.spawn_days > 8:
+            arc_mean_force = self.attractive_force(unit_pos, offensive_arc_mean)
+        else:
+            arc_mean_force = np.array([0, 0])
 
         enemy_unit_forces = [
             self.attractive_force(unit_pos, enemy_pos)
@@ -179,7 +197,8 @@ class Player:
         
         #print("BORDER FORCE ", border_force)
         total_force = self.normalize(
-            (border_force * BORDER_INFLUENCE)
+            (arc_mean_force * ARC_MEAN_INFLUENCE)
+            + (border_force * BORDER_INFLUENCE)
             + (enemy_force * ENEMY_INFLUENCE)
             + (home_force * HOME_INFLUENCE)
             + (ally_force * ALLY_INFLUENCE)
@@ -328,8 +347,9 @@ class Player:
         own_units.sort(key=lambda x: x[0])
         border_assignment_set = set()
         # sparse_assignment_set = set()
+        offensive_arc_mean = np.mean([unit_pos for unit_id, unit_pos in own_units[:8]], axis=0)
         for i, (unit_id, unit_pos) in enumerate(own_units):
-            if i < 9 and len(own_units) > 9:
+            if i < 8:
                 mode = "offense"
             else:
                 mode = "defense"
@@ -376,6 +396,6 @@ class Player:
                                       np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
             
             moves.append(self.initial_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
-                                               own_units, enemy_units_locations, mode, closest_border, borders_dist))
+                                               own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean))
         return moves
 
