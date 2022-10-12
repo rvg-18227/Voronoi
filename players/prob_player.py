@@ -198,16 +198,20 @@ class Player:
         p2 = self.get_point(point,angle2,distance)
         p1 = self.checkboundary(p1)
         p2 = self.checkboundary(p2)
+        np_map = np.array(self.map_states)
         
-        high_x = max(p1[0],p2[0],point[0],100)
-        high_y = max(p1[1],p2[1],point[1],100)
-        low_x = min(p1[0],p2[0],point[0],0)
-        low_y = min(p1[1],p2[1],point[1],0)
-        map_x_bound = [math.floor(low_x),math.ceil(high_x)]
-        map_y_bound = [math.floor(low_y),math.ceil(high_y)]
+        high_x = max(p1[0],p2[0],point[0],0)
+        high_y = max(p1[1],p2[1],point[1],0)
+        low_x = min(p1[0],p2[0],point[0],100)
+        low_y = min(p1[1],p2[1],point[1],100)
+
+        y_range = list(range(math.floor(low_y),math.ceil(high_y)))
+        x_range = list(range(math.floor(low_x),math.ceil(high_x)))
+        np_map = np_map[:,y_range]
+        np_map = np_map[x_range,:]
         not_yet_occupied_cell = 0
-        for x in range(map_x_bound[0],map_x_bound[1]):
-            for y in range(map_y_bound[0],map_y_bound[1]):
+        for x in range(math.floor(low_x),math.ceil(high_x)):
+            for y in range(math.floor(low_y),math.ceil(high_y)):
                 if self.map_states[x][y] != self.player_idx and self.map_states[x][y] != -1:
                     not_yet_occupied_cell +=1
         possible_area = math.ceil(high_x)-math.floor(low_x) * (math.ceil(high_x)-math.floor(low_x))
