@@ -71,7 +71,6 @@ class ScissorRegion:
 
     def changeBounds(self, radius_increment):
         home = self.get_home_coords()
-        home_t = (home.x, home.y)
 
         increment_l = find_increment(radius_increment, self.angles[0])
         increment_r = find_increment(radius_increment, self.angles[1])
@@ -105,7 +104,7 @@ class ScissorRegion:
         return self.id < other.id
 
     def __repr__(self):
-        return(str(self.bounds))
+        return str(self.id)
 
 def find_increment(new_radius, a):
     new_point = (new_radius*math.cos(a),new_radius*math.sin(a))
@@ -423,13 +422,15 @@ class Player:
     def sentinel_moves(self, unit_pos, unit_id) -> Dict[float, Tuple[float, float]]:
 
         moves = {}
-        enemy_count = {}
+        enemy_count = self.enemy_count_in_region(unit_pos)
 
         region_contains_id, uid_in_region = self.regions_contain_id(unit_pos, unit_id)
 
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
         pqueue = []
+
+        print(self.regions)
 
         #create priority list
         for r in self.regions:
@@ -685,7 +686,6 @@ class Player:
         center = min_poly.centroid
         #print(center)
         return [(index_min_region, (center.x, center.y))]
-
 
     def get_forces(self, unit_id, unit_pos):
         forces = {id: [] for id in unit_id[self.player_idx]}
