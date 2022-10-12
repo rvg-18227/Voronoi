@@ -54,6 +54,14 @@ class ScissorRegion:
     def __repr__(self):
         return(str(self.id))
 
+def sentinel_transform_moves(moves):
+    moves_new = {}
+
+    for key in moves:
+        moves_new[int(key)] = moves[key]
+    
+    return moves_new
+
 #Dictionary into 2d Array
 def points_to_numpy(units):
     #columns: x, y, player_idx belongs, 
@@ -307,8 +315,8 @@ class Player:
 
                 heapq.heappush(pqueue, element_new)
 
-        return moves
-    
+        return sentinel_transform_moves(moves)
+
     def regions_contain_id(self, unit_pos, unit_id):
 
         team_set = defaultdict(lambda: set())
@@ -395,11 +403,12 @@ class Player:
         elif self.player_idx == 2:
             # Noah takes 2
             moves.update(self.platoon_moves(unit_id[self.player_idx]))
+
         elif self.player_idx == 3:
             moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
  
-        self.days += 1  
-        print(list(moves.values()))
+        self.days += 1
+        #print(moves)
         return list(moves.values())
 
     #what is the enemy_count team_count for a given point
