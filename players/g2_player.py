@@ -17,20 +17,42 @@ import heapq
 #HYPER PARAMETERS
 DANGER_ZONE_RADIUS = 20
 
-class InterestRegion:
-    def __init__(self, center_point, polygon, created_idx):
-        self.center_point: Tuple[float, float] = center_point
-        self.polygon: Polygon = polygon
-        self.created_idx: float = created_idx
+#SCISSOR STARTING OUTER RADIUS
+OUTER_RADIUS = 50
+
+#ANGLES FOR SCISSOR ZONE
+SCISSOR_ZONE_ANGLE = [0, 18, 36, 54, 72, 90]
+SCISSOR_ZONE_COUNT = 5
+
+#priority of regions
+PRIORITY_ID = [4,2,0,1,3]
+
+class ScissorRegion:
+    def __init__(self, bounds, delta_bounds, id):
+
+        #bounds are the two points defining the scissor ends of the lines
+        self.bounds: Tuple[Tuple[float, float],Tuple[float, float]] = bounds
+        self.center_point: Tuple[float, float] = ((bounds[0][0]+bounds[1][0])/2 , (bounds[0][1]+bounds[1][1])/2)
+        self.dist: float = math.dist(bounds[0], bounds[1])
+
+        #0 means go to bound[0]
+        #1 means go to bound[1]
+        self.direction = 0
+        self.id = id
+
+        self.polygon = Polygon([bounds[0], bounds[1], delta_bounds[1], delta_bounds[0]])
+
+    def points_inbetween_points(self, p1, p2, amount):
+        return zip(np.linspace(p1[0], p2[0], amount),np.linspace(p1[1], p2[1], amount))
 
     def __hash__(self):
         return hash(self.center_point)
 
     def __lt__(self, other):
-        return self.created_idx < other.created_idx
+        return self.id < other.id
 
     def __repr__(self):
-        return(str(self.polygon))
+        return(str(self.id))
 
 #Dictionary into 2d Array
 def points_to_numpy(units):
@@ -137,10 +159,20 @@ class Player:
         self.ally_units = {}
         self.enemy_units = {}
 
-        # Sentinel variables
-        self.regions = get_interest_regions(player_idx)
-        self.otw_to_regions = {}
-        self.region_otw = defaultdict(lambda: set())
+        #self.regions = get_interest_regions(player_idx)
+        #self.otw_to_regions = {}
+        #self.region_otw = defaultdict(lambda: set())
+
+        self.far_radius = OUTER_RADIUS
+        self.scissor_bounds = self.create_bounds(self.far_radius)
+        self.regions = self.create_scissor_regions(self.scissor_bounds, self.create_bounds(self.far_radius-0.1))
+
+        #key: u_id, val: region
+        #u_id is otw to region
+        self.unit_otw_region = {}
+
+        #number of units otw to region
+        self.regions_uid_otw = defaultdict(lambda : 0)
 
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
@@ -206,58 +238,124 @@ class Player:
         return {int(uid): self.transform_move(move) for uid, move in moves.items()}
 
 
-    def sentinel_moves(self, unit_pos) -> Dict[float, Tuple[float, float]]:
-        danger_levels, danger_regions_score, region_count, unit_regions = self.danger_levels(unit_pos)
-        region_and_score = []
+    def sentinel_moves(self, unit_pos, unit_id) -> Dict[float, Tuple[float, float]]:
+
         moves = {}
+        enemy_count = {}
+
+        for r in self.regions:
+            center_point = r.center_point
+            enemy_count_in_region = self.enemy_count_in_region(unit_pos, center_point, self.player_idx, r.dist+4)
+            enemy_count[r] = enemy_count_in_region
+
+        region_contains_id, ids_in_region = self.regions_contain_id(unit_pos, unit_id)
 
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
+
+        pqueue = []
+
+        #create priority list
         for r in self.regions:
-            temp = []
-            if r in region_count:
-                temp.append(region_count[r])
-            else:
-                temp.append(0)
+            
+            units_commited = len(region_contains_id[r])+self.regions_uid_otw[r]
+            
+            score = float("inf")
+            if len(region_contains_id[r]) > 0:
+                score = enemy_count[r] / len(region_contains_id[r])
 
-            temp[0] += len(self.region_otw[r])
+            element = (units_commited, score, r)
 
-            if r in danger_regions_score:
-                if danger_regions_score[r] != 0:
-                    temp.append(-danger_regions_score[r])
-                else:
-                    temp.append(-float("inf"))
-            else:
-                temp.append(-float("inf"))
-
-            temp.append(r)
-            heapq.heappush(region_and_score,tuple(temp))
+            heapq.heappush(pqueue, element)
 
         for i in range(len(unit_pos[self.player_idx])):
             pt = unit_pos[self.player_idx][i]
             curr = (pt.x, pt.y)
+            u_id = unit_id[self.player_idx][i]
 
-            if i in unit_regions:
-                self.otw_to_regions.pop(i, None)
-                self.region_otw[unit_regions[i]].discard(i)
-                moves[i+1] = self.point_move(curr, unit_regions[i].center_point)
-                continue
+            #scissor motion
+            if u_id in ids_in_region:
 
-            if i in self.otw_to_regions:
-                moves[i+1] = self.point_move(curr, self.otw_to_regions[i])
-                continue
+                #remove from count of region otw of r
+                self.regions_uid_otw[r] -= 1
 
-            target = list(heapq.heappop(region_and_score))
+                #remove pathing to region
+                self.unit_otw_region.pop(u_id, None)
 
-            moves[i+1] = self.point_move(curr, target[2].center_point)
+                moves[u_id] = (0,0)
+                #do scissoring stuff
 
-            self.otw_to_regions[i] = target[2].center_point
-            # print(i, target[2].center_point)
-            self.region_otw[target[2]].add(i)
+            #if predefined from previous turn
+            #move to point in region
+            elif u_id in self.unit_otw_region:
+                moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_point)
 
-            heapq.heappush(region_and_score, tuple([target[0]+1, target[1], target[2]]))
-        
+            else:
+                #find the quadrant in need the most
+                element = heapq.heappop(pqueue)
+                dire_region = element[2]
+
+                #send our u_id to a region
+                self.unit_otw_region[u_id] = dire_region
+                moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_point)
+
+                #increment number of units otw to a region
+                self.regions_uid_otw[dire_region] += 1
+
+                #add back to the queue
+                element_new = (element[0]+1, element[1], dire_region)
+
+                heapq.heappush(pqueue, element_new)
+
         return moves
+    
+    def regions_contain_id(self, unit_pos, unit_id):
+
+        team_set = defaultdict(lambda: set())
+
+        all_units_in_a_region = set()
+
+        for i in range(len(unit_pos[self.player_idx])):
+            u_id = unit_id[self.player_idx][i]
+            u_pt = unit_pos[self.player_idx][i]
+            for r in self.regions:
+                if r.polygon.contains(u_pt):
+                    team_set[r].add(u_id)
+                    all_units_in_a_region.add(u_id)
+                    continue
+        
+        return team_set, all_units_in_a_region
+
+
+    def create_bounds(self, radius_from_origin):
+
+        scizzor_angle = np.linspace(0, 90, SCISSOR_ZONE_COUNT+1)
+
+        #change angles to Radians
+        #make them agnostic to player idx
+        angles = [rad_ang*(math.pi / 180) - (math.pi/2 * self.player_idx) for rad_ang in scizzor_angle]
+
+        bounds = []
+
+        for a in angles:
+            bounds.append((radius_from_origin*math.cos(a),radius_from_origin*math.sin(a)))
+
+        return bounds
+
+    def create_scissor_regions(self, bounds, delta_bounds):
+
+        regions = []
+
+        for i in range(len(bounds)-1):
+            left_bound = bounds[i]
+            right_bound = bounds[i+1]
+
+            dl = delta_bounds[i]
+            dr = delta_bounds[i+1]
+
+            regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), PRIORITY_ID[i]))
+
+        return regions
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -289,7 +387,7 @@ class Player:
 
         if self.player_idx == 0:
             # Max takes 0
-            moves.update(self.sentinel_moves(unit_pos))
+            moves.update(self.sentinel_moves(unit_pos, unit_id))
         elif self.player_idx == 1:
             self.get_forces(unit_id, unit_pos)
             # Abigail takes 1
@@ -301,46 +399,49 @@ class Player:
             moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
  
         self.days += 1  
+        print(list(moves.values()))
         return list(moves.values())
 
-    def danger_levels(self, unit_pos):
+    #what is the enemy_count team_count for a given point
+    def enemy_count_in_region(self, unit_pos, curr_point_coords, team_idx, radius):
         np_unit_pos = points_to_numpy(unit_pos)
-        result = [[] for _ in range(4)]
-        danger_regions = {}
-        region_count = {}
-        unit_regions = {}
+        distances = cdist([np.array((curr_point_coords[0], curr_point_coords[1]))], np_unit_pos[:, :2]).flatten()
+        close_points = np_unit_pos[distances <= radius,:]
+        team_points = close_points[close_points[:,2] == team_idx]
+
+        close_team_count = team_points.shape[0]
+        close_enemy_count = close_points.shape[0]-close_team_count
+
+        return close_enemy_count
+
+    #for a given unit, given by u
+    def danger_score_of_point(self, np_unit_pos, u, team_idx, radius) -> float:
+        distances = cdist([np.array((u.x, u.y))], np_unit_pos[:, :2]).flatten()
+        close_points = np_unit_pos[distances <= radius,:]
+        team_points = close_points[close_points[:,2] == team_idx]
+
+        #should always be >=1 because it counts itself
+        close_team_count = team_points.shape[0]
+
+        close_enemy_count = close_points.shape[0]-close_team_count
+
+        danger_score = close_enemy_count/close_team_count
+        
+        return danger_score
+
+    #returns a dict of dicts
+    #dict key is team_idx
+    #dict val is dict {u_id : danger_score}
+    def danger_levels(self, unit_pos, unit_id) -> Dict[float, Dict[float, float]]:
+        np_unit_pos = points_to_numpy(unit_pos)
+        danger_score = [{} for _ in range(4)]
 
         for team_idx in range(4):
-            for unit_idx, u in enumerate(unit_pos[team_idx]):
-                distances = cdist([np.array((u.x, u.y))], np_unit_pos[:, :2]).flatten()
-                close_points = np_unit_pos[distances <= DANGER_ZONE_RADIUS,:]
-                team_points = close_points[close_points[:,2] == team_idx]
+            for idx, u in enumerate(unit_pos[team_idx]):
 
-                #should always be >=1 because it counts itself
-                close_team_count = team_points.shape[0]
+                u_id = int(unit_id[team_idx][idx])
 
-                close_enemy_count = close_points.shape[0]-close_team_count
-
-                danger_score = close_enemy_count/close_team_count
-                result[team_idx].append(danger_score)
-
-                #check if in any region
-                for region in self.regions:
-                    if region.polygon.contains(Point(u.x, u.y)):
-                        if team_idx == self.player_idx:
-                            unit_regions[unit_idx] = region
-
-                            if region in danger_regions:
-                                danger_regions[region] += danger_score
-                            else:
-                                danger_regions[region] = danger_score
-
-                            if region in region_count:
-                                region_count[region] += 1
-                            else:
-                                region_count[region] = 1
-
-                        continue
+                danger_score[team_idx][u_id] = self.danger_score_of_point(np_unit_pos, u, team_idx, DANGER_ZONE_RADIUS)
 
         #result is the danger level of all units (same dimensions as unit_pos)
 
@@ -349,7 +450,7 @@ class Player:
         #region_count is number of teammates in region
 
         #unit_regions is which region is a unit in
-        return result, danger_regions, region_count, unit_regions
+        return danger_score
 
     def wall_forces(self, current_point) -> List[Tuple[Tuple[float, float], float]]:
         current_x = current_point.x
