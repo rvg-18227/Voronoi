@@ -261,43 +261,70 @@ class RadialDefender(Role):
         pass
 
 
-class Scout(Role):
+class FirstScout(Role):
+    def __init__(self, logger, params,scout_id):
+        super().__init__(logger, params)
+        self.scout_id = scout_id
+
+    def closest_enemy_dist(self,update,uid):
+        enemy_units = update.all_enemy_units()
+        own_units = update.own_units()
+        p = own_units[uid]
+        closest_dist = 500
+        for enemy_id, enemy_pos in enemy_units:
+
+            closest_dist = min(closest_dist, np.linalg.norm(p-enemy_pos))
+        return closest_dist
+
     def _turn_moves(self, update, dead_units):
         HOME_INFLUENCE = 30
         own_units = update.own_units()
         enemy_units = update.all_enemy_units()
         moves = {}
         for unit_id in self.units:
+            #self._debug("text")
+            #self._debug(f"uid {unit_id}")
+
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
+            closest_enemy_d = self.closest_enemy_dist(update,unit_id)
 
-            ux, uy = unit_pos
-            if self.params.player_idx == 0:
-                wall_normals = [(ux, self.params.min_dim), (self.params.min_dim, uy)]
-            elif self.params.player_idx == 1:
-                wall_normals = [(ux, self.params.max_dim), (self.params.min_dim, uy)]
-            elif self.params.player_idx == 2:
-                wall_normals = [(ux, self.params.max_dim), (self.params.max_dim, uy)]
-            elif self.params.player_idx == 3:
-                wall_normals = [(ux, self.params.min_dim), (self.params.max_dim, uy)]
+            if closest_enemy_d < 2: #RUN AWAY TO HOME
+                
+                force = to_polar(normalize((home_force * HOME_INFLUENCE)))
+                move = (force[0], force[1] + np.pi)
+                moves[unit_id] = move
+            elif closest_enemy_d < 5: #STAY PUT
+                moves[unit_id] = (0,0)
             else:
-                pass
+                ux, uy = unit_pos
+                if self.params.player_idx == 0:
+                    wall_normals = [(ux, self.params.min_dim), (self.params.min_dim, uy)]
+                elif self.params.player_idx == 1:
+                    wall_normals = [(ux, self.params.max_dim), (self.params.min_dim, uy)]
+                elif self.params.player_idx == 2:
+                    wall_normals = [(ux, self.params.max_dim), (self.params.max_dim, uy)]
+                elif self.params.player_idx == 3:
+                    wall_normals = [(ux, self.params.min_dim), (self.params.max_dim, uy)]
+                else:
+                    pass
 
-            horizontal_influence = np.random.randint(40) - 10
-            if int(unit_id) % 2 == 0:
-                horizontal_force = repelling_force(unit_pos, wall_normals[0])
-            else:
-                horizontal_force = repelling_force(unit_pos, wall_normals[1])
+                horizontal_influence = np.random.randint(40) - 10
+                if self.scout_id % 2 == 0:
+                    horizontal_force = repelling_force(unit_pos, wall_normals[0])
+                else:
+                    horizontal_force = repelling_force(unit_pos, wall_normals[1])
 
-            if int(unit_id) % 4 == 0 or int(unit_id) % 4 == 1:
-                horizontal_influence = np.random.randint(30) - 10
+                if self.scout_id % 4 <= 1:
+                    horizontal_influence = np.random.randint(30) - 10
 
-            total_force = normalize(
-                (home_force * HOME_INFLUENCE)
-                + (horizontal_force * horizontal_influence)
-            )
-            # self._logger.debug("force", total_force)
-            moves[unit_id] = to_polar(total_force)
+                total_force = normalize(
+                    (home_force * HOME_INFLUENCE)
+                    + (horizontal_force * horizontal_influence)
+                )
+                # self._logger.debug("force", total_force)
+                moves[unit_id] = to_polar(total_force)
+                #self._debug(moves)
 
         return moves
 
@@ -461,6 +488,7 @@ class Player:
         self.logger = logger
         self.player_idx = player_idx
         self.turn = 0
+        self.scout_id = 0
 
         # Game fundamentals
         self.params = GameParameters()
@@ -477,7 +505,9 @@ class Player:
             RadialDefender(self.logger, self.params, radius=30)
         )
         self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
-        self.role_groups[RoleType.SCOUT].append(Scout(self.logger, self.params))
+        self.role_groups[RoleType.SCOUT].append(
+            FirstScout(self.logger, self.params, self.scout_id))
+        self.scout_id += 1
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -595,7 +625,10 @@ class Player:
                 self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
                 assigned = True
             else:
-                self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
+                scout = FirstScout(self.logger, self.params, self.scout_id)
+                self.role_groups[RoleType.SCOUT].append(scout)
+                scout.allocate_unit(uid)
+                self.scout_id += 1
                 assigned = True
 
             if assigned:
