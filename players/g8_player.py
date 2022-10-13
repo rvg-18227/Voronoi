@@ -8,15 +8,14 @@ from re import L
 from typing import List, Tuple
 from xmlrpc.client import Boolean
 
-from traitlets import Float
-
 import numpy as np
 from pyproj import Transformer
 from shapely.geometry import Point
 from shapely.ops import transform
 import simplekml
 import sympy
-from sympy import Circle  # , Point
+from sympy import Circle
+from traitlets import Float
 
 
 class Player:
@@ -78,11 +77,12 @@ class Player:
         self.is_stay_guard = False
         self.guard_list = []
 
-        self.enemy_distance = 0 ## how far ahead to look for enemy units before moving forward
-        angels = [0,45,90]
-        self.angels = []
-        for angel in angels:
-             self.angels.append(angel  - (math.pi/2 * self.player_idx))
+        self.enemy_distance = 0  # how far ahead to look for enemy units before moving forward
+        angles = [0, 45, 90]
+        self.angles = []
+        for angle in angles:
+            self.angles.append(angle - (math.pi/2 * self.player_idx))
+
     def play(
             self,
             unit_id,
@@ -114,7 +114,7 @@ class Player:
                                        distance and angle in radians to move
                                        each unit of the player
         """
-        guard_num = 3 # number of guards to protect the base
+        guard_num = 3  # number of guards to protect the base
         moves = []
         points = unit_pos[self.player_idx]
         ids = unit_id[self.player_idx]
@@ -123,7 +123,8 @@ class Player:
         self.current_day = (len(points)/(self.total_days //
                             self.spawn_days) * self.total_days)//1  # rough estimate
         min_distance = 0.5
-        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
+        # intialize the look up dict for id => points
+        self.make_point_dict(points, ids)
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
@@ -131,7 +132,7 @@ class Player:
         newest_point = points[-1]
         p_new, p_base = Point(newest_point), Point(base_point)
         current_radius = 0
-        print(map_states[50])
+        # print(map_states[50])
         if len(points) > 1:
             point1 = points[1]
             p1 = Point(point1)
@@ -142,35 +143,31 @@ class Player:
             # some code to spread
         new_guard = []
         for i in range(len(self.guard_list)):
-                guard = self.guard_list[i]
-                if guard  in ids:
-                    new_guard.append(guard)
+            guard = self.guard_list[i]
+            if guard in ids:
+                new_guard.append(guard)
         self.guard_list = new_guard
-        if self.current_day >= 40 and len(self.guard_list) <guard_num:
+
+        if self.current_day >= 40 and len(self.guard_list) < guard_num:
             # the three guards as index in the points
-            #grab the last three id and insert them into the list 
-            cur_guard = len(ids)-1
+            # grab the last three id and insert them into the list
+            cur_guard = len(ids) - 1
             while len(self.guard_list) < guard_num and cur_guard > -1:
                 if ids[cur_guard] not in self.guard_list:
-                    self.guard_list.append( ids[cur_guard])
-                cur_guard -=1
-            
+                    self.guard_list.append(ids[cur_guard])
+                cur_guard -= 1
 
         moves = self.spread_points(current_radius, points)
         for i in range(len(moves)):
             moves[i] = self.transform_move(moves[i])
         return moves
 
-
-
-
-
-
-
-    def make_point_dict(self,
-    units:List[Tuple[float, float]]
-    ,ids:List[int]):
-    ## creates the look up dictionary for id and unit location
+    def make_point_dict(
+            self,
+            units: List[Tuple[float, float]],
+            ids: List[int]
+    ) -> None:
+        # creates the look up dictionary for id and unit location
         point_dict = {}
         for i in range(len(ids)):
             point_dict[ids[i]] = units[i]
@@ -202,13 +199,14 @@ class Player:
         guard_index = 0
         guard_dict = {}
         for guard in self.guard_list:
-            guard_dict[guard]= self.point_dict[guard]
+            guard_dict[guard] = self.point_dict[guard]
         for i in points:
             index += 1
             distance = 1
             angle = (((index) * (angle_jump) + angle_start)) % 90
-            if i in guard_dict.items() and self.is_stay_guard == False: ## call the move guard function
-                distance,angle = self.move_stay_guard(i,self.angles[guard_index])
+            if i in guard_dict.items() and self.is_stay_guard == False:  # call the move guard function
+                distance, angle = self.move_stay_guard(
+                    i, self.angles[guard_index])
                 guard_index += 1
             moves.append((distance, angle*(math.pi / 180)))
 
@@ -217,7 +215,7 @@ class Player:
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle : Float
+        angle: Float
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         # with the coordinate (1,0); (1,1) : (0,1)
@@ -227,27 +225,35 @@ class Player:
         g_s_dist = math.abs(guard_point.distance(self.spawn_point))
         g_s_ang = abs(angle-self.angle_between(guard_point, self.spawn_point))
         if g_s_dist == 1 and g_s_ang == angle:
-                move.append((0, 0))
-                is_guard.append(0)
+            move.append((0, 0))
+            is_guard.append(0)
         else:
-                dist = min(g_s_dist, 1)
-                angel = g_s_ang
-                move.append((dist, angel))
+            dist = min(g_s_dist, 1)
+            angle = g_s_ang
+            move.append((dist, angle))
         # move the points back to the base so that the coordinates would the right
         return move
 
-    def angle_between(self, p1: Point, p2 : Point) -> float:
+    def angle_between(
+            self,
+            p1: Point,
+            p2: Point
+    ) -> float:
+
         p1 = np.array(p1)
         p2 = np.array(p2)
         dy = p1[1]-p2[1]
         dx = p1[0]-p2[0]
-        angel = math.atan2(dy, dx)
-        return angel
-    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+        angle = math.atan2(dy, dx)
+        return angle
+
+    def transform_move(
+            self,
+            dist_ang: Tuple[float, float]
+    ) -> Tuple[float, float]:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
-    
 
-    def is_safe(self) ->  Boolean:
-        #TODO the safety heuristic
+    def is_safe(self) -> Boolean:
+        # TODO the safety heuristic
         return False
