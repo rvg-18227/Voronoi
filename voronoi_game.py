@@ -28,6 +28,7 @@ class VoronoiGame:
         self.start_time = time.time()
         self.end_time = None
         self.voronoi_app = None
+        self.use_gui = not args.no_gui
         self.do_logging = not args.disable_logging
         self.use_timeout = not args.disable_timeout
 
@@ -207,7 +208,6 @@ class VoronoiGame:
 
     def print_results(self):
         self.end_time = time.time()
-
         result = self.get_state(self.last_day - 1, 2)
         print("\nDay {} - {}".format(result["day"], result["day_states"]))
         print("\nPlayers - {}".format(result["player_names"]))
@@ -227,7 +227,7 @@ class VoronoiGame:
                                               [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
         print("\nTime Elapsed - {:.3f}s".format(self.end_time - self.start_time))
 
-        if args.dump_state:
+        if self.dump_state:
             with open("game.pkl", "wb+") as f:
                 pickle.dump(
                     {

@@ -35,7 +35,6 @@ class VoronoiInterface:
         self.map_size = constants.max_map_dim
         scale_px = game_window_height // self.map_size
         self.total_days = self.game_state.last_day
-        self.create_video = args.out_video
         self.curr_day = -1
         self.logger = self.game_state.logger
         self.print_results = True
@@ -70,7 +69,8 @@ class VoronoiInterface:
         self.clock = pygame.time.Clock()
         self.fps = fps
 
-        if self.create_video:
+        self.writer = None
+        if args.out_video:
             now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             player_str = ""
             for p in player_list:
@@ -128,9 +128,10 @@ class VoronoiInterface:
             if self.print_results:
                 self.game_state.print_results()
 
-                self.writer.close()
-                self.writer = None
-                print(f"Saved video to: {self.video_path}")
+                if self.writer is not None:
+                    self.writer.close()
+                    self.writer = None
+                    print(f"Saved video to: {self.video_path}")
 
                 self.print_results = False  # Print results only once
             # self.running = False
@@ -155,7 +156,7 @@ class VoronoiInterface:
         # Update the game window to see latest changes
         pygame.display.update()
 
-        if self.create_video and self.writer is not None and not self.pause:
+        if self.writer is not None and not self.pause:
             if self.curr_day < self.total_days:
                 # Don't record past end of game
                 pygame.pixelcopy.surface_to_array(self.frame, self.screen)
@@ -195,7 +196,7 @@ class VoronoiInterface:
 
     def cleanup(self):
         # video - release and destroy windows
-        if self.create_video and self.writer is not None:
+        if self.writer is not None:
             self.writer.close()
             self.writer = None
             print(f"Saved video to: {self.video_path}")
