@@ -1,8 +1,9 @@
+from functools import reduce
 import logging
 import math
 import os
 import pickle
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 import time
 
 import numpy as np
@@ -25,6 +26,191 @@ SCOUT_BORDER_SCALE = 5.0
 COOL_DOWN = 15
 CB_DURATION = 0  # days dedicated to border consolidation in each cycle
 CB_START = 35    # the day to start the first cycle of border consolidation
+
+class DensityMap:
+
+    def __init__(
+        self,
+        player_id: int,
+        unit_pos: List[List[Tuple[float, float]]],
+        grid_size = 10):
+
+        max_dim = 99
+
+        self.me = player_id
+        self.grid_size = grid_size
+        self.dmap_max_dim = math.ceil(max_dim / grid_size)
+
+        self.soldier_partitions = self._partition_soldiers(unit_pos)
+        self._dmap = self.__dmap()
+        self._ndmap = self.__ndmap()
+
+    def pt2grid(self, x: float, y: float) -> tuple[int, int]:
+        """Given a location on map, return the grid it is in. The size
+        of a grid could be access from self.grid_size.
+        """
+
+        row_id = math.floor(x / self.grid_size)
+        col_id = math.floor(y / self.grid_size)
+
+        return (row_id, col_id)
+
+    def _partition_soldiers(self, unit_pos: List[List[Tuple[float, float]]]) -> Dict:
+        """Partitions soldiers into n x n grids where n = self.grid_size.
+        
+        Returns a dictionary whose key is the grid identifier :: Tuple[int, int], and
+        value is the list of soldiers :: Tuple[Tuple[float, float], int], where the
+        first component is position, and the second indicates which player owns it.
+        """
+
+        partitions = dict()
+
+        for player_id, army_locations in enumerate(unit_pos):
+            for loc in army_locations:
+                grid_key = self.pt2grid(loc[0], loc[1])
+                if grid_key not in partitions:
+                    partitions[grid_key] = []
+                
+                partitions[grid_key].append((loc, player_id))
+
+        return partitions
+
+    def __dmap(self) -> np.ndarray:
+        """Computes the danger in each grid using soldier partitions.
+        
+        Let d(g) represents the danger of a grid, it is defined as
+                    d(g) = n - m
+        where n = # of enemeies in the grid
+              m = # of allies in the grid
+        
+        A positive d(g) means we are outnumbered by enemies in grid g.
+        The higher the value, the more outnumbered we are and dangerous.
+        """
+        danger_map = np.zeros((self.dmap_max_dim, self.dmap_max_dim))
+
+        for x in range(self.dmap_max_dim):
+            for y in range(self.dmap_max_dim):
+                danger_map[x, y] = reduce(
+                    lambda acc, el: acc - 1 if el[1] == self.me else acc + 1,
+                    self.soldier_partitions.get((x, y), []),
+                    0
+                )
+        
+        return danger_map
+
+    def __ndmap(self) -> np.ndarray:
+        """Computes holisitc danger value of each grid.
+
+        Let h(g) be the holisitc danger of a grid g, it is defined as
+                h(g) = sum of [ alpha ** dist(g, g') * d(g') ]
+        where d(g') is the danger value of grid g'
+              dist(g, g') is the distance between the center of g and g'
+              alpha is a distance scaling factor of 0.9
+        """
+
+        def holistic_danger(dmap, x, y):
+            x_max = y_max = self.dmap_max_dim - 1
+            alpha = 0.9
+            val = 0
+
+            for neighbor_x in {max(0, x-1), x, min(x_max, x+1)}:
+                for neighbor_y in {max(0, y-1), y, min(y_max, y+1)}:
+                    dist2neighbor = math.sqrt((x-neighbor_x)**2 + (y-neighbor_y)**2)
+                    val += (alpha ** dist2neighbor) * dmap[neighbor_x][neighbor_y]
+            
+            return val
+
+        hg_map = np.zeros((self.dmap_max_dim, self.dmap_max_dim))
+        for x in range(self.dmap_max_dim):
+            for y in range(self.dmap_max_dim):
+                hg_map[x, y] = holistic_danger(self._dmap, x, y)
+
+        return hg_map
+
+    @property
+    def dmap(self):
+        return self._dmap
+
+    @property
+    def ndmap(self):
+        return self._ndmap
+
+    def pressure_level(self, pos: Tuple[float, float]) -> int:
+        """Returns the pressure level at @pos based on holistic danger of the
+        grid @pos is in and that of its neighboring grid.
+        
+        A *positive* holistic danger value h(g) means that it's likely that
+        in grid we'll soon be outnumbered, indicating high pressure.
+
+        Let g be the grid one of our soldier at @pos is in, and G' the set of
+        8 immediately neighboring grids (or less if g is on border).
+
+            h(g) >= 0                                 -> PRESSURE_HI
+            h(g) < 0 and h(g') >= 0 for any g' in G   -> PRESSURE_MID
+            otherwise                                 -> PRESSURE_LO
+        """
+        x, y = self.pt2grid(pos[0], pos[1])
+        cell_dangerous = self.ndmap[x, y] >= 0
+        neighbor_cell_dangerous = False
+        
+        x_max = y_max = self.dmap_max_dim - 1
+        for neighbor_x in {max(0, x-1), x, min(x_max, x+1)}:
+            for neighbor_y in {max(0, y-1), y, min(y_max, y+1)}:
+                if not (neighbor_x == x and neighbor_y == y) and self._ndmap[neighbor_x, neighbor_y] >= 0:
+                    neighbor_cell_dangerous = True
+                    break
+
+        if cell_dangerous:
+            return PRESSURE_HI
+        elif not cell_dangerous and neighbor_cell_dangerous:
+            return PRESSURE_MID
+        else:
+            return PRESSURE_LO
+
+    def suggest_move(self, ally_pos: Tuple[float, float]) -> Tuple[float, float]:
+        """Suggests a direction to move a soldier within a grid cell.
+
+        If a soldier experiences PRESSURE_MID:
+            a) more allies than enemies, soldier attacks intruders in the grid
+            b) less allies than enemies, soldier retreats to be closer than ally
+        
+        We want a greater attraction force to enemies within a grid cell for (a),
+        while we want a greater attraction foce to allyies for (b).
+        
+        To achieve this, we need scale attraction force for enemies *inversely*
+        with its enemy vs ally ratio, i.e.
+          a) more enemies: want ally attract each other more to form groups, so we
+             scale attration force of enemies less than that of allies.
+          b) less enemies: want ally attracted to enemies to attack, so we scale
+             attraction force of enemies larger than that of allies.
+
+        Currently, an somewhat inverse squared ratio of ally2enemy number is used
+        to scale attraction force of allies and enemies. TODO: a better metric for scale.
+        """
+
+        grid_id = self.pt2grid(ally_pos[0], ally_pos[1])
+        troops = self.soldier_partitions[grid_id]
+        ally2enemy_ratio = reduce(
+            lambda acc, el: (acc[0] + 1, acc[1]) if el[1] == self.me else (acc[0], acc[1] + 1),
+            troops,
+            (0, 0)
+        )
+
+        enemy_attr_scale, ally_attr_scale = ally2enemy_ratio
+        if enemy_attr_scale > ally_attr_scale:
+            enemy_attr_scale = enemy_attr_scale ** 2
+        else:
+            ally_attr_scale = ally_attr_scale ** 2
+
+        attr_fvec = np.zeros((2,), dtype=float)
+        for other_soldier, pid in troops:
+            if (other_soldier != ally_pos).all():
+                attr_scale = ally_attr_scale if pid == self.me else enemy_attr_scale
+                attr_fvec += attr_scale * attractive_force(ally_pos, other_soldier)
+
+        angle = np.arctan2(attr_fvec[0], attr_fvec[1])
+
+        return (1, angle)
 
 
 class Player:
@@ -79,12 +265,11 @@ class Player:
         self.num_scouts = 3
 
         base_angles = get_base_angles(player_idx)
-        outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=(total_days // spawn_days))
+        outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=int(self.initial_radius * 2 / 1.4))
         self.counter = 0
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
         self.cb_scheduled = np.array([CB_START, CB_START + CB_DURATION])
-
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -93,31 +278,18 @@ class Player:
         """Returns the radial distance of our soldier at @point to our homebase."""
         return np.sqrt(((points - self.homebase) ** 2).sum(axis=1))
 
-    def push(self, scout_ids) -> List[Tuple[float, float]]:
-        #allies = np.array(shapely_pts_to_tuples(unit_pos[self.us]))
+    def push_v2(self, scout_ids) -> List[Tuple[float, float]]:
         allies = np.delete(self.our_units, scout_ids, axis=0)  # not using slicing because scout_ids could be non-consecutive
 
-        # enemies = [shapely_pts_to_tuples(troops) for i, troops in enumerate(unit_pos) if i != self.us]
-        # flattened_enemies = np.concatenate((enemies[0], enemies[1], enemies[2]), axis=0)
-        flattened_enemies = self.enemy_units
-
-        k = math.ceil(len(allies) / 4)
-        kmeans = KMeans(n_clusters=k).fit(allies)
-
-        # ally_distances = np.array([self.get_radius(point) for point in kmeans.cluster_centers_])
-        ally_distances = self.get_radius(kmeans.cluster_centers_)
-        kmeans_radius = KMeans(n_clusters=min(3, k)).fit(ally_distances.reshape(-1, 1))
-
-        max_cluster = kmeans_radius.labels_[0]
-
-        #repelling_forces = [repelling_force_sum(flattened_enemies, c) for c in kmeans.cluster_centers_]
-        repelling_forces = [exploration_force(c, flattened_enemies, ally_pts=None) for c in kmeans.cluster_centers_]
-        pressure_levels = np.array([get_pressure_level(force) for force in repelling_forces])
-        pressure_levels[np.array(kmeans_radius.labels_) != max_cluster] = PRESSURE_LO # index where point is not in outer radius
-        soldier_moves = [self._push_radially(allies[i], plevel=pressure_levels[cid]) for i, cid in enumerate(kmeans.labels_)]
-
-        self.debug(f'pressure: {[int(np.linalg.norm(force)) for force in repelling_forces]}')
-        self.debug(f'moves: {soldier_moves}')
+        pressure_levels = [
+            self.d.pressure_level(tuple(pos))
+            for pos in allies
+        ]
+        soldier_moves = [
+            self._push_radially(allies[i], plevel=plevel)
+            if plevel != PRESSURE_MID else self.d.suggest_move(allies[i])
+            for i, plevel in enumerate(pressure_levels)
+        ]
 
         return soldier_moves
 
@@ -185,6 +357,20 @@ class Player:
         self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
         self.our_units = np.array(float_unit_pos[self.us])
 
+        self.debug()
+        self.debug(f'unit_ids: {unit_id[self.us]}')
+        self.debug(f'len(unit_pos): {len(unit_pos[self.us])}, len(unit_ids): {len(unit_id[self.us])}')
+
+        self.d = DensityMap(self.us, float_unit_pos)
+        self.debug(f'density map: {self.d.dmap.T}')
+        self.debug(f'average neighbor density: {self.d.ndmap.T}')
+
+        # TODO:
+        # 1. maybe a template system: specify soldier ids, and logic
+        # 2. internally, return ('unit_id', moves), in the end, concatenate all, sort them by unit_id
+        #    and transform them to List[Tuple[float, float]]
+        # 3. things to think about: is it worth the effort to create this system, given what we want to do?
+
         # EARLY GAME: form a 2-layer wall
         if self.day_n <= self.initial_radius:
             self.debug(f'day {self.day_n}: form initial wall')
@@ -209,12 +395,17 @@ class Player:
             scout_ids = np.arange(self.num_scouts)
 
             start = time.time()
-            defense_moves = self.push(scout_ids)
+            defense_moves = self.push_v2(scout_ids)
             self.debug(f'Defense: {time.time()-start}s')
             
             start = time.time()
             offense_moves = self.move_scouts(scout_ids)
             self.debug(f'Offense: {time.time()-start}s')
+
+
+            # TODO
+            # As a first step, modify the function signatures to take in soldiers
+            # merge the returned moves
 
             return offense_moves + defense_moves
 
@@ -314,20 +505,6 @@ class Player:
 
 
 # -----------------------------------------------------------------------------
-#   Strategies
-# -----------------------------------------------------------------------------
-
-def _push_radially(pt, homebase, exceed_lo=False):
-    if exceed_lo:
-        # stay where we are
-        return (0., 0.)
-
-    towards_x, towards_y = np.array(pt) - np.array(homebase)
-    angle = np.arctan2(towards_y, towards_x)
-    
-    return (1, angle)
-
-# -----------------------------------------------------------------------------
 #   Force (NumPy)
 # -----------------------------------------------------------------------------
 def exploration_force(curr_pt, enemy_pts, ally_pts=None):
@@ -372,6 +549,9 @@ def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, f
 
 def reactive_force(fvec: List[float]) -> List[float]:
     return fvec * (-1.)
+
+def attractive_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
+    return reactive_force(repelling_force(p1, p2))
 
 def get_pressure_level(force: List[float]) -> int:
     p = np.linalg.norm(force)
