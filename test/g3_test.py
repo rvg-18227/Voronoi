@@ -1,3 +1,5 @@
+import matplotlib.pyplot as plt
+import numpy as np
 import os
 import sys
 
@@ -11,8 +13,61 @@ from players.g3_player import (
 	midsort,
 	get_moves,
 	repelling_force_sum,
-    get_base_angles
+    get_base_angles,
+    DensityMap
 )
+
+
+# -----------------------------------------------------------------------------
+# 	Debug Tests
+# -----------------------------------------------------------------------------
+
+debug = 1
+
+def debug_densitymap():
+    me = 1
+    unit_pos = [
+        [[57, 40.5], [56, 43.5]],
+        [
+            [53, 42.5], [53, 45], [53, 48.5],
+            [58, 42], [58, 45], [58, 47.5]
+        ]
+    ]
+
+    d = DensityMap(me, unit_pos)
+
+    grid_id = d.pt2grid(unit_pos[0][0][0], unit_pos[0][0][1])
+    troops = d.soldier_partitions[grid_id]
+
+    plt.gca().invert_yaxis()
+
+    for (x, y), pid in troops:
+        pt_format = 'bo' if pid == me else 'ro'
+        plt.plot(x, y, pt_format)
+
+    next_moves = [
+        d.suggest_move(ally_pos)
+        for ally_pos in unit_pos[me]
+    ]
+
+    print(next_moves)
+
+    next_pos = [
+        [x + dist * np.cos(angle), y + dist * np.sin(angle)]
+        for (x, y), (dist, angle) in zip(unit_pos[me], next_moves)
+    ]
+
+    print(next_pos)
+
+    for (x, y) in next_pos:
+        plt.plot(x, y, 'go')
+
+
+    plt.show()
+
+
+if debug:
+    debug_densitymap()
 
 
 # -----------------------------------------------------------------------------
@@ -148,6 +203,7 @@ def test_get_base_angles():
         print("PASSED - test_get_base_angles")
     else:
         print(f"FAILED with {error_count} errors - test_get_base_angles")
+
 
 # -----------------------------------------------------------------------------
 # 	Running Tests...

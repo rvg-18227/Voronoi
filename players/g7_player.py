@@ -58,16 +58,34 @@ class Player:
         self.player_idx = player_idx
         self.min_dim = min_dim
         self.max_dim = max_dim
+        if self.player_idx == 0: # Top left orange
+            self.angles = [(2*pi/8), (4*pi/8), 0, (3*pi/8), (pi/8) ]
+        elif self.player_idx == 1: # Bottom left pink
+            self.angles = [7*pi/4, 3*pi/2, 0, 13*pi/8, 15*pi/8] 
+        elif self.player_idx == 2: # Bottom right blue
+            self.angles = [5*pi/4, 3*pi/2, pi, 11*pi/8, 9*pi/8] 
+        else: # Top right yellow
+            self.angles = [3*pi/4, pi, pi/2, 7*pi/8, 5*pi/8]
 
         # Experimenal variables
+        self.day = 0
         self.other_players = [0,1,2,3]
         self.other_players.remove(self.player_idx)
         self.last_n_days_positions = {}
         self.hostility_registry = {}
+        self.units_angle = {}
 
         for other_player in self.other_players:
             self.last_n_days_positions[other_player] = []
             self.hostility_registry[other_player] = 1
+
+    # Find the nearest unit to a given space
+    def nearest_unit_to_space(self, team_unit_ids, team_unit_pos, space):
+        pass
+
+    # Gives a map of troop density is lowest
+    def density_map(self):
+        pass
 
 
     def basic_aggressiveness(self, prev_position, current_position) -> float:
@@ -169,7 +187,7 @@ class Player:
             ab, ac, bc = dist((a.x, a.y), (b.x, b.y)), dist((a.x, a.y), (c.x, c.y)), dist((b.x, b.y), (c.x, c.y))
             mid_angle = (acos((ac**2 - ab**2 - bc**2)/(-2.0 * ab * ac))) / 2
             
-            strategies.append({'move': my_unit_idx,'player': player, 'ene_points':[ene_unit_1_idx,ene_unit_2_idx],  'mid_angle': mid_angle.real})
+            strategies.append({'move': unit_id[self.player_idx][my_unit_idx],'player': player, 'ene_points':[ene_unit_1_idx,ene_unit_2_idx],  'mid_angle': mid_angle.real})
             # used.append(my_unit_idx) # will be used to move 
 
             # print('player, :', player, 'mid_angle', mid_angle*180/pi, '(my_unit_id, ene1_id, ene2_id): (', unit_id[self.player_idx][my_unit_idx], unit_id[player][ene_unit_1_idx], unit_id[player][ene_unit_2_idx], ')')
@@ -194,12 +212,20 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
-        offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
-        offense_idx = [i['move'] for i in offense]
-        
+        total_units = len(unit_id[self.player_idx])
+        friendly_unit_ids = unit_id[self.player_idx]
         moves = []
         locx = 0
         locy = 0
+
+        dead_units = [unit for unit in self.units_angle if unit not in friendly_unit_ids]
+        for dead_units in dead_units:
+            del self.units_angle[dead_units]
+
+    
+        offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
+        offense_idx = [i['move'] for i in offense]
+
         if self.player_idx == 0:
             locx = 0
             locy = 0
@@ -212,74 +238,36 @@ class Player:
         elif self.player_idx == 3:
             locx = 75
             locy = 0
-            
-        attackers = []
-            
-        for i in range(25-1):
-            for j in range(25-1):
-                if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0 and map_states[i + locx][j + locy] not in attackers:
-                    attackers.append(map_states[i + locx][j + locy])
-        
-        if self.player_idx == 0: # Top left orange
-            if len(attackers) != 0:
-                for i in attackers:
-                    if len(attackers) > 1:
-                        angles = [pi/2, pi/2, pi/4, 2*pi, 2*pi]
-                    if i == 2:
-                        angles = [pi/2, pi/2, pi/2, pi/2, pi/2]
-                    elif i == 4:
-                        angles = [2*pi, 2*pi, 2*pi, 2*pi, 2*pi]
-            else:
-                angles = [(2*pi/8), (4*pi/8), 0, (3*pi/8), (pi/8) ]
-        elif self.player_idx == 1: # Bottom left pink
-            if len(attackers) != 0:
-                for i in attackers:
-                    if len(attackers) > 1:
-                        angles = [2*pi, 2*pi, (7*pi)/4, (3*pi)/2, (3*pi)/2]
-                    if i == 1:
-                        angles = [2*pi, 2*pi, 2*pi, 2*pi, 2*pi]
-                    elif i == 3:
-                        angles = [(3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2]
-            else:
-                angles = [7*pi/4, 3*pi/2, 0, 13*pi/8, 15*pi/8] 
-        elif self.player_idx == 2: # Bottom right blue
-            if len(attackers) != 0:
-                for i in attackers:
-                    if len(attackers) > 1:
-                        angles = [(3*pi)/2, (3*pi)/2, (5*pi)/4 , pi, pi]
-                    if i == 4:
-                        angles = [(3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2, (3*pi)/2]
-                    elif i == 2:
-                        angles = [pi, pi, pi, pi, pi]
-            else:
-                angles = [5*pi/4, 3*pi/2, pi, 11*pi/8, 9*pi/8] 
-        else: # Top right yellow
-            if len(attackers) != 0:
-                for i in attackers:
-                    if len(attackers) > 1:
-                        angles = [pi, pi, (3*pi)/4 , pi/2, pi/2]
-                    if i == 1:
-                        angles = [pi, pi, pi, pi, pi]
-                    elif i == 3:
-                        angles = [pi/2, pi/2, pi/2, pi/2, pi/2]
-            else:
-                angles = [3*pi/4, pi, pi/2, 7*pi/8, 5*pi/8]
-        
-        total_units = len(unit_id[self.player_idx])
 
-        # Find aggressivness of other players maybe use this to adjust angles of units to be defensive
-        
-        for other_player in self.other_players:
-            if len(self.last_n_days_positions[other_player]) == self.spawn_days:
-                change = self.basic_aggressiveness(self.last_n_days_positions[other_player].pop(0), unit_pos[other_player])
-                self.hostility_registry[other_player] = change
-            self.last_n_days_positions[other_player].append(unit_pos[other_player])
+        attackers = []
+        if self.day > 49:
+            for i in range(25-1):
+                for j in range(25-1):
+                    if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0 and map_states[i + locx][j + locy] not in attackers:
+                        # Send nearest units in logic way to cut off supply as defensive measure
+                        # nearest_units = self.nearest_unit_to_space(friendly_unit_ids, unit_pos[self.player_idx], (i + locx, j + locy))
+                        attackers.append(map_states[i + locx][j + locy])
+
+        # Use attackers to dynamically move units?
 
         for i in range(total_units):
-            if i in offense_idx:
-                moves.append((1, offense[0]['mid_angle']) if (i == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+            # Prior to day 50? set up formation
+            if self.day < 50:
+                if friendly_unit_ids[i] in self.units_angle:
+                    moves.append((1, self.units_angle[friendly_unit_ids[i]]))
+                else:
+                    self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
+                    moves.append((1, self.angles[i % len(self.angles)]))
+            # After day 50 switch to dynamic model
             else:
-                moves.append((1, angles[i % len(angles)]))
-            
+                if friendly_unit_ids[i] in offense_idx:
+                    moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+                else:
+                    if friendly_unit_ids[i] in self.units_angle:
+                        moves.append((1, self.units_angle[friendly_unit_ids[i]]) )
+                    else:
+                        self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
+                        moves.append((1, self.angles[i % len(self.angles)]))
 
+        self.day +=1
         return moves
