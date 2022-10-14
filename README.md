@@ -26,12 +26,22 @@ Project 2: https://github.com/rvg-18227/Voronoi
 
 ## Installation
 
-Requires **python3.6** or higher
+Requires **python3.9** or higher
 
 Install simulator packages only
 
 ```bash
 pip install -r requirements.txt
+```
+
+Install ffmpeg in the system to export videos
+
+```
+# ubuntu
+sudo apt install ffmpeg
+
+# macod
+brew install ffmpeg
 ```
 
 ## Usage
