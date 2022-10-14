@@ -9,6 +9,7 @@ import time
 import numpy as np
 from shapely.geometry import Point
 from sklearn.cluster import KMeans
+import ot
 
 
 LOG_LEVEL = logging.DEBUG
@@ -20,8 +21,8 @@ PRESSURE_LO_THRESHOLD = 1.5
 PRESSURE_LO, PRESSURE_MID, PRESSURE_HI = range(3) 
 
 SCOUT_HOMEBASE_SCALE = 10.0
-SCOUT_ENEMY_SCALE = 1
 SCOUT_BORDER_SCALE = 5.0
+SCOUT_ENEMY_BASE_SCALE = 50.0
 
 COOL_DOWN = 15
 CB_DURATION = 0  # days dedicated to border consolidation in each cycle
@@ -249,9 +250,10 @@ class Player:
         self.rng = rng
         self.logger = logger
         self.logger.setLevel(LOG_LEVEL)
-        
+
         self.us = player_idx
         self.homebase = np.array(spawn_point)
+        self.enemy_bases = np.delete(np.array([[0.5, 0.5], [0.5, 99.5], [99.5, 99.5], [99.5, 0.5]]), self.us, axis=0)
         self.day_n = 0
 
         self.our_units = None
@@ -396,7 +398,7 @@ class Player:
             # MID_GAME: adjust formation based on opponents' positions
             self.debug(f'day {self.day_n}: cool down')
 
-            scout_ids = np.arange(self.num_scouts)
+            scout_ids = self.select_scouts() # IMPORTANT: must be sorted so that we can map them back later
 
             start = time.time()
             defense_moves = self.push_v2(scout_ids)
@@ -411,7 +413,11 @@ class Player:
             # As a first step, modify the function signatures to take in soldiers
             # merge the returned moves
 
-            return offense_moves + defense_moves
+            # insert scout moves into all moves
+            all_moves = defense_moves
+            for i, scout in enumerate(scout_ids.tolist()):
+                all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
+            return all_moves
 
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
         """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
@@ -419,6 +425,18 @@ class Player:
         x = self.homebase[0] + dist * math.cos(angle)
         y = self.homebase[1] + dist * math.sin(angle)
         return (x, y)
+
+    def select_scouts(self):
+        """
+        Dynamically select scouts based on distance from homebase.
+        But we want them evenly spread out, so I changed it back to original until I figure out how to do it
+        """
+        # n = min(self.our_units.shape[0]//2, self.num_scouts)
+        # dist = ((self.homebase - self.our_units) ** 2).sum(axis=1)
+        # candidate_ids = np.argpartition(dist, -n*2)[-n*2:]
+        # scout_ids = np.sort(np.random.choice(candidate_ids, size=n, replace=False))
+        scout_ids = np.arange(min(self.our_units.shape[0], self.num_scouts))
+        return scout_ids
 
     def get_border(self):
         """Get border of our territory"""
@@ -471,7 +489,8 @@ class Player:
         homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
         force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters) \
             + SCOUT_BORDER_SCALE * border_repulsion(scout_unit, xmax=self.map_states.shape[0], ymax=self.map_states.shape[1]) \
-            + SCOUT_HOMEBASE_SCALE * homebase_force
+            + SCOUT_HOMEBASE_SCALE * homebase_force \
+            + SCOUT_ENEMY_BASE_SCALE * enemy_base_attraction(scout_unit, self.enemy_bases)
         return np.array([1, np.arctan2(force[1], force[0])])
 
     def _get_clusters(self, ally_units):
@@ -495,7 +514,6 @@ class Player:
         min_ally_id = ally_dist.argmin(axis=1)
         min_enemy_dist = ((scout_units.reshape(-1, 1, 2) - self.enemy_units.reshape(1, -1, 2)) ** 2).sum(axis=2).min(axis=1)
 
-        enemy_clusters, ally_clusters = self._get_clusters(ally_units)
         for i in range(scout_units.shape[0]):
             if ally_dist[i, min_ally_id[i]] >= min_enemy_dist[i] * 2:
                 # retreat
@@ -503,6 +521,7 @@ class Player:
                 scout_moves[i] = np.array([1, np.arctan2(to_y, to_x)])
             else:
                 # explore
+                enemy_clusters, ally_clusters = self._get_clusters(ally_units)
                 scout_moves[i] = self._explore(scout_units[i], enemy_clusters, ally_clusters)
 
         return ndarray_to_moves(scout_moves)
@@ -519,16 +538,27 @@ def exploration_force(curr_pt, enemy_pts, ally_pts=None):
         ally_force = inverse_force(ally_v)
     enemy_v = curr_pt - enemy_pts
     enemy_force = inverse_force(enemy_v)
-    return ally_force + SCOUT_ENEMY_SCALE * enemy_force
+    return ally_force + enemy_force
 
 def border_repulsion(curr_pt, xmax, ymax):
     border_pts = np.array([[0, curr_pt[1]], [xmax, curr_pt[1]], [curr_pt[0], 0], [curr_pt[0], ymax]])
     border_v = curr_pt - border_pts
     return inverse_force(border_v)
 
+def enemy_base_attraction(curr_pt, enemy_bases):
+    """Squared inverse attraction to enemy homebases so that scouts attack enemey base only in proximity"""
+    nearest_base = enemy_bases[((curr_pt - enemy_bases) ** 2).sum(axis=1).argmax()]
+    v = nearest_base - curr_pt
+    return inverse_force_cubic(v)
+
 def inverse_force(v):
-    mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True))
-    force = (v / (mag+1e-7) / (mag+1e-7)).sum(axis=0)
+    mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True)) + 1e-7
+    force = (v / mag / mag).sum(axis=0)
+    return force
+
+def inverse_force_cubic(v):
+    mag = np.sqrt((v ** 2).sum()) + 1e-7
+    force = v / mag / (mag ** 3)
     return force
 
 
@@ -571,6 +601,20 @@ def get_pressure_level(force: List[float]) -> int:
 # -----------------------------------------------------------------------------
 #   Helper functions
 # -----------------------------------------------------------------------------
+
+def assign_by_ot(unit_pos, target_loc):
+    """
+    Assign troops to locations based on optimal transport.
+    unit_pos - shape (N, 2)
+    target_loc - shape (N, 2)
+    Returns reordered target_loc optimally mapped to each unit - shape (N, 2)
+    """
+    n = unit_pos.shape[0]
+    assert target_loc.shape[0] == n
+    a, b = np.ones((n,)) / n , np.ones((n,)) / n  # uniform weights on points
+    M = ot.dist(unit_pos, target_loc, metric='euclidean') # cost matrix
+    assignment = ot.emd(a, b, M).argmax(axis=1) # OT linear program solver
+    return target_loc[assignment]
 
 def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
     """Returns a list of 2-tuple (dist, angle) required to move a list of points
