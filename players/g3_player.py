@@ -185,6 +185,10 @@ class Player:
         self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
         self.our_units = np.array(float_unit_pos[self.us])
 
+        # if self.us == 0:
+        #     np.save(open('border.npy', 'wb'), self.get_border())
+        #     np.save(open('units.npy', 'wb'), self.out_units)
+
         # EARLY GAME: form a 2-layer wall
         if self.day_n <= self.initial_radius:
             self.debug(f'day {self.day_n}: form initial wall')
