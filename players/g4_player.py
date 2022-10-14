@@ -2,6 +2,9 @@ import logging
 import pdb
 from abc import ABC, abstractmethod
 from enum import Enum
+from glob import glob
+from operator import itemgetter
+from os import makedirs, remove
 from random import randint, uniform
 from typing import Tuple
 
@@ -9,8 +12,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import colors
-from shapely.geometry import LineString, Point, MultiPoint, Polygon, box
+from matplotlib.collections import LineCollection
+from shapely.geometry import LineString, MultiPoint, Point, Polygon, box
 from shapely.ops import nearest_points, voronoi_diagram
+
+from constants import dispute_color, player_color, tile_color
 
 EPSILON = 0.0000001
 
@@ -37,22 +43,27 @@ class StateUpdate:
     params: GameParameters
     unit_id: list[list[str]]
     unit_pos: list[list[Point]]
+    map_states: list[list[int]]
 
     def __init__(
         self,
         params: GameParameters,
         unit_id: list[list[str]],
         unit_pos: list[list[Point]],
+        map_states: list[list[int]],
     ):
         self.params = params
         self.unit_id = unit_id
         self.unit_pos = unit_pos
+        self.map_states = map_states
 
     # =============================
     # Role Update Utility Functions
     # =============================
 
     def own_units(self):
+        """Returns dictionary of `unit_id -> unit_pos` for this player's units."""
+
         return {
             unit_id: unit_pos
             for unit_id, unit_pos in zip(
@@ -62,6 +73,8 @@ class StateUpdate:
         }
 
     def enemy_units(self):
+        """Returns dictionary of `enemy player -> [(unit_id, unit_pos)]`."""
+
         return {
             enemy_id: list(zip(self.unit_id[enemy_id], self.unit_pos[enemy_id]))
             for enemy_id in range(4)
@@ -69,9 +82,55 @@ class StateUpdate:
         }
 
     def all_enemy_units(self):
+        """Returns all enemy units in a list `[(unit_id, unit_pos)]`."""
         return [
             unit for enemy_units in self.enemy_units().values() for unit in enemy_units
         ]
+
+    def unit_ownership(self):
+        """
+        Returns tile/unit ownership information `(unit_to_owned, tile_to_unit)`.
+
+        `unit_to_owned`: dict of dicts `player_idx -> unit_id -> [(tile_x, tile_y)]`
+        `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
+        """
+        # player -> unit -> [(x, y)]
+        unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
+            0: {},
+            1: {},
+            2: {},
+            3: {},
+        }
+        # (x, y) -> (player, unit)
+        tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
+
+        for tile_x in range(self.params.max_dim):
+            for tile_y in range(self.params.max_dim):
+                tile_state = self.map_states[tile_x][tile_y]
+                # Disputed tiles aren't owned by any unit
+                if tile_state == -1:
+                    continue
+
+                # 1-4 -> 0-3
+                owning_player = tile_state - 1
+
+                # Find closest unit
+                tile_center = np.array([tile_x + 0.5, tile_y + 0.5])
+                unit_dists = [
+                    (unit_id, np.linalg.norm(unit_pos - tile_center))
+                    for unit_id, unit_pos in zip(
+                        self.unit_id[owning_player], self.unit_pos[owning_player]
+                    )
+                ]
+                closest_unit, _ = min(unit_dists, key=itemgetter(1))
+
+                if not closest_unit in unit_to_owned[owning_player]:
+                    unit_to_owned[owning_player][closest_unit] = []
+                unit_to_owned[owning_player][closest_unit].append((tile_x, tile_y))
+
+                tile_to_unit[(tile_x, tile_y)] = (owning_player, closest_unit)
+
+        return unit_to_owned, tile_to_unit
 
 
 # =======================
@@ -608,7 +667,7 @@ class Player:
             for player_units in unit_pos
         ]
 
-        update = StateUpdate(self.params, unit_id, unit_pos)
+        update = StateUpdate(self.params, unit_id, unit_pos, map_states)
 
         own_units = list(update.own_units().items())
         enemy_unit_locations = [pos for _, pos in update.all_enemy_units()]
@@ -745,3 +804,87 @@ def visualize_risk(risks, enemy_units_locations, own_units, turn):
         plt.title(f"Day {turn}")
         plt.tight_layout()
         plt.savefig(f"risk_{turn}.png")
+
+
+unit_colors = {}
+
+
+def visualize_ownership(turn: int, update: StateUpdate):
+    plt.clf()
+    ax = plt.gca()
+
+    cmap = colors.ListedColormap([dispute_color] + tile_color)
+    bounds = [-1, 1, 2, 3, 4, 5]
+    norm = colors.BoundaryNorm(bounds, cmap.N)
+    X, Y = np.meshgrid(list(range(100)), list(range(100)))
+    plt.pcolormesh(
+        X + 0.5,
+        Y + 0.5,
+        np.transpose(update.map_states),
+        cmap=cmap,
+        norm=norm,
+    )
+
+    # Units
+    for p in range(4):
+        for x, y in update.unit_pos[p]:
+            plt.plot(
+                x,
+                y,
+                color=player_color[p],
+                marker="o",
+                markersize=4,
+                markeredgecolor="black",
+            )
+
+    # Ownership
+    unit_to_owned, _ = update.unit_ownership()
+    lines = {}
+    line_colors = {}
+    for player in range(4):
+        lines[player] = []
+        line_colors[player] = []
+        for unit_id, owned in unit_to_owned[player].items():
+            if not (player, unit_id) in unit_colors:
+                unit_colors[(player, unit_id)] = (
+                    randint(0, 255),
+                    randint(0, 255),
+                    randint(0, 255),
+                )
+            unit_idx = update.unit_id[player].index(unit_id)
+            unit_x, unit_y = update.unit_pos[player][unit_idx]
+            for tile_x, tile_y in owned:
+                lines[player].append(
+                    [
+                        (int(unit_x) + 0.5, int(unit_y) + 0.5),
+                        (tile_x + 0.5, tile_y + 0.5),
+                    ]
+                )
+                line_colors[player].append(unit_colors[(player, unit_id)])
+    for player in range(4):
+        plt.gca().add_collection(
+            LineCollection(
+                lines[player], linewidth=1, alpha=0.2, colors=line_colors[player]
+            )
+        )
+
+    plt.xticks(np.arange(0, 100, 10))
+    plt.yticks(np.arange(0, 100, 10))
+    plt.grid(color="black", alpha=0.1)
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.xaxis.set_ticks_position("none")
+    ax.yaxis.set_ticks_position("none")
+
+    ax.set_aspect(1)
+    ax.set_xlim([0, 100])
+    ax.set_ylim([0, 100])
+    ax.invert_yaxis()
+    plt.title(f"Day {turn}")
+    plt.savefig(f"debug/{turn}.png", dpi=300)
+
+
+makedirs("debug", exist_ok=True)
+existing = glob("debug/*.png")
+for f in existing:
+    remove(f)
