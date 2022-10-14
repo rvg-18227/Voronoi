@@ -138,7 +138,7 @@ class Player:
             p1 = Point(point1)
             current_radius = p_base.distance(p1)
 
-            # new point spanwed!!! time to spread :)
+            # new point spawned!!! time to spread :)
             current_radius += 1
             # some code to spread
         new_guard = []
@@ -160,6 +160,9 @@ class Player:
         moves = self.spread_points(current_radius, points)
         for i in range(len(moves)):
             moves[i] = self.transform_move(moves[i])
+
+        # print(self.is_safe(unit_pos, map_states))
+
         return moves
 
     def make_point_dict(
@@ -204,11 +207,13 @@ class Player:
             index += 1
             distance = 1
             angle = (((index) * (angle_jump) + angle_start)) % 90
-            if i in guard_dict.items() and self.is_stay_guard == False:  # call the move guard function
+            # call the move guard function
+            if i in guard_dict.items() and self.is_stay_guard is False:
                 distance, angle = self.move_stay_guard(
                     i, self.angles[guard_index])
                 guard_index += 1
             moves.append((distance, angle*(math.pi / 180)))
+
 
         return moves
 
@@ -222,7 +227,7 @@ class Player:
         # remove the last three points
         move = []
         is_guard = []
-        g_s_dist = math.abs(guard_point.distance(self.spawn_point))
+        g_s_dist = abs(guard_point.distance(self.spawn_point))
         g_s_ang = abs(angle-self.angle_between(guard_point, self.spawn_point))
         if g_s_dist == 1 and g_s_ang == angle:
             move.append((0, 0))
@@ -231,7 +236,8 @@ class Player:
             dist = min(g_s_dist, 1)
             angle = g_s_ang
             move.append((dist, angle))
-        # move the points back to the base so that the coordinates would the right
+        # move the points back to the base so that
+        # the coordinates would the right
         return move
 
     def angle_between(
@@ -239,7 +245,6 @@ class Player:
             p1: Point,
             p2: Point
     ) -> float:
-
         p1 = np.array(p1)
         p2 = np.array(p2)
         dy = p1[1]-p2[1]
@@ -254,6 +259,12 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
-    def is_safe(self) -> Boolean:
+    def is_safe(
+            self,
+            unit_pos,
+            map_states
+    ) -> Boolean:
         # TODO the safety heuristic
+        # print(unit_pos)
+        # print(map_states)
         return False
