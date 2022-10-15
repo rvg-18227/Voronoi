@@ -403,34 +403,67 @@ class RadialDefender(Role):
     def deallocation_candidate(self, target_point):
         pass
 
-
 class FirstScout(Role):
     def __init__(self, logger, params,scout_id):
         super().__init__(logger, params)
-        self.scout_id = scout_id
 
-    def closest_enemy_dist(self,update,uid):
-        enemy_units = update.all_enemy_units()
+    
+    def _turn_moves(self, update, dead_units):
         own_units = update.own_units()
+        moves = {}
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+            home_force = repelling_force(unit_pos, self.params.home_base)
+            total_force = normalize(
+                    (home_force * 10)
+                )
+                # self._logger.debug("force", total_force)
+            moves[unit_id] = to_polar(total_force)
+                #self._debug(moves)
+        
+        return moves
+
+    def deallocation_candidate(self, target_point):
+        pass
+
+class GreedyScout(Role):
+    def __init__(self, logger, params,scout_id,ownership):
+        super().__init__(logger, params)
+        self.scout_id = scout_id
+        self.owned = {}
+        self.temp_id = scout_id
+        self.first_turn = True
+        self.ownership = ownership
+
+    def closest_enemy_dist(self,update,uid,own_units):
+        enemy_units = update.all_enemy_units()
         p = own_units[uid]
         closest_dist = 500
-        for enemy_id, enemy_pos in enemy_units:
-
+        for _, enemy_pos in enemy_units:
             closest_dist = min(closest_dist, np.linalg.norm(p-enemy_pos))
         return closest_dist
 
     def _turn_moves(self, update, dead_units):
         HOME_INFLUENCE = 30
         own_units = update.own_units()
-        enemy_units = update.all_enemy_units()
         moves = {}
+       # self.ownership = update.unit_ownership()
         for unit_id in self.units:
             #self._debug("text")
             #self._debug(f"uid {unit_id}")
-
+            #self._debug(f"owns {self.ownership}")
+            #self._debug(f"owns 2 {self.ownership[self.params.player_idx]}")
+            owns = len(self.ownership[0][self.params.player_idx][unit_id])
+            if self.first_turn == True:
+                self.first_turn = False
+                self.owned[unit_id] = owns
+            else:
+                owned = self.owned[unit_id]
+                if owned > owns:
+                    self.temp_id += 1
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
-            closest_enemy_d = self.closest_enemy_dist(update,unit_id)
+            closest_enemy_d = self.closest_enemy_dist(update,unit_id,own_units)
 
             if closest_enemy_d < 2: #RUN AWAY TO HOME
                 
@@ -453,12 +486,12 @@ class FirstScout(Role):
                     pass
 
                 horizontal_influence = np.random.randint(40) - 10
-                if self.scout_id % 2 == 0:
+                if self.temp_id % 2 == 0:
                     horizontal_force = repelling_force(unit_pos, wall_normals[0])
                 else:
                     horizontal_force = repelling_force(unit_pos, wall_normals[1])
 
-                if self.scout_id % 4 <= 1:
+                if self.temp_id % 4 <= 1:
                     horizontal_influence = np.random.randint(30) - 10
 
                 total_force = normalize(
@@ -468,7 +501,7 @@ class FirstScout(Role):
                 # self._logger.debug("force", total_force)
                 moves[unit_id] = to_polar(total_force)
                 #self._debug(moves)
-
+        
         return moves
 
     def deallocation_candidate(self, target_point):
@@ -652,6 +685,8 @@ class Player:
         self.role_groups[RoleType.SCOUT].append(
             FirstScout(self.logger, self.params, self.scout_id))
         self.scout_id += 1
+       
+
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -712,7 +747,7 @@ class Player:
                 [min(100, (750 / (d1) + 750 / (d2))) for d1, d2 in risk_distances],
             )
         )
-        visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
+        #visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
 
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
@@ -727,15 +762,23 @@ class Player:
         RING_SPACING = 5
         MIN_RADIUS = 5
         idle = 0
+        ownership = update.unit_ownership()
         for uid in free_units:
-            self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+            scout = GreedyScout(self.logger, self.params, self.scout_id,ownership)
+            self.role_groups[RoleType.SCOUT].append(scout)
+            scout.allocate_unit(uid)
+            self.scout_id += 1
+
+            #self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+
+
         # for uid in free_units:
         #     assigned = False
 
-        #     # TODO: framework for prioritizing allocation rules
+        # #     # TODO: framework for prioritizing allocation rules
 
-        #     # Currently assuming all defenders are RadialDefender
-        #     # Also assumes that defenders are ordered by priority for reinforcement
+        # #     # Currently assuming all defenders are RadialDefender
+        # #     # Also assumes that defenders are ordered by priority for reinforcement
         #     for ring in reversed(self.role_groups[RoleType.DEFENDER]):
         #         target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
         #         if len(ring.units) < target_density:
@@ -771,10 +814,10 @@ class Player:
         #         self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
         #         assigned = True
         #     else:
-                scout = FirstScout(self.logger, self.params, self.scout_id)
+        #         scout = FirstScout(self.logger, self.params, self.scout_id)
         #         self.role_groups[RoleType.SCOUT].append(scout)
-                scout.allocate_unit(uid)
-                self.scout_id += 1
+        #         scout.allocate_unit(uid)
+        #         self.scout_id += 1
         #         assigned = True
 
         #     if assigned:
