@@ -189,6 +189,7 @@ class DensityMap:
         to scale attraction force of allies and enemies. TODO: a better metric for scale.
         """
 
+        ally_pos = np.array(ally_pos)
         grid_id = self.pt2grid(ally_pos[0], ally_pos[1])
         troops = self.soldier_partitions[grid_id]
         ally2enemy_ratio = reduce(
@@ -205,11 +206,11 @@ class DensityMap:
 
         attr_fvec = np.zeros((2,), dtype=float)
         for other_soldier, pid in troops:
-            if (other_soldier != ally_pos).all():
+            if not (other_soldier == ally_pos).all():
                 attr_scale = ally_attr_scale if pid == self.me else enemy_attr_scale
                 attr_fvec += attr_scale * attractive_force(ally_pos, other_soldier)
 
-        angle = np.arctan2(attr_fvec[0], attr_fvec[1])
+        angle = np.arctan2(attr_fvec[1], attr_fvec[0])
 
         return (1, angle)
 
