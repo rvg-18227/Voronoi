@@ -176,6 +176,10 @@ class DensityMap:
         
         We want a greater attraction force to enemies within a grid cell for (a),
         while we want a greater attraction foce to allyies for (b).
+
+        Moreover, when there's no enemy in the grid, to avoid allies being squished
+        together, we apply replly force if allies are too close. This helps space
+        out allies in a grid.
         
         To achieve this, we need scale attraction force for enemies *inversely*
         with its enemy vs ally ratio, i.e.
@@ -184,10 +188,11 @@ class DensityMap:
           b) less enemies: want ally attracted to enemies to attack, so we scale
              attraction force of enemies larger than that of allies.
 
-        Currently, an somewhat inverse squared ratio of ally2enemy number is used
+        Currently, an inverse ratio of ally2enemy number is used
         to scale attraction force of allies and enemies. TODO: a better metric for scale.
         """
 
+        ally_pos = np.array(ally_pos)
         grid_id = self.pt2grid(ally_pos[0], ally_pos[1])
         troops = self.soldier_partitions[grid_id]
         ally2enemy_ratio = reduce(
@@ -197,19 +202,31 @@ class DensityMap:
         )
 
         enemy_attr_scale, ally_attr_scale = ally2enemy_ratio
-        if enemy_attr_scale > ally_attr_scale:
-            enemy_attr_scale = enemy_attr_scale ** 2
+        fvec = np.zeros((2,), dtype=float)
+
+        if ally2enemy_ratio[1] == 0:
+            # no enemy in the grid cell, make sure our allies are *spaced out*
+            for other_ally, _ in troops:
+                if (other_ally == ally_pos).all():
+                    continue
+
+                other_ally, me = np.array(other_ally), ally_pos
+                dist2ally = np.linalg.norm(other_ally - me)
+
+                if dist2ally < 1:
+                    # ally within the same cell, REPELL!
+                    fvec += 10 * repelling_force(ally_pos, other_ally)
+                else:
+                    # SPACE OUT A BIT!
+                    fvec += repelling_force(ally_pos, other_ally)
         else:
-            ally_attr_scale = ally_attr_scale ** 2
+            # has enemy(s) within the grid cell
+            for other_soldier, pid in troops:
+                if not (other_soldier == ally_pos).all():
+                    attr_scale = ally_attr_scale if pid == self.me else enemy_attr_scale
+                    fvec += attr_scale * attractive_force(ally_pos, other_soldier)
 
-        attr_fvec = np.zeros((2,), dtype=float)
-        for other_soldier, pid in troops:
-            if (other_soldier != ally_pos).all():
-                attr_scale = ally_attr_scale if pid == self.me else enemy_attr_scale
-                attr_fvec += attr_scale * attractive_force(ally_pos, other_soldier)
-
-        angle = np.arctan2(attr_fvec[0], attr_fvec[1])
-
+        angle = np.arctan2(fvec[1], fvec[0])
         return (1, angle)
 
 class SpecialForce:
