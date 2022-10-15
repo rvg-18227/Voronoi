@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import colors
 from matplotlib.collections import LineCollection
+from scipy.spatial import KDTree
 from shapely.geometry import LineString, MultiPoint, Point, Polygon, box
 from shapely.ops import nearest_points, voronoi_diagram
 
@@ -104,6 +105,12 @@ class StateUpdate:
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
 
+        player_unit_idx_to_id = {
+            player: {idx: uid for idx, uid in enumerate(self.unit_id[player])}
+            for player in range(4)
+        }
+        player_kdtrees = {player: KDTree(self.unit_pos[player]) for player in range(4)}
+
         for tile_x in range(self.params.max_dim):
             for tile_y in range(self.params.max_dim):
                 tile_state = self.map_states[tile_x][tile_y]
@@ -115,20 +122,18 @@ class StateUpdate:
                 owning_player = tile_state - 1
 
                 # Find closest unit
-                tile_center = np.array([tile_x + 0.5, tile_y + 0.5])
-                unit_dists = [
-                    (unit_id, np.linalg.norm(unit_pos - tile_center))
-                    for unit_id, unit_pos in zip(
-                        self.unit_id[owning_player], self.unit_pos[owning_player]
-                    )
-                ]
-                closest_unit, _ = min(unit_dists, key=itemgetter(1))
+                # KDTree returns the index of the nearest point from the input list of points
+                _, closest_unit_idx = player_kdtrees[owning_player].query(
+                    (tile_x + 0.5, tile_y + 0.5)
+                )
+                # Convert that index to the unit id
+                closest_uid = player_unit_idx_to_id[owning_player][closest_unit_idx]
 
-                if not closest_unit in unit_to_owned[owning_player]:
-                    unit_to_owned[owning_player][closest_unit] = []
-                unit_to_owned[owning_player][closest_unit].append((tile_x, tile_y))
+                if not closest_uid in unit_to_owned[owning_player]:
+                    unit_to_owned[owning_player][closest_uid] = []
+                unit_to_owned[owning_player][closest_uid].append((tile_x, tile_y))
 
-                tile_to_unit[(tile_x, tile_y)] = (owning_player, closest_unit)
+                tile_to_unit[(tile_x, tile_y)] = (owning_player, closest_uid)
 
         return unit_to_owned, tile_to_unit
 
