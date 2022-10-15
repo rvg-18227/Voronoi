@@ -4,10 +4,9 @@ import pdb
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
-from operator import itemgetter
 from os import makedirs, remove
 from random import randint, uniform
-from typing import Tuple
+from typing import Callable, Tuple, TypeAlias
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -64,15 +63,18 @@ class StateUpdate:
     unit_id: list[list[str]]
     unit_pos: list[list[Point]]
     map_states: list[list[int]]
+    turn: int
 
     def __init__(
         self,
         params: GameParameters,
+        turn: int,
         unit_id: list[list[str]],
         unit_pos: list[list[Point]],
         map_states: list[list[int]],
     ):
         self.params = params
+        self.turn = turn
         self.unit_id = unit_id
         self.unit_pos = unit_pos
         self.map_states = map_states
@@ -601,10 +603,78 @@ class Attacker(Role):
         pass
 
 
+class RuleInputs:
+    logger: logging.Logger
+    params: GameParameters
+    update: StateUpdate
+    role_groups: dict[RoleType, list[Role]]
+
+    def __init__(
+        self,
+        logger: logging.Logger,
+        params: GameParameters,
+        update: StateUpdate,
+        role_groups: dict[RoleType, list[Role]],
+    ):
+        self.logger = logger
+        self.params = params
+        self.update = update
+        self.role_groups = role_groups
+
+    def debug(self, *args):
+        self.logger.info(" ".join(str(a) for a in args))
+
+
+class AllocationRules:
+    RuleFunc: TypeAlias = Callable[[RuleInputs, str], bool]
+
+    rules: list[RuleFunc] = []
+
+    def rule(self, rule_func: RuleFunc):
+        self.rules.append(rule_func)
+
+    def apply_rules(self, rule_inputs: RuleInputs, uid: str):
+        for rule_func in AllocationRules.rules:
+            if rule_func(rule_inputs, uid):
+                return
+        rule_inputs.debug("Failed to apply any rules to", uid)
+
+
+allocation_rules = AllocationRules()
+
+
+@allocation_rules.rule
+def populate_defenders(rule_inputs: RuleInputs, uid: str):
+    if (
+        rule_inputs.update.turn > 30
+        and len(rule_inputs.role_groups[RoleType.DEFENDER][0].units) < 20
+    ):
+        rule_inputs.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+        return True
+    return False
+
+
+@allocation_rules.rule
+def even_scouts_attackers(rule_inputs: RuleInputs, uid):
+    total_scouts = sum(
+        len(scouts.units) for scouts in rule_inputs.role_groups[RoleType.SCOUT]
+    )
+    total_attackers = sum(
+        len(attackers.units) for attackers in rule_inputs.role_groups[RoleType.ATTACKER]
+    )
+    if total_scouts >= total_attackers:
+        rule_inputs.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+    else:
+        rule_inputs.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
+    rule_inputs.debug("scout/attacker rule")
+    return True
+
+
 class Player:
     params: GameParameters
     logger: logging.Logger
     turn: int
+    known_units: set[str]
 
     def __init__(
         self,
@@ -636,6 +706,7 @@ class Player:
         self.logger = logger
         self.player_idx = player_idx
         self.turn = 0
+        self.known_units = set()
 
         # Game fundamentals
         self.params = GameParameters()
@@ -649,7 +720,6 @@ class Player:
 
         self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
         self.role_groups[RoleType.DEFENDER].append(
-            # RadialDefender(self.logger, self.params, radius=30)
             LatticeDefender(self.logger, self.params, 40)
         )
         self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
@@ -657,12 +727,6 @@ class Player:
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
-
-    def clamp(self, x, y):
-        return (
-            min(self.max_dim, max(self.min_dim, x)),
-            min(self.max_dim, max(self.min_dim, y)),
-        )
 
     def risk_distances(self, enemy_location, own_units):
         d_base = np.linalg.norm(np.subtract(self.params.home_base, enemy_location))
@@ -699,7 +763,7 @@ class Player:
             for player_units in unit_pos
         ]
 
-        update = StateUpdate(self.params, unit_id, unit_pos, map_states)
+        update = StateUpdate(self.params, self.turn, unit_id, unit_pos, map_states)
 
         own_units = list(update.own_units().items())
         enemy_unit_locations = [pos for _, pos in update.all_enemy_units()]
@@ -725,64 +789,12 @@ class Player:
             for uid in role.units
         )
         free_units = own_units - allocated_units
+        just_spawned = set(uid for uid in free_units if not uid in self.known_units)
+        idle_units = free_units - just_spawned
 
-        RING_SPACING = 5
-        MIN_RADIUS = 5
-        idle = 0
         for uid in free_units:
-            self.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
-        # for uid in free_units:
-        #     assigned = False
-
-        #     # TODO: framework for prioritizing allocation rules
-
-        #     # Currently assuming all defenders are RadialDefender
-        #     # Also assumes that defenders are ordered by priority for reinforcement
-        #     for ring in reversed(self.role_groups[RoleType.DEFENDER]):
-        #         target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
-        #         if len(ring.units) < target_density:
-        #             ring.allocate_unit(uid)
-        #             assigned = True
-
-        #     if assigned:
-        #         continue
-
-        #     last_ring: RadialDefender = self.role_groups[RoleType.DEFENDER][-1]
-        #     # (1/4 circle circumference) / (spacing between units) = units in ring
-        #     target_density = int((np.pi * last_ring.radius / 2) / RING_SPACING)
-        #     next_radius = last_ring.radius / 2
-        #     if len(last_ring.units) >= target_density and next_radius >= MIN_RADIUS:
-        #         self.debug(f"Creating new Defender ring with radius {next_radius}")
-        #         last_ring = RadialDefender(self.logger, self.params, next_radius)
-        #         self.role_groups[RoleType.DEFENDER].append(last_ring)
-
-        #         last_ring.allocate_unit(uid)
-        #         assigned = True
-
-        #     if assigned:
-        #         continue
-
-        #     total_scouts = sum(
-        #         len(scouts.units) for scouts in self.role_groups[RoleType.SCOUT]
-        #     )
-        #     total_attackers = sum(
-        #         len(attackers.units)
-        #         for attackers in self.role_groups[RoleType.ATTACKER]
-        #     )
-        #     if total_scouts >= total_attackers:
-        #         self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
-        #         assigned = True
-        #     else:
-        #         self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
-        #         assigned = True
-
-        #     if assigned:
-        #         continue
-
-        #     idle += 1
-
-        if idle > 0:
-            self.debug(f"Turn {self.turn}: {idle} idle units")
+            rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
+            allocation_rules.apply_rules(rule_inputs, uid)
 
         moves: list[tuple[float, float]] = []
         role_moves = {}
