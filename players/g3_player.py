@@ -25,7 +25,7 @@ SCOUT_BORDER_SCALE = 5.0
 SCOUT_ENEMY_BASE_SCALE = 50.0
 
 COOL_DOWN = 15
-CB_DURATION = 0  # days dedicated to border consolidation in each cycle
+CB_DURATION = 0 # days dedicated to border consolidation in each cycle
 CB_START = 35    # the day to start the first cycle of border consolidation
 
 class DensityMap:
@@ -328,9 +328,13 @@ class Player:
         else:
             return self._move_radially(pt, forward=False)
 
-    def send_to_border(self, unit_id: List[str], soldiers: List[Point], map_states: List[List[int]]) -> List[Tuple[float, float]]:
+    def send_to_border(self, scout_ids) -> List[Tuple[float, float]]:
         """Sends soldiers to consolidate our bolder."""
-        return [(0., 0.)] * len(soldiers)
+        border = self.get_border()
+        troops = np.delete(self.our_units, scout_ids, axis=0)
+        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=troops.shape[0], replace=False)]
+        targets = assign_by_ot(troops, selected_border)
+        return get_moves(troops, targets)
 
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -394,7 +398,10 @@ class Player:
             if self.day_n == self.cb_scheduled[1] - 1:
                 self.cb_scheduled += (COOL_DOWN + CB_DURATION)
 
-            return self.send_to_border(unit_id[self.us], unit_pos[self.us], map_states)
+            scout_ids = self.select_scouts()
+            defense_moves = self.send_to_border(scout_ids)
+            offense_moves = self.move_scouts(scout_ids)
+
         else:
             # MID_GAME: adjust formation based on opponents' positions
             self.debug(f'day {self.day_n}: cool down')
@@ -414,11 +421,11 @@ class Player:
             # As a first step, modify the function signatures to take in soldiers
             # merge the returned moves
 
-            # insert scout moves into all moves
-            all_moves = defense_moves
-            for i, scout in enumerate(scout_ids.tolist()):
-                all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
-            return all_moves
+        # insert scout moves into all moves
+        all_moves = defense_moves
+        for i, scout in enumerate(scout_ids.tolist()):
+            all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
+        return all_moves
 
     def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
         """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
@@ -617,13 +624,18 @@ def assign_by_ot(unit_pos, target_loc):
     assignment = ot.emd(a, b, M).argmax(axis=1) # OT linear program solver
     return target_loc[assignment]
 
-def get_moves(unit_pos: List[Tuple[float, float]], target_loc: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+def get_moves(unit_pos, target_loc) -> List[Tuple[float, float]]:
     """Returns a list of 2-tuple (dist, angle) required to move a list of points
     from @unit_pos to @target_loc.
     """
-    assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
-    np_unit_pos = np.array(unit_pos, dtype=float)
-    np_target_loc = np.array(target_loc, dtype=float)
+    if type(unit_pos) == list:
+        assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
+        np_unit_pos = np.array(unit_pos, dtype=float)
+        np_target_loc = np.array(target_loc, dtype=float)
+    else:
+        assert unit_pos.shape[0] == target_loc.shape[0], "get_moves: unit_pos and target_loc array length not the same"
+        np_unit_pos = unit_pos
+        np_target_loc = target_loc
 
     cord_diff = np_target_loc - np_unit_pos
     cord_diff_x = cord_diff[:, 0]
