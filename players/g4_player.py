@@ -1,4 +1,5 @@
 import logging
+import multiprocessing
 import pdb
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -36,6 +37,24 @@ class GameParameters:
     min_dim: int
     max_dim: int
     home_base: tuple[float, float]
+
+
+def get_nearest_unit(
+    args: tuple[tuple[int, int], int, KDTree, dict[int, str]]
+) -> tuple[tuple[int, int], int, str]:
+    pos, player, kdtree, idx_to_id = args
+    tile_x, tile_y = pos
+    # Find closest unit
+    # KDTree returns the index of the nearest point from the input list of points
+    _, closest_unit_idx = kdtree.query((tile_x + 0.5, tile_y + 0.5))
+    # Convert that index to the unit id
+    return pos, player, idx_to_id[closest_unit_idx]
+
+
+# Pool initialization must be below the declaration for get_nearest_unit
+THREADED = True
+if THREADED:
+    pool = multiprocessing.Pool(multiprocessing.cpu_count())
 
 
 class StateUpdate:
@@ -111,6 +130,7 @@ class StateUpdate:
         }
         player_kdtrees = {player: KDTree(self.unit_pos[player]) for player in range(4)}
 
+        work: list[tuple[tuple[int, int], int, KDTree, dict[int, str]]] = []
         for tile_x in range(self.params.max_dim):
             for tile_y in range(self.params.max_dim):
                 tile_state = self.map_states[tile_x][tile_y]
@@ -120,20 +140,27 @@ class StateUpdate:
 
                 # 1-4 -> 0-3
                 owning_player = tile_state - 1
-
-                # Find closest unit
-                # KDTree returns the index of the nearest point from the input list of points
-                _, closest_unit_idx = player_kdtrees[owning_player].query(
-                    (tile_x + 0.5, tile_y + 0.5)
+                work.append(
+                    (
+                        (tile_x, tile_y),
+                        owning_player,
+                        player_kdtrees[owning_player],
+                        player_unit_idx_to_id[owning_player],
+                    )
                 )
-                # Convert that index to the unit id
-                closest_uid = player_unit_idx_to_id[owning_player][closest_unit_idx]
 
-                if not closest_uid in unit_to_owned[owning_player]:
-                    unit_to_owned[owning_player][closest_uid] = []
-                unit_to_owned[owning_player][closest_uid].append((tile_x, tile_y))
+        if THREADED:
+            results = pool.map(get_nearest_unit, work)
+        else:
+            results = map(get_nearest_unit, work)
 
-                tile_to_unit[(tile_x, tile_y)] = (owning_player, closest_uid)
+        for result in results:
+            pos, owning_player, closest_uid = result
+            if not closest_uid in unit_to_owned[owning_player]:
+                unit_to_owned[owning_player][closest_uid] = []
+            unit_to_owned[owning_player][closest_uid].append(pos)
+
+            tile_to_unit[pos] = (owning_player, closest_uid)
 
         return unit_to_owned, tile_to_unit
 
