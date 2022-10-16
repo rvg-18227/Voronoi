@@ -306,6 +306,53 @@ class Player:
             in enumerate(unit_ids)
         }
     
+    def clamp_point_within_map(self, point: Point) -> Point:
+        x = min(99.9, max(0.1, point.x))
+        y = min(99.9, max(0.1, point.y))
+        return Point(x, y)
+
+    def platoon_unit_moves(self, platoon_id, intercept_pos) -> Dict[float, Tuple[float, float]]:
+        unit_ids = self.platoons[platoon_id]['unit_ids']
+        leader_pos = self.ally_units[unit_ids[0]]
+        left_flank_pos = self.ally_units[unit_ids[1]]
+        right_flank_pos = self.ally_units[unit_ids[2]] 
+        
+        # Generate moves based on path from leader to 1m past intercept point
+        chaser_to_intersect = LineString([leader_pos, intercept_pos])
+        chaser_to_intersect_dist = chaser_to_intersect.length
+        scale_factor = (chaser_to_intersect_dist + 2) / chaser_to_intersect_dist
+        scaled_chaser_to_intersect = scale(chaser_to_intersect, xfact=scale_factor, yfact=scale_factor, origin=leader_pos)
+        leader_dest_pos = scaled_chaser_to_intersect.interpolate(1)
+
+        # Flanks should aim for points past the leader's destination, to the left and right
+        leader_pos_to_flank_center = LineString([leader_pos, scaled_chaser_to_intersect.interpolate(3.5)])
+        if leader_dest_pos != intercept_pos:
+            left_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'left').boundary[1]
+            right_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'right').boundary[0]
+        else:
+            left_flank_dest_pos = leader_dest_pos
+            right_flank_dest_pos = leader_dest_pos
+
+        # Ensure that all moves stay within the map's bounds
+        leader_dest_pos = self.clamp_point_within_map(leader_dest_pos)
+        left_flank_dest_pos = self.clamp_point_within_map(left_flank_dest_pos)
+        right_flank_dest_pos = self.clamp_point_within_map(right_flank_dest_pos)
+
+        # The leader will wait for the flanks to get in position before moving out
+        if left_flank_pos.distance(left_flank_dest_pos) > 1.01 or right_flank_pos.distance(right_flank_dest_pos) > 1.01:
+            leader_dest_pos = leader_pos
+
+        moves = {}
+        for idx, uid in enumerate(unit_ids):
+            if idx == 0:
+                moves[uid] = (leader_pos.distance(leader_dest_pos), math.atan2(leader_dest_pos.y-leader_pos.y, leader_dest_pos.x-leader_pos.x))
+            elif idx == 1:
+                moves[uid] = (left_flank_pos.distance(left_flank_dest_pos), math.atan2(left_flank_dest_pos.y-left_flank_pos.y, left_flank_dest_pos.x-left_flank_pos.x))
+            elif idx == 2:
+                moves[uid] = (right_flank_pos.distance(right_flank_dest_pos), math.atan2(right_flank_dest_pos.y-right_flank_pos.y, right_flank_dest_pos.x-right_flank_pos.x))
+                            
+        return moves
+    
     def platoon_moves(self, unit_ids)  -> Dict[float, Tuple[float, float]]:
         moves = {}
 
@@ -313,43 +360,42 @@ class Player:
         drafted_unit_ids = [uid for platoon in self.platoons.values() for uid in platoon['unit_ids']]
         undrafted_unit_ids = [uid for uid in unit_ids if uid not in drafted_unit_ids]
         for unit_id in undrafted_unit_ids:
-            newest_platon_id = max(list(self.platoons.keys()))
-            newest_platoon = self.platoons[newest_platon_id]
-            if len(newest_platoon['unit_ids']) < 3:
-                newest_platoon['unit_ids'].append(unit_id)
+            # Replenish platoons that have lost units first
+            not_full_platoons = [p for p in self.platoons.values() if len(p['unit_ids'])<3]
+            if len(not_full_platoons) >= 1:
+                not_full_platoons[0]['unit_ids'].append(unit_id)
             else:
+                # Create a new platoon if all existing platoons are full
+                newest_platon_id = max(list(self.platoons.keys()))
                 self.platoons[newest_platon_id+1] = {'unit_ids': [unit_id], 'target': None}
 
-        for platoon in self.platoons.values():
+        for pid, platoon in self.platoons.items():
             # Remove killed units
             for uid in self.ally_killed_unit_ids:
                 if uid in platoon['unit_ids']:
                     platoon['unit_ids'].remove(uid)
             
-            # Remove target when it has been killed
+            # Remove target when it has been killed, a new target will be assigned
             if platoon['target'] in self.enemy_killed_unit_ids:
                 platoon['target'] = None
 
             # Assign targets for ready platoons
-            if not platoon['target']  and len(platoon['unit_ids']) == 3:
-                untargetted_enemy_unit_poss = [pos for uid, pos in self.enemy_units.items() if uid not in [p['target'] for p in self.platoons.values()]]
-                enemy_unit_points = MultiPoint(untargetted_enemy_unit_poss)
-
+            if not platoon['target'] and len(platoon['unit_ids']) == 3:
                 leader_point = self.ally_units[platoon['unit_ids'][0]]
-                nearest_enemy_point = nearest_points(leader_point, enemy_unit_points)[1]
-                platoon['target'] = list(self.enemy_units.keys())[list(self.enemy_units.values()).index(nearest_enemy_point)]
+                min_dist = math.inf
+                target_id = None
+                for pos, uid in [(pos, uid) for uid, pos in self.enemy_units.items() if uid not in [p['target'] for p in self.platoons.values()]]:
+                    dist = leader_point.distance(pos)
+                    if dist < min_dist:
+                        min_dist = dist
+                        target_id = uid
+                platoon['target'] = target_id
             
             # Generate moves for units in assigned platoons
-            elif platoon['target']:
-                platoon_unit_ids = platoon['unit_ids']
-                for uid in platoon_unit_ids:
-                    platoon_unit_idx = platoon_unit_ids.index(uid)
-                    intersept_angle = self.intercept_angle(platoon['target'], uid, platoon_unit_idx)
-                    if platoon_unit_idx == 0 and self.ally_units[platoon_unit_ids[1]] == self.get_home_coords():
-                        moves[uid] = (0, intersept_angle)
-                    else:
-                        moves[uid] = (1, intersept_angle)
-
+            elif platoon['target'] and len(platoon['unit_ids']) == 3:
+                intercept_point = self.intercept_point(platoon['target'], platoon['unit_ids'][0])
+                moves.update(self.platoon_unit_moves(pid, intercept_point))
+            
         return {int(uid): move for uid, move in moves.items()}
 
     def scout_moves(self, unit_ids, unit_pos) -> Dict[float, Tuple[float, float]]:
@@ -405,7 +451,7 @@ class Player:
         #print(self.scout)
         return {int(uid): move for uid, move in moves.items()}
 
-    def intercept_angle(self, target_unit_id, chaser_unit_id, platoon_unit_idx=None) -> float:
+    def intercept_point(self, target_unit_id, chaser_unit_id) -> float:
         target_pos = self.enemy_units[target_unit_id]
         target_prev_pos = self.enemy_units_yesterday[target_unit_id]
         target_vec = LineString([target_prev_pos, target_pos])
@@ -414,6 +460,7 @@ class Player:
         chaser_pos = self.ally_units[chaser_unit_id]
         chaser_vec = LineString([chaser_pos, (chaser_pos.x+1, chaser_pos.y)])
 
+        # Search for best intercept point by testing a variety of chaser angles    
         intersect_pos = target_pos
         if target_pos != target_prev_pos:
             best_dist = math.inf
@@ -421,22 +468,20 @@ class Player:
                 rotated_chaser_vec = rotate(chaser_vec, angle, origin=chaser_pos)
                 scaled_chaser_vec = scale(rotated_chaser_vec, xfact=100, yfact=100, origin=chaser_pos)
                 new_intersect_pos = scaled_chaser_vec.intersection(scaled_target_vec)
-                intersect_dist = chaser_pos.distance(new_intersect_pos)
-                if intersect_dist < best_dist and intersect_dist > 0:
-                    intersect_pos = new_intersect_pos
-                    best_dist = intersect_dist
-        
-        if target_pos != intersect_pos:
-            chaser_to_intersect = LineString([chaser_pos, intersect_pos])
-            left_flank = chaser_to_intersect.parallel_offset(4, 'left').boundary[1]
-            right_flank = chaser_to_intersect.parallel_offset(4, 'right').boundary[0]
+                chaser_to_intersect_dist = chaser_pos.distance(new_intersect_pos)
 
-            if platoon_unit_idx == 1:
-                intersect_pos = left_flank
-            elif platoon_unit_idx == 2:
-                intersect_pos = right_flank            
+                if chaser_to_intersect_dist < best_dist and chaser_to_intersect_dist > 0:
+                    intersect_pos = new_intersect_pos
+                    best_dist = chaser_to_intersect_dist
+
+            # If our target distance to intercept is much larger than the chaser distance to intercept,
+            # they are likely coming right for us, so we should aim for halfway between chaser and target
+            if target_pos.distance(intersect_pos) / chaser_pos.distance(intersect_pos) >= 10:
+                chaser_to_target = LineString([chaser_pos, target_pos])
+                intersect_pos = chaser_to_target.interpolate(chaser_pos.distance(target_pos)/2)
         
-        return math.atan2(intersect_pos.y-chaser_pos.y, intersect_pos.x-chaser_pos.x)
+        return intersect_pos
+
 
     def sentinel_moves(self, unit_pos, unit_id) -> Dict[float, Tuple[float, float]]:
 
