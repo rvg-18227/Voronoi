@@ -91,7 +91,7 @@ def to_polar(p):
 
 
 def normalize(v):
-    return v / np.linalg.norm(v)
+    return v / (np.linalg.norm(v) + EPSILON)
 
 
 def repelling_force(p1, p2) -> tuple[float, float]:
@@ -99,6 +99,10 @@ def repelling_force(p1, p2) -> tuple[float, float]:
     # Inverse magnitude: closer things apply greater force
     return dir * 1 / (mag + EPSILON)
 
+def repelling_force_stronger(p1, p2) -> tuple[float, float]:
+    dir, mag = force_vec(p1, p2)
+    # Inverse magnitude: closer things apply greater force
+    return dir * 1 / (mag + EPSILON)**2
 
 EASING_EXP = 5
 
@@ -308,7 +312,8 @@ class Scout(Role):
 class Attacker(Role):
     def __init__(self, logger, params):
         super().__init__(logger, params)
-        self.noise = dict()
+        self.pincer_force = dict()
+        self.pincer_balance_assignment = 0
 
     def get_centroid(self, units):
         """
@@ -325,6 +330,7 @@ class Attacker(Role):
     def _turn_moves(self, update, dead_units):
         ATTACK_INFLUENCE = 100
         AVOID_INFLUENCE = 300
+        SPREAD_INFLUENCE = 30
 
         moves = {}
         own_units = update.own_units()
@@ -353,19 +359,22 @@ class Attacker(Role):
             attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
 
             attack_repulsion_force = repelling_force(unit_pos, avoid)
+            
+            attack_unit_spread_force = self.attacker_spread_force(unit_pos, unit_id, own_units)
 
-            if unit_id not in self.noise:
-                noise_force = self.noise_force(attack_force)
-                self.noise[unit_id] = noise_force
+            if unit_id not in self.pincer_force:
+                pincer_spread_force = self.pincer_spread_force(attack_force)
+                self.pincer_force[unit_id] = pincer_spread_force
 
             # pdb.set_trace()
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            noise_influence = 1 / dist_to_avoid * 10
+            PINCER_INFLUENCE = 1 / dist_to_avoid * 30
 
             total_force = normalize(
-                attack_repulsion_force * AVOID_INFLUENCE
+                SPREAD_INFLUENCE * attack_unit_spread_force +
+                + AVOID_INFLUENCE * attack_repulsion_force
                 + ATTACK_INFLUENCE * attack_force
-                + noise_influence * self.noise[unit_id]
+                + PINCER_INFLUENCE * self.pincer_force[unit_id]
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -390,15 +399,19 @@ class Attacker(Role):
         unit_vec, _ = force_vec(start_point, target_pos)
         return target_pos, target_pos - unit_vec * 10
 
-    def noise_force(self, attack_force):
-        # generate noise force roughly in the same direction as attack force
-        # pdb.set_trace()
-        r = randint(0, 100)
+    def attacker_spread_force(self, my_pos, my_id, own_units):
+        #pdb.set_trace()
+        attacker_unit_forces = [
+            repelling_force_stronger(my_pos, ally_pos) for unit_id, ally_pos in own_units.items() if unit_id != my_id
+        ]
+        spread_force = np.add.reduce(attacker_unit_forces)
+        return normalize(spread_force)
+    
+    def pincer_spread_force(self, attack_force):
+        # alteranting left and right of the target point
         vec_perpendicular = attack_force.copy()
-        if r > 50:
-            vec_perpendicular[0] *= -1
-        else:
-            vec_perpendicular[1] *= -1
+        vec_perpendicular[self.pincer_balance_assignment] *= -1
+        self.pincer_balance_assignment = int(not bool(self.pincer_balance_assignment))
         return vec_perpendicular
 
     def attack_point(self, unit, target, closest_point):
@@ -560,6 +573,7 @@ class Player:
 
             # Currently assuming all defenders are RadialDefender
             # Also assumes that defenders are ordered by priority for reinforcement
+            '''
             for ring in reversed(self.role_groups[RoleType.DEFENDER]):
                 target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
                 if len(ring.units) < target_density:
@@ -602,6 +616,8 @@ class Player:
                 continue
 
             idle += 1
+            '''
+            self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
 
         if idle > 0:
             self.debug(f"Turn {self.turn}: {idle} idle units")
