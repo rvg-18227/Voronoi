@@ -22,7 +22,8 @@ DETECTION_RADIUS = 30
 DELTA_RADIUS = 0.1
 
 #SCISSOR STARTING OUTER RADIUS
-OUTER_RADIUS = 50
+OUTER_RADIUS = 55
+INNER_RADIUS = 50
 
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
@@ -30,6 +31,7 @@ REGION_INCREMENT = 0.4
 
 #priority of regions
 PRIORITY_ID = [4,2,0,1,3]
+PRIORITY_ID_INNER = [5,]
 
 class ScissorRegion:
     def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius):
@@ -43,20 +45,20 @@ class ScissorRegion:
 
         #0 means go to bound[0]
         #1 means go to bound[1]
-        self.direction = 0
-        self.target_point = self.bounds[0]
+        self.direction = (player_idx+1)%2
+        self.target_point = self.bounds[self.direction]
         self.id = id
         self.player_idx = player_idx
 
         self.radius = radius
 
         self.polygon = Polygon([bounds[0], bounds[1], delta_bounds[1], delta_bounds[0]])
-        self.detection_polygon = Polygon([delta_bounds[1], delta_bounds[0], detection_bounds[1], detection_bounds[0]])
+        self.detection_polygon = Polygon([get_home_coords(self.player_idx), detection_bounds[1], detection_bounds[0]])
+        print(self.detection_polygon)
 
     def update_polygons(self):
         self.polygon = Polygon([self.bounds[0], self.bounds[1], self.delta_bounds[1], self.delta_bounds[0]])
-        self.detection_polygon = Polygon([self.delta_bounds[1], self.delta_bounds[0], self.detection_bounds[1], self.detection_bounds[0]])
-
+        self.detection_polygon = Polygon([get_home_coords(self.player_idx), self.detection_bounds[1], self.detection_bounds[0]])
 
     def find_cp(self, bounds):
         return ((bounds[0][0]+bounds[1][0])/2 , (bounds[0][1]+bounds[1][1])/2)
@@ -70,10 +72,11 @@ class ScissorRegion:
         self.target_point = self.bounds[self.direction]
 
     def changeBounds(self, radius_increment):
-        home = self.get_home_coords()
+        home = get_home_coords(self.player_idx)
 
         increment_l = find_increment(radius_increment, self.angles[0])
         increment_r = find_increment(radius_increment, self.angles[1])
+
         self.radius += radius_increment
 
         #print(increment_l)
@@ -84,18 +87,7 @@ class ScissorRegion:
         self.detection_bounds = increment_bounds(self.detection_bounds, increment_l, increment_r)
 
         self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(self.bounds), self.find_cp(self.delta_bounds)))
-
         self.update_polygons()
-
-    def get_home_coords(self):
-        if self.player_idx == 0:
-            return Point(0.5, 0.5)
-        elif self.player_idx == 1:
-            return Point(0.5, 99.5)
-        elif self.player_idx == 2:
-            return Point(99.5, 99.5)
-        elif self.player_idx == 3:
-            return Point(99.5, 0.5)
 
     def __hash__(self):
         return hash(self.id)
@@ -157,11 +149,12 @@ def create_scissor_regions(radius, team_idx):
         dr = delta_bounds[i+1]
 
         dtct_l = detection_bounds[i]
-        dtct_r = detection_bounds[i]
+        dtct_r = detection_bounds[i+1]
 
         regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), PRIORITY_ID[i], team_idx, [a[i], a[i+1]], radius))
 
     return regions
+
 
 def sentinel_transform_moves(moves):
     moves_new = {}
@@ -291,7 +284,7 @@ class Player:
         return (dist, angle)
     
     def point_move_within_scissor(self, p1, p2):
-        dist = min(1, math.dist(p1,p2)-0.1)
+        dist = min(1, math.dist(p1,p2)-0.01)
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
 
@@ -487,6 +480,7 @@ class Player:
 
         moves = {}
         enemy_count = self.enemy_count_in_region(unit_pos)
+        #print(enemy_count)
 
         region_contains_id, uid_in_region = self.regions_contain_id(unit_pos, unit_id)
 
@@ -530,8 +524,7 @@ class Player:
 
                 #only expand when
                 #experimental expansion strategy
-                #if len(region_contains_id[region]) > enemy_count[region] + (region.radius//10)-3:
-                if False:
+                if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10):
 
                     #move region up by 0.5
                     region.changeBounds(REGION_INCREMENT)
