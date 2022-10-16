@@ -67,7 +67,16 @@ class StateUpdate:
             for enemy_id in range(4)
             if enemy_id != self.params.player_idx
         }
-
+    
+    '''
+    def enemy_i_units(self, enemy_idx):
+        return {
+            enemy_id: list(zip(self.unit_id[enemy_id], self.unit_pos[enemy_id]))
+            for enemy_id in range(4)
+            if enemy_id == enemy_idx
+        }
+    '''
+    
     def all_enemy_units(self):
         return [
             unit for enemy_units in self.enemy_units().values() for unit in enemy_units
@@ -310,10 +319,11 @@ class Scout(Role):
 
 
 class Attacker(Role):
-    def __init__(self, logger, params):
+    def __init__(self, logger, params, target_player):
         super().__init__(logger, params)
         self.pincer_force = dict()
         self.pincer_balance_assignment = 0
+        self.target_player = target_player
 
     def get_centroid(self, units):
         """
@@ -334,8 +344,10 @@ class Attacker(Role):
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.all_enemy_units()
-
+        enemy_units = update.enemy_units()
+        #pdb.set_trace()
+        enemy_units = enemy_units[self.target_player]
+        
         # TODO get attack_force
         homebase_mode = True
         # get where to initiate the attack
@@ -489,8 +501,16 @@ class Player:
         self.role_groups[RoleType.DEFENDER].append(
             RadialDefender(self.logger, self.params, radius=30)
         )
-        self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
+        
+        #pdb.set_trace()
+        enemy_player = set([0,1,2,3]) - set([player_idx])
+        for enemy_idx in enemy_player:
+            self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params, enemy_idx))
+            
         self.role_groups[RoleType.SCOUT].append(Scout(self.logger, self.params))
+        
+        # for simulating attacker behavior, delete when needed
+        self.attack_roll = 0
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -573,7 +593,6 @@ class Player:
 
             # Currently assuming all defenders are RadialDefender
             # Also assumes that defenders are ordered by priority for reinforcement
-            '''
             for ring in reversed(self.role_groups[RoleType.DEFENDER]):
                 target_density = int((np.pi * ring.radius / 2) / RING_SPACING)
                 if len(ring.units) < target_density:
@@ -606,7 +625,8 @@ class Player:
                 for attackers in self.role_groups[RoleType.ATTACKER]
             )
             if total_scouts >= total_attackers:
-                self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+                self.role_groups[RoleType.ATTACKER][self.attack_roll % 3].allocate_unit(uid)
+                self.attack_roll += 1
                 assigned = True
             else:
                 self.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
@@ -616,8 +636,9 @@ class Player:
                 continue
 
             idle += 1
-            '''
-            self.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+
+            
+            
 
         if idle > 0:
             self.debug(f"Turn {self.turn}: {idle} idle units")
@@ -625,6 +646,7 @@ class Player:
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
+            #pdb.set_trace()
             for role_group in self.role_groups[role]:
                 role_moves.update(role_group.turn_moves(update))
         for unit_id in unit_id[self.params.player_idx]:
