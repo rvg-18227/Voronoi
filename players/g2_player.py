@@ -27,11 +27,11 @@ INNER_RADIUS = 50
 
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
-REGION_INCREMENT = 0.1
+REGION_INCREMENT = 0.5
 
 #priority of regions
 PRIORITY_ID = [4,2,0,1,3]
-PRIORITY_ID_INNER = [5,]
+PRIORITY_ID_INNER = [9,7,5,6,8]
 
 class ScissorRegion:
     def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius):
@@ -54,7 +54,8 @@ class ScissorRegion:
 
         self.polygon = Polygon([bounds[0], bounds[1], delta_bounds[1], delta_bounds[0]])
         self.detection_polygon = Polygon([get_home_coords(self.player_idx), detection_bounds[1], detection_bounds[0]])
-        print(self.detection_polygon)
+
+        self.connected_scissor_region : ScissorRegion = None
 
     def update_polygons(self):
         self.polygon = Polygon([self.bounds[0], self.bounds[1], self.delta_bounds[1], self.delta_bounds[0]])
@@ -68,7 +69,17 @@ class ScissorRegion:
             self.direction = 1
         else:
             self.direction = 0
+
+        self.connected_scissor_region.changeDirectionHelper(self.direction)
         
+        self.target_point = self.bounds[self.direction]
+
+    def changeDirectionHelper(self, sister_direction):
+        if sister_direction == 0:
+            self.direction = 1
+        else:
+            self.direction = 0
+
         self.target_point = self.bounds[self.direction]
 
     def changeBounds(self, radius_increment):
@@ -94,6 +105,9 @@ class ScissorRegion:
 
     def __lt__(self, other):
         return self.id < other.id
+
+    def __eq__(self, other):
+        return self.id == other.id
 
     def __repr__(self):
         return str(self.id)
@@ -133,7 +147,7 @@ def create_bounds(radius_from_origin, team_idx):
 
     return bounds, angles
 
-def create_scissor_regions(radius, team_idx):
+def create_scissor_regions(radius, team_idx, prio_idx):
 
     bounds, a = create_bounds(radius, team_idx)
     delta_bounds, a = create_bounds(radius-DELTA_RADIUS, team_idx)
@@ -151,7 +165,7 @@ def create_scissor_regions(radius, team_idx):
         dtct_l = detection_bounds[i]
         dtct_r = detection_bounds[i+1]
 
-        regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), PRIORITY_ID[i], team_idx, [a[i], a[i+1]], radius))
+        regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), prio_idx[i], team_idx, [a[i], a[i+1]], radius))
 
     return regions
 
@@ -248,7 +262,14 @@ class Player:
         self.enemy_killed_unit_ids = []
 
         self.sent_radius = OUTER_RADIUS
-        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx)
+        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID)
+        self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER)
+
+        print(self.regions)
+        for idx in range(SCISSOR_ZONE_COUNT):
+            self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
+            self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
+
 
         #key: u_id, val: region
         #u_id is otw to region
@@ -285,7 +306,7 @@ class Player:
         return (dist, angle)
     
     def point_move_within_scissor(self, p1, p2):
-        dist = min(1, math.dist(p1,p2)-0.01)
+        dist = min(1, math.dist(p1,p2)-0.00001)
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
 
@@ -517,13 +538,15 @@ class Player:
                 continue
 
             #scissor motion
+            #if unit is in a point
             if u_id in uid_in_region:
 
                 region = uid_in_region[u_id]
 
                 #only expand when
                 #experimental expansion strategy
-                if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10):
+                #if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10):
+                if False:
 
                     #move region up by 0.5
                     region.changeBounds(REGION_INCREMENT)
@@ -535,6 +558,7 @@ class Player:
                             change_direction_region.append(region)
                         
                         moves[u] = self.point_move_within_scissor(curr, target)
+
                 else:
 
                     #if u_id first enters a region
@@ -588,10 +612,15 @@ class Player:
         for u_id, u_pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
             for r in self.regions:
                 if r.polygon.contains(u_pt):
-                    team_set[r].add(u_id)
-                    uid_in_region[u_id] = r
-                    continue
-        
+
+                    if u_id in self.unit_otw_region:
+                        if r == self.unit_otw_region[u_id]:
+                            team_set[r].add(u_id)
+                            uid_in_region[u_id] = r
+                    else:
+                        team_set[r].add(u_id)
+                        uid_in_region[u_id] = r
+
         return team_set, uid_in_region
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
