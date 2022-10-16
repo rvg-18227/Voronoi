@@ -6,7 +6,7 @@ from enum import Enum
 from glob import glob
 from os import makedirs, remove
 from random import randint, uniform
-from typing import Callable, Tuple, TypeAlias
+from typing import Callable, Optional, TypeAlias
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,11 +19,9 @@ from shapely.ops import nearest_points, voronoi_diagram
 
 from constants import dispute_color, player_color, tile_color
 
-EPSILON = 0.0000001
-
-
-def point_to_floats(p: Point):
-    return np.array([float(p.x), float(p.y)])
+# ==================
+# Game State Classes
+# ==================
 
 
 class GameParameters:
@@ -51,6 +49,7 @@ def get_nearest_unit(
 
 
 # Pool initialization must be below the declaration for get_nearest_unit
+# Pool initialization is global to re-use the same process pool
 THREADED = True
 if THREADED:
     pool = multiprocessing.Pool(multiprocessing.cpu_count())
@@ -64,6 +63,12 @@ class StateUpdate:
     unit_pos: list[list[Point]]
     map_states: list[list[int]]
     turn: int
+    cached_ownership = Optional[
+        tuple[
+            dict[int, dict[str, list[tuple[int, int]]]],
+            dict[tuple[int, int], tuple[int, str]],
+        ]
+    ]
 
     def __init__(
         self,
@@ -116,6 +121,9 @@ class StateUpdate:
         `unit_to_owned`: dict of dicts `player_idx -> unit_id -> [(tile_x, tile_y)]`
         `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
         """
+        if self.cached_ownership is not None:
+            return self.cached_ownership
+
         # player -> unit -> [(x, y)]
         unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
             0: {},
@@ -164,12 +172,20 @@ class StateUpdate:
 
             tile_to_unit[pos] = (owning_player, closest_uid)
 
-        return unit_to_owned, tile_to_unit
+        self.cached_ownership = (unit_to_owned, tile_to_unit)
+        return self.cached_ownership
 
 
 # =======================
 # Force Utility Functions
 # =======================
+EPSILON = 0.0000001
+
+
+def point_to_floats(p: Point):
+    return np.array([float(p.x), float(p.y)])
+
+
 def force_vec(p1, p2):
     """Vector direction and magnitude pointing from `p2` to `p1`"""
     v = p1 - p2
@@ -212,6 +228,11 @@ def ease_out(x):
         return 1
     else:
         return 1 - ((1 - x) ** EASING_EXP)
+
+
+# =================
+# Unit Role Classes
+# =================
 
 
 class RoleType(Enum):
@@ -603,6 +624,9 @@ class Attacker(Role):
         pass
 
 
+# =======================================
+# Dynamic Allocation Rules Infrastructure
+# =======================================
 class RuleInputs:
     logger: logging.Logger
     params: GameParameters
@@ -625,25 +649,67 @@ class RuleInputs:
         self.logger.info(" ".join(str(a) for a in args))
 
 
-class AllocationRules:
+class SpawnRules:
     RuleFunc: TypeAlias = Callable[[RuleInputs, str], bool]
+    """
+    A Rule application function.
 
-    rules: list[RuleFunc] = []
+    Return `True` if we should stop processing more rules, or `False` otherwise.
+    """
+
+    rules: list[RuleFunc]
+
+    def __init__(self):
+        self.rules = []
 
     def rule(self, rule_func: RuleFunc):
         self.rules.append(rule_func)
 
     def apply_rules(self, rule_inputs: RuleInputs, uid: str):
-        for rule_func in AllocationRules.rules:
+        for rule_func in self.rules:
             if rule_func(rule_inputs, uid):
                 return
         rule_inputs.debug("Failed to apply any rules to", uid)
 
 
-allocation_rules = AllocationRules()
+class ReallocationRules:
+    RuleFunc: TypeAlias = Callable[[RuleInputs], bool]
+    """
+    A Rule application function.
+
+    Return `True` if this rule did something, `False` otherwise.
+    """
+
+    MAX_ROUNDS = 10
+
+    rules: list[RuleFunc]
+
+    def __init__(self):
+        self.rules = []
+
+    def rule(self, rule_func: RuleFunc):
+        self.rules.append(rule_func)
+
+    def apply_rules(self, rule_inputs: RuleInputs):
+        continuing = True
+        rounds = 0
+        while continuing and rounds < self.MAX_ROUNDS:
+            rounds += 1
+            continuing = False
+            for rule_func in self.rules:
+                if rule_func(rule_inputs):
+                    continuing = True
 
 
-@allocation_rules.rule
+# =============================
+# Spawned Unit Allocation Rules
+# =============================
+# Order of rules declared below is their precedence
+# Higher up means higher precedence
+spawn_rules = SpawnRules()
+
+
+@spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     if (
         rule_inputs.update.turn > 30
@@ -654,7 +720,7 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
     return False
 
 
-@allocation_rules.rule
+@spawn_rules.rule
 def even_scouts_attackers(rule_inputs: RuleInputs, uid):
     total_scouts = sum(
         len(scouts.units) for scouts in rule_inputs.role_groups[RoleType.SCOUT]
@@ -670,6 +736,31 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid):
     return True
 
 
+# =======================
+# Role Reallocation Rules
+# =======================
+# Order of rules declared below is their precedence
+# Higher up means higher precedence
+reallocation_rules = ReallocationRules()
+
+
+@reallocation_rules.rule
+def remove_empty_attack_groups(rule_inputs: RuleInputs):
+    if any(
+        len(group.units) == 0 for group in rule_inputs.role_groups[RoleType.ATTACKER]
+    ):
+        rule_inputs.role_groups[RoleType.ATTACKER] = [
+            group
+            for group in rule_inputs.role_groups[RoleType.ATTACKER]
+            if len(group.units) > 0
+        ]
+        return True
+    return False
+
+
+# ======
+# Player
+# ======
 class Player:
     params: GameParameters
     logger: logging.Logger
@@ -791,11 +882,21 @@ class Player:
         free_units = own_units - allocated_units
         just_spawned = set(uid for uid in free_units if not uid in self.known_units)
         idle_units = free_units - just_spawned
+        if len(idle_units) > 0:
+            self.debug(f"{len(idle_units)} idle units!")
 
-        for uid in free_units:
-            rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
-            allocation_rules.apply_rules(rule_inputs, uid)
+        # Phase 1: apply spawn rules
+        # --------------------------
+        rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
+        for uid in just_spawned:
+            spawn_rules.apply_rules(rule_inputs, uid)
 
+        # Phase 2: apply reallocation rules
+        # ---------------------------------
+        reallocation_rules.apply_rules(rule_inputs)
+
+        # Phase 3: gather moves from roles
+        # --------------------------------
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
