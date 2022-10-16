@@ -25,6 +25,9 @@ DELTA_RADIUS = 0.1
 OUTER_RADIUS = 55
 INNER_RADIUS = 50
 
+OUTER_SPEED = 1
+INNER_SPEED = 0.6
+
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
 REGION_INCREMENT = 0.5
@@ -34,7 +37,7 @@ PRIORITY_ID = [4,2,0,1,3]
 PRIORITY_ID_INNER = [9,7,5,6,8]
 
 class ScissorRegion:
-    def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius):
+    def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius, speed):
 
         #bounds are the two points defining the scissor ends of the lines
         self.detection_bounds: Tuple[Tuple[float, float],Tuple[float, float]] = detection_bounds
@@ -56,6 +59,7 @@ class ScissorRegion:
         self.detection_polygon = Polygon([get_home_coords(self.player_idx), detection_bounds[1], detection_bounds[0]])
 
         self.connected_scissor_region : ScissorRegion = None
+        self.speed = speed
 
     def update_polygons(self):
         self.polygon = Polygon([self.bounds[0], self.bounds[1], self.delta_bounds[1], self.delta_bounds[0]])
@@ -70,7 +74,8 @@ class ScissorRegion:
         else:
             self.direction = 0
 
-        self.connected_scissor_region.changeDirectionHelper(self.direction)
+        if self.connected_scissor_region is not None:
+            self.connected_scissor_region.changeDirectionHelper(self.direction)
         
         self.target_point = self.bounds[self.direction]
 
@@ -147,7 +152,7 @@ def create_bounds(radius_from_origin, team_idx):
 
     return bounds, angles
 
-def create_scissor_regions(radius, team_idx, prio_idx):
+def create_scissor_regions(radius, team_idx, prio_idx, speed):
 
     bounds, a = create_bounds(radius, team_idx)
     delta_bounds, a = create_bounds(radius-DELTA_RADIUS, team_idx)
@@ -165,7 +170,7 @@ def create_scissor_regions(radius, team_idx, prio_idx):
         dtct_l = detection_bounds[i]
         dtct_r = detection_bounds[i+1]
 
-        regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), prio_idx[i], team_idx, [a[i], a[i+1]], radius))
+        regions.append(ScissorRegion((left_bound, right_bound), (dl, dr), (dtct_l, dtct_r), prio_idx[i], team_idx, [a[i], a[i+1]], radius, speed))
 
     return regions
 
@@ -262,13 +267,13 @@ class Player:
         self.enemy_killed_unit_ids = []
 
         self.sent_radius = OUTER_RADIUS
-        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID)
-        self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER)
+        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID, OUTER_SPEED)
+        self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
 
         print(self.regions)
         for idx in range(SCISSOR_ZONE_COUNT):
             self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
-            self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
+            #self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
 
 
         #key: u_id, val: region
@@ -305,8 +310,8 @@ class Player:
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
     
-    def point_move_within_scissor(self, p1, p2):
-        dist = min(1, math.dist(p1,p2)-0.00001)
+    def point_move_within_scissor(self, p1, p2, max_dist):
+        dist = min(max_dist, math.dist(p1,p2)-0.00001)
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
 
@@ -576,7 +581,7 @@ class Player:
                     if math.dist(target, curr) <= 1:
                         change_direction_region.append(region)
 
-                    moves[u_id] = self.point_move_within_scissor(curr, target)
+                    moves[u_id] = self.point_move_within_scissor(curr, target, region.speed)
 
             #if predefined from previous turn
             #move to point in region
