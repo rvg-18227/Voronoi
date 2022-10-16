@@ -2,16 +2,17 @@ from abc import ABC, abstractmethod
 from functools import reduce
 import logging
 import math
-import os
-import pickle
 from typing import Tuple, List, Dict
 import time
 
 import numpy as np
-from shapely.geometry import Point
-from sklearn.cluster import KMeans
 import ot
+from shapely.geometry import Point
 
+
+# -----------------------------------------------------------------------------
+#   Player Parameters
+# -----------------------------------------------------------------------------
 
 LOG_LEVEL = logging.DEBUG
 
@@ -28,6 +29,111 @@ SCOUT_ENEMY_BASE_SCALE = 50.0
 COOL_DOWN = 5
 CB_DURATION = 5 # days dedicated to border consolidation in each cycle
 CB_START = 35    # the day to start the first cycle of border consolidation
+
+
+# -----------------------------------------------------------------------------
+#   Custom Types
+# -----------------------------------------------------------------------------
+
+Tid = str
+Uid = int
+Upos = Tuple[float, float]
+Move = Tuple[Uid, Upos]
+
+
+# -----------------------------------------------------------------------------
+#   Role Interface & Template 
+# -----------------------------------------------------------------------------
+
+class Player(ABC):
+    map_states: np.ndarray
+    homebase: np.ndarray
+    enemy_bases: np.ndarray
+    our_units: np.ndarray
+    enemy_units: np.ndarray
+
+    @abstractmethod
+    def play(self):
+        pass
+
+
+class Role(ABC):
+    @abstractmethod
+    def select(self):
+        pass
+
+    @abstractmethod
+    def move(self) -> List[Move]:
+        pass
+
+
+class RoleTemplate(Role):
+    _logger: logging.Logger
+    _player: Player
+    _name:   Tid
+
+    def __init__(self, logger: logging.Logger, player: Player, name: Tid):
+        self._player = player
+        self._name = name
+        self._logger = logger
+
+    def _debug(self, *args):
+        self._logger.debug(
+            f"[ {self._name} ] " + " ".join(str(a) for a in args))
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def player(self):
+        return self._player
+
+
+# -----------------------------------------------------------------------------
+#   Soldier Allocation, Deallocation, Coordination Framework
+# -----------------------------------------------------------------------------
+
+class ResourcePool:
+    def __init__(self, player: Player):
+        self.player = player
+        self.unit_to_team_dict = {}
+        self.team_to_unit_dict = {}
+    
+    # team_id = 'team''number' i.e. specialforce1
+
+    def get_team_ids(self, team_id: Tid) -> List[Uid]:
+        pass
+
+    def get_team(self, unit_id: Uid) -> Tid:
+        pass
+
+    def is_dead(self, unit_id: Uid) -> bool:
+        pass
+
+    def get_team_casualties(self, team_id: Tid) -> List[Uid]:
+        pass
+
+    def get_free_units(self) -> List[Uid]:
+        pass
+
+    def claim_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
+        """Returns list of units unable to be claimed."""
+    
+    def release_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
+        """"Returns list of units who weren't successfully fired. They were not on the team in the first place"""
+    
+    def update_state(self):
+
+        pass
+
+    def get_positions(self, units: List[Uid]) -> List[List[float]]:
+        pass
+
+
+# -----------------------------------------------------------------------------
+#   Enemy Pressure Estimator(s)
+# -----------------------------------------------------------------------------
 
 class DensityMap:
 
@@ -231,113 +337,20 @@ class DensityMap:
         angle = np.arctan2(fvec[1], fvec[0])
         return (1, angle)
 
-        attr_fvec = np.zeros((2,), dtype=float)
-        for other_soldier, pid in troops:
-            if not (other_soldier == ally_pos).all():
-                attr_scale = ally_attr_scale if pid == self.me else enemy_attr_scale
-                attr_fvec += attr_scale * attractive_force(ally_pos, other_soldier)
 
-        angle = np.arctan2(attr_fvec[1], attr_fvec[0])
+# -----------------------------------------------------------------------------
+#   Role Implementations
+# -----------------------------------------------------------------------------
 
+class DefaultSoldier(RoleTemplate):
+    def __init__(self, logger: logging.Logger, player: Player, name: Tid, angles: List[float]):
+        super().__init__(logger, player, name)
 
-class Player:
-    def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
-                 player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
-            -> None:
-        """Initialise the player with given skill.
-
-            Args:
-                rng (np.random.Generator): numpy random number generator, use this for same player behavior across run
-                logger (logging.Logger): logger use this like logger.info("message")
-                total_days (int): total number of days, the game is played
-                spawn_days (int): number of days after which new units spawn
-                player_idx (int): index used to identify the player among the four possible players
-                spawn_point (sympy.geometry.Point2D): Homebase of the player
-                min_dim (int): Minimum boundary of the square map
-                max_dim (int): Maximum boundary of the square map
-                precomp_dir (str): Directory path to store/load pre-computation
-        """
-
-        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-
-        # # precompute check
-        # if os.path.isfile(precomp_path):
-        #     # Getting back the objects:
-        #     with open(precomp_path, "rb") as f:
-        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
-        # else:
-        #     # Compute objects to store
-        #     self.obj0, self.obj1, self.obj2 = _
-
-        #     # Dump the objects
-        #     with open(precomp_path, 'wb') as f:
-        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
-
-        self.rng = rng
-        self.logger = logger
-        self.logger.setLevel(LOG_LEVEL)
-
-        self.us = player_idx
-        self.homebase = np.array(spawn_point)
-        self.enemy_bases = np.delete(np.array([[0.5, 0.5], [0.5, 99.5], [99.5, 99.5], [99.5, 0.5]]), self.us, axis=0)
-        self.day_n = 0
-
-        self.our_units = None
-        self.enemy_units = None
-        self.enemy_offsets = None
-        self.map_states = None
-        self.border = None
-
-        self.target_loc = []
-
-        self.initial_radius = 35
-        self.num_scouts = 3
-
-        base_angles = get_base_angles(player_idx)
-        outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=int(self.initial_radius * 2 / 1.4))
         self.counter = 0
-        self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
+        self.angles = angles
+        self.unit_pos = []
 
-        self.cb_scheduled = np.array([CB_START, CB_START + CB_DURATION])
-
-        # compute special forces metadata
-        self.total_lifetime_units = total_days // spawn_days
-        self.units_by_day_50 = 50 // spawn_days
-        self.sf_units = self.total_lifetime_units / 5
-        self.sf_units_per_team = max(self.sf_units // 5, 10)
-        self.sf_units_per_team = min(self.sf_units_per_team, self.sf_units)
-
-        # SAMPLE SQUAD
-        '''
-        self.special_forces = [SpecialForce(self.logger, self.us, id=i, team_size=13) for i in range(1)]
-        self.special_forces[0].set_target_enemy([20, 25])'''
-        # round down sf_units to nearest multiple of sf_units per team
-        self.sf_units -= self.sf_units % self.sf_units_per_team
-        self.sf_teams = self.sf_units // self.sf_units_per_team
-
-    def debug(self, *args):
-        self.logger.info(" ".join(str(a) for a in args))
-    
-    def get_radius(self, points):
-        """Returns the radial distance of our soldier at @point to our homebase."""
-        return np.sqrt(((points - self.homebase) ** 2).sum(axis=1))
-
-    def push_v2(self, scout_ids) -> List[Tuple[float, float]]:
-        allies = np.delete(self.our_units, scout_ids, axis=0)  # not using slicing because scout_ids could be non-consecutive
-
-        pressure_levels = [
-            self.d.pressure_level(tuple(pos))
-            for pos in allies
-        ]
-        soldier_moves = [
-            self._push_radially(allies[i], plevel=plevel)
-            if plevel != PRESSURE_MID else self.d.suggest_move(allies[i])
-            for i, plevel in enumerate(pressure_levels)
-        ]
-
-        return soldier_moves
-
-    def _move_radially(self, pt: List[float], forward=True) -> Tuple[float, float]:
+    def _move_radially(self, pt: List[float], forward=True) -> Upos:
         """Moves @pt radially away from homebase, returns a tuple (distance, angle)
         to move the point.
         
@@ -346,18 +359,19 @@ class Player:
 
         If @forward is True, move away from the homebase. Otherwise, towards the homebase.
         """
-        direction = 1 if forward else -1
+        homebase = self.player.homebase
 
-        if (pt == self.homebase).all():
-            angle = self.midsorted_outer_wall_angles[self.counter % len(self.midsorted_outer_wall_angles)]
+        direction = 1 if forward else -1
+        if (pt == homebase).all():
+            angle = self.angles[self.counter % len(self.angles)]
             self.counter += 1
         else:
-            towards_x, towards_y = np.array(pt) - np.array(self.homebase)
+            towards_x, towards_y = np.array(pt) - np.array(homebase)
             angle = np.arctan2(towards_y, towards_x)
         
         return (direction, angle)
 
-    def _push_radially(self, pt: List[float], plevel=False) -> Tuple[float, float]:
+    def _push_radially(self, pt: List[float], plevel=False) -> Upos:
         """Push, stay or retreat based on the pressure level, returns a tuple
         (distance, angle) to move the point.
         """
@@ -369,245 +383,100 @@ class Player:
         else:
             return self._move_radially(pt, forward=False)
 
-    def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
-        """Function which based on current game state returns the distance and angle of each unit active on the board
+    def select(self):
+        idx_taken = self.player.scout_team.unit_idx  # TODO: change later
+        self.unit_pos = np.delete(self.player.our_units, idx_taken, axis=0)
 
-                Args:
-                    unit_id (list(list(str))): contains the ids of each player's units (unit_id[player_idx][x])
-                    unit_pos (list(list(shapely.geometry.Point))): contains the position of each unit currently present on the map
-                                                    (unit_pos[player_idx][x])
-                    map_states (list(list(int)): contains the state of each cell, using the x, y coordinate system
-                                                    (map_states[x][y])
-                    current_scores (list(int)): contains the number of cells currently occupied by each player
-                                                    (current_scores[player_idx])
-                    total_scores (list(int)): contains the cumulative scores up until the current day
-                                                    (total_scores[player_idx]
+    def move(self) -> List[Move]:
+        dmap = self.player.d
+        allies = self.unit_pos
 
-                Returns:
-                    List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
-                                                move each unit of the player
-                """
+        pressure_levels = [
+            dmap.pressure_level(tuple(pos))
+            for pos in allies
+        ]
+        soldier_moves = [
+            self._push_radially(allies[i], plevel=plevel)
+            if plevel != PRESSURE_MID else dmap.suggest_move(allies[i])
+            for i, plevel in enumerate(pressure_levels)
+        ]
 
-        self.day_n += 1
+        return soldier_moves
 
-        self.map_states = np.array(map_states) - 1
 
-        float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
-        self.enemy_offsets = np.array([len(unit_pos[i]) for i in range(4) if i != self.us])
-        self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
-        self.our_units = np.array(float_unit_pos[self.us])
-        self.our_unit_ids = np.array(unit_id[self.us], dtype=int)
+class Scouts(RoleTemplate):
+    def __init__(self, logger: logging.Logger, player: Player, name: Tid, size: int):
+        super().__init__(logger, player, name)
 
-        # if self.us == 0:
-        #     np.save(open('border.npy', 'wb'), self.get_border())
-        #     np.save(open('units.npy', 'wb'), self.out_units)
+        self.target_size = size
+        self.actual_size = 0
 
-        self.debug()
-        self.debug(f'unit_ids: {unit_id[self.us]}')
-        self.debug(f'len(unit_pos): {len(unit_pos[self.us])}, len(unit_ids): {len(unit_id[self.us])}')
+        self.unit_idx = []
+        self.unit_pos = []
 
-        self.d = DensityMap(self.us, float_unit_pos)
-        self.debug(f'density map: {self.d.dmap.T}')
-        self.debug(f'average neighbor density: {self.d.ndmap.T}')
+    def _get_clusters(self, ally_units):
+        enemy_units = self.player.enemy_units
 
-        # TODO:
-        # 1. maybe a template system: specify soldier ids, and logic
-        # 2. internally, return ('unit_id', moves), in the end, concatenate all, sort them by unit_id
-        #    and transform them to List[Tuple[float, float]]
-        # 3. things to think about: is it worth the effort to create this system, given what we want to do?
+        # change to random selection to speed up
+        num_enemies = enemy_units.shape[0]
+        num_allies = ally_units.shape[0]
 
-        # SAMPLE SQUAD
-        '''
-        if self.day_n <= 20:
-            self.debug(f'day {self.day_n}: form special forces')
-            special_force_unit_idxs = self.special_forces[0].get_unit_idxs()
-            # print(special_force_unit_idxs)
-            self.special_forces[0].update_state([shapely_pts_to_tuples(unit_pos[self.us])[i] for i in special_force_unit_idxs])
+        enemy_clusters = enemy_units[np.random.choice(np.arange(num_enemies), min(num_enemies, 50), replace=False)]
+        ally_clusters = ally_units[np.random.choice(np.arange(num_allies), min(num_allies, 15), replace=False)]
 
-            if not self.special_forces[0].is_team_full():
-                self.special_forces[0].add_unit(unit_idx = self.day_n)
-            
-            special_force_moves = self.special_forces[0].move()
+        return enemy_clusters, ally_clusters
+
+    def _explore(self, scout_unit, enemy_clusters, ally_clusters):
+        # player attributes
+        map_states = self.player.map_states
+        homebase = self.player.homebase
+        enemy_bases = self.player.enemy_bases
+
+        # push and pull factors
+        explore_force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters)
+        homebase_force = inverse_force((scout_unit - homebase).reshape(1, 2))
+        border_repelling_force = border_repulsion(scout_unit, xmax=map_states.shape[0], ymax=map_states.shape[1])
+        enemy_base_attr = enemy_base_attraction(scout_unit, enemy_bases)
         
-        else:
-            special_force_moves = self.special_forces[0].move()
-        
-        ret = [(0.0, 0.0) for _ in range(len(unit_pos[self.us]))]
+        # compute aggregate force
+        force = (
+            explore_force                               +
+            border_repelling_force * SCOUT_BORDER_SCALE +
+            homebase_force * SCOUT_HOMEBASE_SCALE       +
+            enemy_base_attr * SCOUT_ENEMY_BASE_SCALE
+        )
 
-        if special_force_moves != None:
-            for unit_idx, unit_move in special_force_moves:
-                ret[unit_idx] = unit_move
-        else:
-            print("special_force_moves is none")
-        #print(self.special_forces[0].get_unit_idxs())
-        print(ret)
-        return ret'''
-        # EARLY GAME: form a 2-layer wall
-        if self.day_n < self.initial_radius:
-            self.debug(f'day {self.day_n}: form initial wall')
+        return np.array([1, np.arctan2(force[1], force[0])])
 
-            while len(unit_id[self.us]) > len(self.target_loc):
-                # add new target_locations
-                self.target_loc.append(
-                    self.order2coord([self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]))
-        
-            return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
-        elif self.day_n >= self.cb_scheduled[0] and self.day_n < self.cb_scheduled[1]:
-            self.debug(f'day {self.day_n}: consoldiate border')
-
-            if self.day_n == self.cb_scheduled[0] or (CB_DURATION >= 10 and self.day_n == self.cb_scheduled[0] + CB_DURATION // 2):
-                self.border = self.get_border()
-
-            if self.day_n == self.cb_scheduled[1] - 1:
-                self.cb_scheduled += (COOL_DOWN + CB_DURATION)
-            
-            scout_ids = self.select_scouts()
-            defense_moves = self.send_to_border(scout_ids, self.border)
-            offense_moves = self.move_scouts(scout_ids)
-
-        else:
-            # MID_GAME: adjust formation based on opponents' positions
-            self.debug(f'day {self.day_n}: cool down')
-
-            scout_ids = self.select_scouts() # IMPORTANT: must be sorted so that we can map them back later
-
-            start = time.time()
-            defense_moves = self.push_v2(scout_ids)
-            self.debug(f'Defense: {time.time()-start}s')
-            
-            start = time.time()
-            offense_moves = self.move_scouts(scout_ids)
-            self.debug(f'Offense: {time.time()-start}s')
-
-
-            # TODO
-            # As a first step, modify the function signatures to take in soldiers
-            # merge the returned moves
-
-        # insert scout moves into all moves
-        all_moves = defense_moves
-        for i, scout in enumerate(scout_ids.tolist()):
-            all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
-        return all_moves
-
-    def order2coord(self, order: Tuple[float, float]) -> Tuple[float, float]:
-        """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
-        dist, angle = order
-        x = self.homebase[0] + dist * math.cos(angle)
-        y = self.homebase[1] + dist * math.sin(angle)
-        return (x, y)
-
-    def select_scouts(self):
+    def select(self):
         """
         Dynamically select scouts based on distance from homebase.
         But we want them evenly spread out, so I changed it back to original until I figure out how to do it
         """
-        # n = min(self.our_units.shape[0]//2, self.num_scouts)
-        # dist = ((self.homebase - self.our_units) ** 2).sum(axis=1)
-        # candidate_ids = np.argpartition(dist, -n*2)[-n*2:]
-        # scout_ids = np.sort(np.random.choice(candidate_ids, size=n, replace=False))
-        scout_ids = np.arange(min(self.our_units.shape[0], self.num_scouts))
-        return scout_ids
 
-    def send_to_border(self, scout_ids, border) -> List[Tuple[float, float]]:
-        """Sends soldiers to consolidate our border."""
-        troops = np.delete(self.our_units, scout_ids, axis=0)
-        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
-        targets = assign_by_ot(troops, selected_border)
-        return get_moves(troops, targets)
+        self._debug("Scouts.select")
+        self.actual_size = min(self.player.our_units.shape[0], self.target_size)
+        self.unit_idx = np.arange(self.actual_size)
+        self.unit_pos = self.player.our_units[self.unit_idx]
 
+    def move(self) -> List[Move]:
 
+        self._debug("Scouts.move")
 
-    def get_border(self):
-        """Get border of our territory"""
-        # trace along x axis to find the starting point
-        if self.us < 2: # 0, 1
-            for i in range(100):
-                if self.map_states[i, 99*self.us] != self.us:
-                    pt = (i-1, 99*self.us)
-                    break
-        else: # 2, 3
-            for i in range(100):
-                if self.map_states[99-i, 99*(3-self.us)] != self.us:
-                    pt = (99-i+1, 99*(3-self.us))
-                    break
+        scout_units = self.unit_pos
+        ally_units = np.delete(self.player.our_units, self.unit_idx, axis=0)
+        enemy_units = self.player.enemy_units
 
-        border = set()
-        self._trace_border(pt, border)
-
-        # remove pts on edge of map (i.e., not on frontline)
-        frontline = []
-        for pt in border:
-            if not self._on_edge(pt):
-                frontline.append(pt)
-        return np.array(frontline)
-
-    def _trace_border(self, curr_pt, border_pts):
-        """From a point, recurse through neighbors to find all border cells"""
-        if curr_pt in border_pts:
-            return
-        else:
-            border_pts.add(curr_pt)
-
-        # check all 8 neighbors
-        xmax, ymax = self.map_states.shape
-        for x in range(3):
-            for y in range(3):
-                neighbor = (max(min(curr_pt[0]-1+x, xmax-1), 0), 
-                            max(min(curr_pt[1]-1+y, ymax-1), 0))
-                if neighbor != curr_pt and (self._on_border(neighbor) or self._on_edge(neighbor)):
-                    self._trace_border(neighbor, border_pts)
-
-    def _on_border(self, pt):
-        """Check if given point is on the border"""
-        # currently ignoring disputed cells
-        if self.map_states[pt] != self.us: 
-            return False
-
-        xmax, ymax = self.map_states.shape
-        neighbors = np.array([[min(pt[0]+1, xmax-1), pt[1]], 
-            [max(pt[0]-1, 0), pt[1]],
-            [pt[0], min(pt[1]+1, ymax-1)],
-            [pt[0], max(pt[1]-1, 0)]])
-        return any(self.map_states[neighbors[:, 0], neighbors[:, 1]] != self.us)
-
-    def _on_edge(self, pt):
-        """Check if given point is on the edge of map"""
-        if self.map_states[pt] != self.us: 
-            return False
-        xmax, ymax = self.map_states.shape
-        return (pt[0] in [0, xmax-1] or pt[1] in [0, ymax-1])
-
-    def _explore(self, scout_unit, enemy_clusters, ally_clusters):
-        homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
-        force = exploration_force(scout_unit, enemy_clusters, ally_pts=ally_clusters) \
-            + SCOUT_BORDER_SCALE * border_repulsion(scout_unit, xmax=self.map_states.shape[0], ymax=self.map_states.shape[1]) \
-            + SCOUT_HOMEBASE_SCALE * homebase_force \
-            + SCOUT_ENEMY_BASE_SCALE * enemy_base_attraction(scout_unit, self.enemy_bases)
-        return np.array([1, np.arctan2(force[1], force[0])])
-
-    def _get_clusters(self, ally_units):
-        # keep this incase we need it later
-        # enemy_k = min(50, math.ceil(self.enemy_units.shape[0]/2))
-        # enemy_clusters = KMeans(n_clusters=enemy_k).fit(self.enemy_units).cluster_centers_
-        # ally_k = min(15, math.ceil(ally_units.shape[0]/2))
-        # ally_clusters = KMeans(n_clusters=ally_k).fit(ally_units).cluster_centers_
-
-        # change to random selection to speed up
-        enemy_clusters = self.enemy_units[np.random.choice(np.arange(self.enemy_units.shape[0]), min(self.enemy_units.shape[0], 50), replace=False)]
-        ally_clusters = ally_units[np.random.choice(np.arange(ally_units.shape[0]), min(ally_units.shape[0], 15), replace=False)]
-        return enemy_clusters, ally_clusters
-
-    def move_scouts(self, scout_ids):
-        scout_units = self.our_units[scout_ids]
-        scout_moves = np.zeros_like(scout_units, dtype=float)
-        # safety check
-        ally_units = np.delete(self.our_units, scout_ids, axis=0)
+        # compute ally and enemey distances
         ally_dist = ((scout_units.reshape(-1, 1, 2) - ally_units.reshape(1, -1, 2)) ** 2).sum(axis=2)
+        enemy_dist = ((scout_units.reshape(-1, 1, 2) - enemy_units.reshape(1, -1, 2)) ** 2).sum(axis=2)
+        
         min_ally_id = ally_dist.argmin(axis=1)
-        min_enemy_dist = ((scout_units.reshape(-1, 1, 2) - self.enemy_units.reshape(1, -1, 2)) ** 2).sum(axis=2).min(axis=1)
+        min_enemy_dist = enemy_dist.min(axis=1)
 
-        for i in range(scout_units.shape[0]):
+        # compute moves for each scout
+        scout_moves = np.zeros_like(scout_units, dtype=float)
+        for i in range(self.actual_size):
             if ally_dist[i, min_ally_id[i]] >= min_enemy_dist[i] * 2:
                 # retreat
                 to_x, to_y = ally_units[min_ally_id[i]] - scout_units[i]
@@ -620,278 +489,16 @@ class Player:
         return ndarray_to_moves(scout_moves)
 
 
-# -----------------------------------------------------------------------------
-#   Force (NumPy)
-# -----------------------------------------------------------------------------
-def exploration_force(curr_pt, enemy_pts, ally_pts=None):
-    if ally_pts is None:
-        ally_force = 0
-    else:
-        ally_v = curr_pt - ally_pts
-        ally_force = inverse_force(ally_v)
-    enemy_v = curr_pt - enemy_pts
-    enemy_force = inverse_force(enemy_v)
-    return ally_force + enemy_force
+class MacroArmy(RoleTemplate):
 
-def border_repulsion(curr_pt, xmax, ymax):
-    border_pts = np.array([[0, curr_pt[1]], [xmax, curr_pt[1]], [curr_pt[0], 0], [curr_pt[0], ymax]])
-    border_v = curr_pt - border_pts
-    return inverse_force(border_v)
+    def __init__(self, logger, player, name: Tid, resource: ResourcePool):
+        super().__init__(logger, player, name)
 
-def enemy_base_attraction(curr_pt, enemy_bases):
-    """Squared inverse attraction to enemy homebases so that scouts attack enemey base only in proximity"""
-    nearest_base = enemy_bases[((curr_pt - enemy_bases) ** 2).sum(axis=1).argmax()]
-    v = nearest_base - curr_pt
-    return inverse_force_cubic(v)
-
-def inverse_force(v):
-    mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True)) + 1e-7
-    force = (v / mag / mag).sum(axis=0)
-    return force
-
-def inverse_force_cubic(v):
-    mag = np.sqrt((v ** 2).sum()) + 1e-7
-    force = v / mag / (mag ** 3)
-    return force
-
-
-# -----------------------------------------------------------------------------
-#   Force
-# -----------------------------------------------------------------------------
-# NOTE: The code below are referenced from Group 4
-
-def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[float], float]:
-    v = np.array(p1) - np.array(p2)
-    mag = np.linalg.norm(v)
-    unit = v / mag
-    return unit, mag
-
-def repelling_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
-    dir, mag = force_vec(p1, p2)
-    # Inverse magnitude: closer things apply greater force
-    return dir * 1 / (mag)
-
-def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, float]) -> List[float]:
-    return np.add.reduce([repelling_force(receiver, x) for x in pts])
-
-def reactive_force(fvec: List[float]) -> List[float]:
-    return fvec * (-1.)
-
-def attractive_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
-    return reactive_force(repelling_force(p1, p2))
-
-def get_pressure_level(force: List[float]) -> int:
-    p = np.linalg.norm(force)
-
-    if p <= PRESSURE_LO_THRESHOLD:
-        return PRESSURE_LO
-    elif p > PRESSURE_LO_THRESHOLD and p < PRESSURE_HI_THRESHOLD:
-        return PRESSURE_MID
-    else:
-        return PRESSURE_HI
-
-
-# -----------------------------------------------------------------------------
-#   Helper functions
-# -----------------------------------------------------------------------------
-
-def assign_by_ot(unit_pos, target_loc):
-    """
-    Assign troops to locations based on optimal transport.
-    unit_pos - shape (N, 2)
-    target_loc - shape (N, 2)
-    Returns reordered target_loc optimally mapped to each unit - shape (N, 2)
-    """
-    a, b = np.ones((unit_pos.shape[0],)) / unit_pos.shape[0] , np.ones((target_loc.shape[0],)) / target_loc.shape[0]  # uniform weights on points
-    M = ot.dist(unit_pos, target_loc, metric='sqeuclidean') # cost matrix
-    assignment = ot.emd(a, b, M).argmax(axis=1) # OT linear program solver
-    return target_loc[assignment]
-
-def get_moves(unit_pos, target_loc) -> List[Tuple[float, float]]:
-    """Returns a list of 2-tuple (dist, angle) required to move a list of points
-    from @unit_pos to @target_loc.
-    """
-    if type(unit_pos) == list:
-        assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
-        np_unit_pos = np.array(unit_pos, dtype=float)
-        np_target_loc = np.array(target_loc, dtype=float)
-    else:
-        assert unit_pos.shape[0] == target_loc.shape[0], "get_moves: unit_pos and target_loc array length not the same"
-        np_unit_pos = unit_pos
-        np_target_loc = target_loc
-
-    cord_diff = np_target_loc - np_unit_pos
-    cord_diff_x = cord_diff[:, 0]
-    cord_diff_y = cord_diff[:, 1]
-
-    move_dist = np.linalg.norm(cord_diff, axis=1)
-    move_dist[move_dist > 1] = 1.0
-    move_angle = np.arctan2(cord_diff_y, cord_diff_x)
-    
-    move_arr = list(zip(move_dist, move_angle))
-    return move_arr
-
-
-def shapely_pts_to_tuples(points: List[Point]) -> List[Tuple[float, float]]:
-    """Converts a list of shapely.geometry.Point into a list of 2-tuple of floats."""
-    return list(map(shapely_pt_to_tuple, points))
-
-
-def shapely_pt_to_tuple(point: Point) -> Tuple[float, float]:
-    """Converts a shapely.geometry.Point into a 2-tuple of floats."""
-    return ( float(point.x), float(point.y) )
-
-
-def midsort(arr: List[float]) -> List[float]:
-    """Sorts an array by repeatedly selecting the midpoints."""
-    n = len(arr)
-    if n <= 2:
-        return arr
-
-    first_elem_added = False
-    prev_midpoints = [0, n - 1]
-    midsorted_arr = []
-
-    while len(prev_midpoints) < n:
-        curr_midpoints = []
-
-        for i, (left_pt, right_pt) in enumerate(zip(prev_midpoints, prev_midpoints[1:])):
-            mid_pt = (left_pt + right_pt) // 2
-
-            if mid_pt != left_pt or mid_pt == 0:
-                curr_midpoints.extend([left_pt, mid_pt])
-                midsorted_arr.append(arr[mid_pt])
-
-                if mid_pt == 0:
-                    first_elem_added = True
-            else:
-                curr_midpoints.append(left_pt)
-
-            if i == len(prev_midpoints) - 2:
-                curr_midpoints.append(right_pt)
-
-        prev_midpoints = curr_midpoints
-
-    # add the LAST element in the original @arr
-    if not first_elem_added:
-        midsorted_arr.append(arr[0])
-        
-    midsorted_arr.append(arr[-1])
-
-    return midsorted_arr
-
-
-def get_base_angles(player_idx: int) -> Tuple[float, float]:
-    """
-    Returns the angles in radians of the two edges around player @player_idx's homebase.
-
-    Example:
-
-        The map of the voronoi game is a 100 * 100 grid. From the top left going
-        counter-clockwise are player p1 (index: 0), p2 (1), p3 (2), p4 (3).
-
-        Below is a visualization of player 3's base angles.
-        
-            (base angle - pi/2) 
-                ^
-                | 
-                |     
-                -------> (base angle)
-                    pi/2 * (1 - player_index)
-              p2
-    """
-    base = (1 - player_idx) * math.pi / 2
-
-    return base, base - math.pi / 2
-
-def ndarray_to_moves(moves: List[List[float]]) -> List[Tuple[float, float]]:
-    """Converts numpy adarray into list of 2-tuple of floats.
-    
-    Only 2-tuple of floats are accepted as valid actions by the simulator.
-    """
-    return list(map(tuple, moves))
-
-Tid = str
-Uid = int
-class ResourcePool:
-    def __init__(self, player: Player):
-        self.player = player
-        self.unit_to_team_dict = {}
-        self.team_to_unit_dict = {}
-    
-    # team_id = 'team''number' i.e. specialforce1
-
-    def get_team_ids(self, team_id: Tid) -> List[Uid]:
-        pass
-
-    def get_team(self, unit_id: Uid) -> Tid:
-        pass
-
-    def is_dead(self, unit_id: Uid) -> bool:
-        pass
-
-    def get_team_casualties(self, team_id: Tid) -> List[Uid]:
-        pass
-
-    def get_free_units(self) -> List[Uid]:
-        pass
-
-    def claim_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
-        """Returns list of units unable to be claimed."""
-    
-    def release_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
-        """"Returns list of units who weren't successfully fired. They were not on the team in the first place"""
-    
-    def update_state(self):
-
-        pass
-
-    def get_positions(self, units: List[Uid]) -> List[List[float]]:
-        pass
-
-
-Upos = Tuple[float, float]
-class Role(ABC):
-    _logger: logging.Logger
-
-    def __init__(self, logger, player: Player, name: Tid):
-        self._player = player
-        self._name = name
-        self._logger = logger
-
-    def _debug(self, *args):
-        self._logger.info(" ".join(str(a) for a in args))
-
-    @property
-    def player(self):
-        return self._player
-
-    @abstractmethod
-    def select(self):
-        pass
-
-    @abstractmethod
-    def move(self) -> List[Tuple[Uid, Upos]]:
-        pass
-
-class MacroArmy(Role):
-
-    def __init__(self, logger, resource, name: Tid):
-        super(MacroArmy, self).__init__()
-        self.name = name
-        self.logger = logger
         self.resource = resource
         self.unit_ids = None
         self.unit_pos = None
         self.targets = None
         self.MAX_UNITS = 500
-
-    def _debug(self, *args):
-        self._logger.info(" ".join(str(a) for a in args))
-
-    @property
-    def player(self):
-        return self.resource.player
 
     def select(self):
         # it would be good if get_free_units() returns an array and claim_units() takes input an array
@@ -899,7 +506,7 @@ class MacroArmy(Role):
         self.unit_ids = np.random.choice(free_units, size=min(self.MAX_UNITS, free_units.shape[0]), replace=False)
         self.resource.claim_units(self.name, self.unit_ids.tolist())
 
-    def move(self) -> List[Tuple[Uid, Upos]]:
+    def move(self) -> List[Move]:
         if self.move == None:
             # Only calculate border and OT assignments once at creation
             self.unit_pos = np.array(self.resource.get_positions(self.unit_ids))
@@ -1067,3 +674,426 @@ class SpecialForce:
         assert(len(unit_pos) == len(self.unit_idxs))
         self.unit_pos = unit_pos
         self.in_formation = self.check_in_formation()
+
+
+# -----------------------------------------------------------------------------
+#   G3 Player
+# -----------------------------------------------------------------------------
+
+class Player:
+    def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
+                 player_idx: int, spawn_point: Point, min_dim: int, max_dim: int, precomp_dir: str) \
+            -> None:
+        """Initialise the player with given skill.
+
+            Args:
+                rng (np.random.Generator): numpy random number generator, use this for same player behavior across run
+                logger (logging.Logger): logger use this like logger.info("message")
+                total_days (int): total number of days, the game is played
+                spawn_days (int): number of days after which new units spawn
+                player_idx (int): index used to identify the player among the four possible players
+                spawn_point (sympy.geometry.Point2D): Homebase of the player
+                min_dim (int): Minimum boundary of the square map
+                max_dim (int): Maximum boundary of the square map
+                precomp_dir (str): Directory path to store/load pre-computation
+        """
+
+        self.rng = rng
+        self.logger = logger
+        self.logger.setLevel(LOG_LEVEL)
+
+        self.us = player_idx
+        self.homebase = np.array(spawn_point)
+        self.enemy_bases = np.delete(np.array([[0.5, 0.5], [0.5, 99.5], [99.5, 99.5], [99.5, 0.5]]), self.us, axis=0)
+        self.day_n = 0
+
+        self.our_units = None
+        self.enemy_units = None
+        self.enemy_offsets = None
+        self.map_states = None
+        self.border = None
+
+        self.target_loc = []
+
+        self.initial_radius = 35
+        self.num_scouts = 3
+
+        base_angles = get_base_angles(player_idx)
+        outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=int(self.initial_radius * 2 / 1.4))
+        self.counter = 0
+        self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
+
+        self.cb_scheduled = np.array([CB_START, CB_START + CB_DURATION])
+
+        # compute special forces metadata
+        self.total_lifetime_units = total_days // spawn_days
+        self.units_by_day_50 = 50 // spawn_days
+        self.sf_units = self.total_lifetime_units / 5
+        self.sf_units_per_team = max(self.sf_units // 5, 10)
+        self.sf_units_per_team = min(self.sf_units_per_team, self.sf_units)
+
+        # SAMPLE SQUAD
+        '''
+        self.special_forces = [SpecialForce(self.logger, self.us, id=i, team_size=13) for i in range(1)]
+        self.special_forces[0].set_target_enemy([20, 25])'''
+        # round down sf_units to nearest multiple of sf_units per team
+        self.sf_units -= self.sf_units % self.sf_units_per_team
+        self.sf_teams = self.sf_units // self.sf_units_per_team
+
+        # Temporary - Scout, DefaultSoldier
+        self.scout_team = Scouts(self.logger, self, 'scouts1', 3)
+        self.default_soldiers = DefaultSoldier(self.logger, self, 'default1', self.midsorted_outer_wall_angles)
+
+    def debug(self, *args):
+        self.logger.info(" ".join(str(a) for a in args))
+
+    def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
+        """Function which based on current game state returns the distance and angle of each unit active on the board
+
+                Args:
+                    unit_id (list(list(str))): contains the ids of each player's units (unit_id[player_idx][x])
+                    unit_pos (list(list(shapely.geometry.Point))): contains the position of each unit currently present on the map
+                                                    (unit_pos[player_idx][x])
+                    map_states (list(list(int)): contains the state of each cell, using the x, y coordinate system
+                                                    (map_states[x][y])
+                    current_scores (list(int)): contains the number of cells currently occupied by each player
+                                                    (current_scores[player_idx])
+                    total_scores (list(int)): contains the cumulative scores up until the current day
+                                                    (total_scores[player_idx]
+
+                Returns:
+                    List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
+                                                move each unit of the player
+                """
+
+        float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
+        self.day_n += 1
+        self.map_states = np.array(map_states) - 1
+        self.enemy_offsets = np.array([len(unit_pos[i]) for i in range(4) if i != self.us])
+        self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
+        self.our_units = np.array(float_unit_pos[self.us])
+        self.d = DensityMap(self.us, float_unit_pos)
+        self.our_unit_ids = np.array(unit_id[self.us], dtype=int)
+
+
+        self.debug()
+        self.debug(f'unit_ids: {unit_id[self.us]}')
+        self.debug(f'len(unit_pos): {len(unit_pos[self.us])}, len(unit_ids): {len(unit_id[self.us])}')
+        self.debug(f'density map: {self.d.dmap.T}')
+        self.debug(f'average neighbor density: {self.d.ndmap.T}')
+
+
+        if self.day_n < self.initial_radius:
+            self.debug(f'day {self.day_n}: form initial wall')
+
+            while len(unit_id[self.us]) > len(self.target_loc):
+                # add new target_locations
+                self.target_loc.append(order2coord(
+                        self.homebase,
+                        [self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]
+                ))
+        
+            return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
+        elif self.day_n >= self.cb_scheduled[0] and self.day_n < self.cb_scheduled[1]:
+            self.debug(f'day {self.day_n}: consoldiate border')
+
+            if self.day_n == self.cb_scheduled[0] or (CB_DURATION >= 10 and self.day_n == self.cb_scheduled[0] + CB_DURATION // 2):
+                self.border = self.get_border()
+
+            if self.day_n == self.cb_scheduled[1] - 1:
+                self.cb_scheduled += (COOL_DOWN + CB_DURATION)
+            
+            # allocation phase
+            self.scout_team.select()
+            scout_ids = self.scout_team.unit_idx  # TODO: change later
+
+            # mobilization phase
+            defense_moves = self.send_to_border(scout_ids, self.border)
+            offense_moves = self.scout_team.move()
+        else:
+            # MID_GAME: adjust formation based on opponents' positions
+            self.debug(f'day {self.day_n}: cool down')
+
+            # allocation phase
+            self.scout_team.select()
+            self.default_soldiers.select()
+            scout_ids = self.scout_team.unit_idx  # TODO: change later
+
+            # mobilization phase
+            start = time.time()
+            defense_moves = self.default_soldiers.move()
+            self.debug(f'Defense: {time.time()-start}s')
+            
+            start = time.time()
+            offense_moves = self.scout_team.move()
+            self.debug(f'Offense: {time.time()-start}s')
+
+        # insert scout moves into all moves
+        all_moves = defense_moves
+        for i, scout in enumerate(scout_ids.tolist()):
+            all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
+        return all_moves
+
+    def send_to_border(self, scout_ids, border) -> List[Tuple[float, float]]:
+        """Sends soldiers to consolidate our border."""
+        troops = np.delete(self.our_units, scout_ids, axis=0)
+        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
+        targets = assign_by_ot(troops, selected_border)
+        return get_moves(troops, targets)
+
+    def get_border(self):
+        """Get border of our territory"""
+        # trace along x axis to find the starting point
+        if self.us < 2: # 0, 1
+            for i in range(100):
+                if self.map_states[i, 99*self.us] != self.us:
+                    pt = (i-1, 99*self.us)
+                    break
+        else: # 2, 3
+            for i in range(100):
+                if self.map_states[99-i, 99*(3-self.us)] != self.us:
+                    pt = (99-i+1, 99*(3-self.us))
+                    break
+
+        border = set()
+        self._trace_border(pt, border)
+
+        # remove pts on edge of map (i.e., not on frontline)
+        frontline = []
+        for pt in border:
+            if not self._on_edge(pt):
+                frontline.append(pt)
+        return np.array(frontline)
+
+    def _trace_border(self, curr_pt, border_pts):
+        """From a point, recurse through neighbors to find all border cells"""
+        if curr_pt in border_pts:
+            return
+        else:
+            border_pts.add(curr_pt)
+
+        # check all 8 neighbors
+        xmax, ymax = self.map_states.shape
+        for x in range(3):
+            for y in range(3):
+                neighbor = (max(min(curr_pt[0]-1+x, xmax-1), 0), 
+                            max(min(curr_pt[1]-1+y, ymax-1), 0))
+                if neighbor != curr_pt and (self._on_border(neighbor) or self._on_edge(neighbor)):
+                    self._trace_border(neighbor, border_pts)
+
+    def _on_border(self, pt):
+        """Check if given point is on the border"""
+        # currently ignoring disputed cells
+        if self.map_states[pt] != self.us: 
+            return False
+
+        xmax, ymax = self.map_states.shape
+        neighbors = np.array([[min(pt[0]+1, xmax-1), pt[1]], 
+            [max(pt[0]-1, 0), pt[1]],
+            [pt[0], min(pt[1]+1, ymax-1)],
+            [pt[0], max(pt[1]-1, 0)]])
+        return any(self.map_states[neighbors[:, 0], neighbors[:, 1]] != self.us)
+
+    def _on_edge(self, pt):
+        """Check if given point is on the edge of map"""
+        if self.map_states[pt] != self.us: 
+            return False
+        xmax, ymax = self.map_states.shape
+        return (pt[0] in [0, xmax-1] or pt[1] in [0, ymax-1])
+
+
+# -----------------------------------------------------------------------------
+#   Force (NumPy)
+# -----------------------------------------------------------------------------
+
+def exploration_force(curr_pt, enemy_pts, ally_pts=None):
+    if ally_pts is None:
+        ally_force = 0
+    else:
+        ally_v = curr_pt - ally_pts
+        ally_force = inverse_force(ally_v)
+    enemy_v = curr_pt - enemy_pts
+    enemy_force = inverse_force(enemy_v)
+    return ally_force + enemy_force
+
+def border_repulsion(curr_pt, xmax, ymax):
+    border_pts = np.array([[0, curr_pt[1]], [xmax, curr_pt[1]], [curr_pt[0], 0], [curr_pt[0], ymax]])
+    border_v = curr_pt - border_pts
+    return inverse_force(border_v)
+
+def enemy_base_attraction(curr_pt, enemy_bases):
+    """Squared inverse attraction to enemy homebases so that scouts attack enemey base only in proximity"""
+    nearest_base = enemy_bases[((curr_pt - enemy_bases) ** 2).sum(axis=1).argmax()]
+    v = nearest_base - curr_pt
+    return inverse_force_cubic(v)
+
+def inverse_force(v):
+    mag = np.sqrt((v ** 2).sum(axis=1, keepdims=True)) + 1e-7
+    force = (v / mag / mag).sum(axis=0)
+    return force
+
+def inverse_force_cubic(v):
+    mag = np.sqrt((v ** 2).sum()) + 1e-7
+    force = v / mag / (mag ** 3)
+    return force
+
+
+# -----------------------------------------------------------------------------
+#   Force
+# -----------------------------------------------------------------------------
+# NOTE: The code below are referenced from Group 4
+
+def force_vec(p1: Tuple[float, float], p2: Tuple[float, float]) -> Tuple[List[float], float]:
+    v = np.array(p1) - np.array(p2)
+    mag = np.linalg.norm(v)
+    unit = v / mag
+    return unit, mag
+
+def repelling_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
+    dir, mag = force_vec(p1, p2)
+    # Inverse magnitude: closer things apply greater force
+    return dir * 1 / (mag)
+
+def repelling_force_sum(pts: List[Tuple[float, float]], receiver: Tuple[float, float]) -> List[float]:
+    return np.add.reduce([repelling_force(receiver, x) for x in pts])
+
+def reactive_force(fvec: List[float]) -> List[float]:
+    return fvec * (-1.)
+
+def attractive_force(p1: Tuple[float, float], p2: Tuple[float, float]) -> List[float]:
+    return reactive_force(repelling_force(p1, p2))
+
+def get_pressure_level(force: List[float]) -> int:
+    p = np.linalg.norm(force)
+
+    if p <= PRESSURE_LO_THRESHOLD:
+        return PRESSURE_LO
+    elif p > PRESSURE_LO_THRESHOLD and p < PRESSURE_HI_THRESHOLD:
+        return PRESSURE_MID
+    else:
+        return PRESSURE_HI
+
+
+# -----------------------------------------------------------------------------
+#   Helper functions
+# -----------------------------------------------------------------------------
+
+def assign_by_ot(unit_pos, target_loc):
+    """
+    Assign troops to locations based on optimal transport.
+    unit_pos - shape (N, 2)
+    target_loc - shape (N, 2)
+    Returns reordered target_loc optimally mapped to each unit - shape (N, 2)
+    """
+    a, b = np.ones((unit_pos.shape[0],)) / unit_pos.shape[0] , np.ones((target_loc.shape[0],)) / target_loc.shape[0]  # uniform weights on points
+    M = ot.dist(unit_pos, target_loc, metric='sqeuclidean') # cost matrix
+    assignment = ot.emd(a, b, M).argmax(axis=1) # OT linear program solver
+    return target_loc[assignment]
+
+def order2coord(homebase: np.ndarray, order: Tuple[float, float]) -> Upos:
+    """Converts an order, tuple of (dist2homebase, angle), into a coordinate."""
+    dist, angle = order
+    x = homebase[0] + dist * math.cos(angle)
+    y = homebase[1] + dist * math.sin(angle)
+
+    return (x, y)
+
+def get_moves(unit_pos, target_loc) -> List[Tuple[float, float]]:
+    """Returns a list of 2-tuple (dist, angle) required to move a list of points
+    from @unit_pos to @target_loc.
+    """
+    if type(unit_pos) == list:
+        assert len(unit_pos) == len(target_loc), "get_moves: unit_pos and target_loc array length not the same"
+        np_unit_pos = np.array(unit_pos, dtype=float)
+        np_target_loc = np.array(target_loc, dtype=float)
+    else:
+        assert unit_pos.shape[0] == target_loc.shape[0], "get_moves: unit_pos and target_loc array length not the same"
+        np_unit_pos = unit_pos
+        np_target_loc = target_loc
+
+    cord_diff = np_target_loc - np_unit_pos
+    cord_diff_x = cord_diff[:, 0]
+    cord_diff_y = cord_diff[:, 1]
+
+    move_dist = np.linalg.norm(cord_diff, axis=1)
+    move_dist[move_dist > 1] = 1.0
+    move_angle = np.arctan2(cord_diff_y, cord_diff_x)
+    
+    move_arr = list(zip(move_dist, move_angle))
+    return move_arr
+
+def shapely_pts_to_tuples(points: List[Point]) -> List[Tuple[float, float]]:
+    """Converts a list of shapely.geometry.Point into a list of 2-tuple of floats."""
+    return list(map(shapely_pt_to_tuple, points))
+
+def shapely_pt_to_tuple(point: Point) -> Tuple[float, float]:
+    """Converts a shapely.geometry.Point into a 2-tuple of floats."""
+    return ( float(point.x), float(point.y) )
+
+def midsort(arr: List[float]) -> List[float]:
+    """Sorts an array by repeatedly selecting the midpoints."""
+    n = len(arr)
+    if n <= 2:
+        return arr
+
+    first_elem_added = False
+    prev_midpoints = [0, n - 1]
+    midsorted_arr = []
+
+    while len(prev_midpoints) < n:
+        curr_midpoints = []
+
+        for i, (left_pt, right_pt) in enumerate(zip(prev_midpoints, prev_midpoints[1:])):
+            mid_pt = (left_pt + right_pt) // 2
+
+            if mid_pt != left_pt or mid_pt == 0:
+                curr_midpoints.extend([left_pt, mid_pt])
+                midsorted_arr.append(arr[mid_pt])
+
+                if mid_pt == 0:
+                    first_elem_added = True
+            else:
+                curr_midpoints.append(left_pt)
+
+            if i == len(prev_midpoints) - 2:
+                curr_midpoints.append(right_pt)
+
+        prev_midpoints = curr_midpoints
+
+    # add the LAST element in the original @arr
+    if not first_elem_added:
+        midsorted_arr.append(arr[0])
+        
+    midsorted_arr.append(arr[-1])
+
+    return midsorted_arr
+
+def get_base_angles(player_idx: int) -> Tuple[float, float]:
+    """
+    Returns the angles in radians of the two edges around player @player_idx's homebase.
+
+    Example:
+
+        The map of the voronoi game is a 100 * 100 grid. From the top left going
+        counter-clockwise are player p1 (index: 0), p2 (1), p3 (2), p4 (3).
+
+        Below is a visualization of player 3's base angles.
+        
+            (base angle - pi/2) 
+                ^
+                | 
+                |     
+                -------> (base angle)
+                    pi/2 * (1 - player_index)
+              p2
+    """
+    base = (1 - player_idx) * math.pi / 2
+
+    return base, base - math.pi / 2
+
+def ndarray_to_moves(moves: List[List[float]]) -> List[Tuple[float, float]]:
+    """Converts numpy adarray into list of 2-tuple of floats.
+    
+    Only 2-tuple of floats are accepted as valid actions by the simulator.
+    """
+    return list(map(tuple, moves))
