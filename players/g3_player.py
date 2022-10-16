@@ -25,8 +25,8 @@ SCOUT_HOMEBASE_SCALE = 10.0
 SCOUT_BORDER_SCALE = 5.0
 SCOUT_ENEMY_BASE_SCALE = 50.0
 
-COOL_DOWN = 15
-CB_DURATION = 0 # days dedicated to border consolidation in each cycle
+COOL_DOWN = 5
+CB_DURATION = 5 # days dedicated to border consolidation in each cycle
 CB_START = 35    # the day to start the first cycle of border consolidation
 
 class DensityMap:
@@ -286,6 +286,7 @@ class Player:
         self.enemy_units = None
         self.enemy_offsets = None
         self.map_states = None
+        self.border = None
 
         self.target_loc = []
 
@@ -368,14 +369,6 @@ class Player:
         else:
             return self._move_radially(pt, forward=False)
 
-    def send_to_border(self, scout_ids) -> List[Tuple[float, float]]:
-        """Sends soldiers to consolidate our bolder."""
-        border = self.get_border()
-        troops = np.delete(self.our_units, scout_ids, axis=0)
-        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=troops.shape[0], replace=False)]
-        targets = assign_by_ot(troops, selected_border)
-        return get_moves(troops, targets)
-
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -403,6 +396,7 @@ class Player:
         self.enemy_offsets = np.array([len(unit_pos[i]) for i in range(4) if i != self.us])
         self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
         self.our_units = np.array(float_unit_pos[self.us])
+        self.our_unit_ids = np.array(unit_id[self.us], dtype=int)
 
         # if self.us == 0:
         #     np.save(open('border.npy', 'wb'), self.get_border())
@@ -449,7 +443,7 @@ class Player:
         print(ret)
         return ret'''
         # EARLY GAME: form a 2-layer wall
-        if self.day_n <= self.initial_radius:
+        if self.day_n < self.initial_radius:
             self.debug(f'day {self.day_n}: form initial wall')
 
             while len(unit_id[self.us]) > len(self.target_loc):
@@ -461,11 +455,14 @@ class Player:
         elif self.day_n >= self.cb_scheduled[0] and self.day_n < self.cb_scheduled[1]:
             self.debug(f'day {self.day_n}: consoldiate border')
 
+            if self.day_n == self.cb_scheduled[0] or (CB_DURATION >= 10 and self.day_n == self.cb_scheduled[0] + CB_DURATION // 2):
+                self.border = self.get_border()
+
             if self.day_n == self.cb_scheduled[1] - 1:
                 self.cb_scheduled += (COOL_DOWN + CB_DURATION)
-
+            
             scout_ids = self.select_scouts()
-            defense_moves = self.send_to_border(scout_ids)
+            defense_moves = self.send_to_border(scout_ids, self.border)
             offense_moves = self.move_scouts(scout_ids)
 
         else:
@@ -512,6 +509,15 @@ class Player:
         scout_ids = np.arange(min(self.our_units.shape[0], self.num_scouts))
         return scout_ids
 
+    def send_to_border(self, scout_ids, border) -> List[Tuple[float, float]]:
+        """Sends soldiers to consolidate our border."""
+        troops = np.delete(self.our_units, scout_ids, axis=0)
+        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
+        targets = assign_by_ot(troops, selected_border)
+        return get_moves(troops, targets)
+
+
+
     def get_border(self):
         """Get border of our territory"""
         # trace along x axis to find the starting point
@@ -528,7 +534,13 @@ class Player:
 
         border = set()
         self._trace_border(pt, border)
-        return np.array(list(border))
+
+        # remove pts on edge of map (i.e., not on frontline)
+        frontline = []
+        for pt in border:
+            if not self._on_edge(pt):
+                frontline.append(pt)
+        return np.array(frontline)
 
     def _trace_border(self, curr_pt, border_pts):
         """From a point, recurse through neighbors to find all border cells"""
@@ -543,7 +555,7 @@ class Player:
             for y in range(3):
                 neighbor = (max(min(curr_pt[0]-1+x, xmax-1), 0), 
                             max(min(curr_pt[1]-1+y, ymax-1), 0))
-                if neighbor != curr_pt and self._on_border((neighbor)):
+                if neighbor != curr_pt and (self._on_border(neighbor) or self._on_edge(neighbor)):
                     self._trace_border(neighbor, border_pts)
 
     def _on_border(self, pt):
@@ -558,6 +570,13 @@ class Player:
             [pt[0], min(pt[1]+1, ymax-1)],
             [pt[0], max(pt[1]-1, 0)]])
         return any(self.map_states[neighbors[:, 0], neighbors[:, 1]] != self.us)
+
+    def _on_edge(self, pt):
+        """Check if given point is on the edge of map"""
+        if self.map_states[pt] != self.us: 
+            return False
+        xmax, ymax = self.map_states.shape
+        return (pt[0] in [0, xmax-1] or pt[1] in [0, ymax-1])
 
     def _explore(self, scout_unit, enemy_clusters, ally_clusters):
         homebase_force = inverse_force((scout_unit - self.homebase).reshape(1, 2))
@@ -683,10 +702,8 @@ def assign_by_ot(unit_pos, target_loc):
     target_loc - shape (N, 2)
     Returns reordered target_loc optimally mapped to each unit - shape (N, 2)
     """
-    n = unit_pos.shape[0]
-    assert target_loc.shape[0] == n
-    a, b = np.ones((n,)) / n , np.ones((n,)) / n  # uniform weights on points
-    M = ot.dist(unit_pos, target_loc, metric='euclidean') # cost matrix
+    a, b = np.ones((unit_pos.shape[0],)) / unit_pos.shape[0] , np.ones((target_loc.shape[0],)) / target_loc.shape[0]  # uniform weights on points
+    M = ot.dist(unit_pos, target_loc, metric='sqeuclidean') # cost matrix
     assignment = ot.emd(a, b, M).argmax(axis=1) # OT linear program solver
     return target_loc[assignment]
 
@@ -856,6 +873,50 @@ class Role(ABC):
     @abstractmethod
     def move(self) -> List[Tuple[Uid, Upos]]:
         pass
+
+class MacroArmy(Role):
+
+    def __init__(self, logger, resource, name: Tid):
+        super(MacroArmy, self).__init__()
+        self.name = name
+        self.logger = logger
+        self.resource = resource
+        self.unit_ids = None
+        self.unit_pos = None
+        self.targets = None
+        self.MAX_UNITS = 500
+
+    def _debug(self, *args):
+        self._logger.info(" ".join(str(a) for a in args))
+
+    @property
+    def player(self):
+        return self.resource.player
+
+    def select(self):
+        # it would be good if get_free_units() returns an array and claim_units() takes input an array
+        free_units = np.array(self.resource.get_free_units(), dtype=int) 
+        self.unit_ids = np.random.choice(free_units, size=min(self.MAX_UNITS, free_units.shape[0]), replace=False)
+        self.resource.claim_units(self.name, self.unit_ids.tolist())
+
+    def move(self) -> List[Tuple[Uid, Upos]]:
+        if self.move == None:
+            # Only calculate border and OT assignments once at creation
+            self.unit_pos = np.array(self.resource.get_positions(self.unit_ids))
+            border = self.resource.player.get_border()
+            selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
+            self.targets = assign_by_ot(self.unit_pos, selected_border)
+        else:
+            # remove dead units without changing assignments for other units
+            dead_units = []
+            for i, unit_id in enumerate(self.unit_ids):
+                if self.resource.is_dead(unit_id):
+                    dead_units.append(i)
+            self.unit_ids = np.delete(self.unit_ids, dead_units, axis=0)
+            self.unit_pos = np.delete(self.unit_pos, dead_units, axis=0)
+            self.targets = np.delete(self.targets, dead_units, axis=0)
+
+        return list(zip(self.unit_id, get_moves(self.unit_pos, self.targets)))
 
 
 class SpecialForce:
