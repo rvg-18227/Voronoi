@@ -27,7 +27,7 @@ INNER_RADIUS = 50
 
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
-REGION_INCREMENT = 0.4
+REGION_INCREMENT = 0.1
 
 #priority of regions
 PRIORITY_ID = [4,2,0,1,3]
@@ -242,6 +242,7 @@ class Player:
         self.ally_units: Dict[str, Point] = {}
         self.ally_units_yesterday: Dict[str, Point] = {}
         self.ally_killed_unit_ids = []
+        self.historical_ally_unit_ids = set() 
         self.enemy_units: Dict[str, Point] = {}
         self.enemy_units_yesterday: Dict[str, Point] = {}
         self.enemy_killed_unit_ids = []
@@ -476,13 +477,13 @@ class Player:
         return intersect_pos
 
 
-    def sentinel_moves(self, unit_pos, unit_id) -> Dict[float, Tuple[float, float]]:
+    def sentinel_moves(self, unit_ids) -> Dict[float, Tuple[float, float]]:
 
         moves = {}
-        enemy_count = self.enemy_count_in_region(unit_pos)
+        enemy_count = self.enemy_count_in_region()
         #print(enemy_count)
 
-        region_contains_id, uid_in_region = self.regions_contain_id(unit_pos, unit_id)
+        region_contains_id, uid_in_region = self.regions_contain_id(unit_ids)
 
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
@@ -508,10 +509,8 @@ class Player:
         #print(uid_in_region)
         #print(dict(region_contains_id))
 
-        for i in range(len(unit_pos[self.player_idx])):
-            pt = unit_pos[self.player_idx][i]
+        for u_id, pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
             curr = (pt.x, pt.y)
-            u_id = unit_id[self.player_idx][i]
 
             #region moved, and move has been computed already
             if u_id in moves:
@@ -583,14 +582,10 @@ class Player:
         #print(moves)
         return sentinel_transform_moves(moves)
 
-    def regions_contain_id(self, unit_pos, unit_id):
-
+    def regions_contain_id(self, unit_ids):
         team_set = defaultdict(lambda: set())
         uid_in_region = {}
-
-        for i in range(len(unit_pos[self.player_idx])):
-            u_id = unit_id[self.player_idx][i]
-            u_pt = unit_pos[self.player_idx][i]
+        for u_id, u_pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
             for r in self.regions:
                 if r.polygon.contains(u_pt):
                     team_set[r].add(u_id)
@@ -635,43 +630,40 @@ class Player:
         self.ally_killed_unit_ids = [id for id in list(self.ally_units_yesterday.keys()) if id not in list(self.ally_units.keys())]
         self.enemy_killed_unit_ids = [id for id in list(self.enemy_units_yesterday.keys()) if id not in list(self.enemy_units.keys())]
 
+        # Keep a record of all unit_ids that ever existed
+        self.historical_ally_unit_ids.update(list(self.ally_units.keys()))
+
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
         moves = {int(id): (0, 0) for id in unit_id[self.player_idx]}
 
-        if self.player_idx == 0:
-            # Max takes 0
-            moves.update(self.sentinel_moves(unit_pos, unit_id))
-        elif self.player_idx == 1:
-            #self.get_forces(unit_id, unit_pos)
-            # Abigail takes 1
-            #moves.update(self.scout_moves(unit_id, unit_pos))
-            moves.update(self.sentinel_moves(unit_pos, unit_id))
-        elif self.player_idx == 2:
-            # Noah takes 2
-            #moves.update(self.platoon_moves(unit_id[self.player_idx]))
-            moves.update(self.sentinel_moves(unit_pos, unit_id))
+        if self.player_idx == 0:    
+            # Assign first 5 units to move out at strategig angles to capture territory early game
+            fixed_formation_unit_ids = [uid for uid in list(self.historical_ally_unit_ids)[0:5] if uid in list(self.ally_units.keys())]
+            moves.update(self.fixed_formation_moves(fixed_formation_unit_ids, [45.0, 67.5, 22.5, 0, 90]))
 
+            # Dedicate half of our remaining units to sentinetls
+            sentinel_unit_ids = [uid for uid in list(self.historical_ally_unit_ids)[5:] if uid in list(self.ally_units.keys())]
+            moves.update(self.sentinel_moves(sentinel_unit_ids))
+
+            # And the other half to platoons 
+
+        elif self.player_idx == 1:
+            pass 
+        elif self.player_idx == 2:
+            pass
         elif self.player_idx == 3:
-            #moves.update(self.fixed_formation_moves(unit_id[self.player_idx], [45.0, 67.5, 22.5]))
-            moves.update(self.sentinel_moves(unit_pos, unit_id))
+            pass
  
         return list(moves.values())
 
     #what is the enemy_count team_count for a given point
-    def enemy_count_in_region(self, unit_pos):
-        
+    def enemy_count_in_region(self):
         count = defaultdict(lambda: 0)
-
-        for i in range(4):
-            if i == self.player_idx:
-                continue
-
-            for u in unit_pos[i]:
-                for region in self.regions:
-                    if region.detection_polygon.contains(u):
-                        count[region] += 1
-                        continue
-
+        for u in self.enemy_units.values():
+            for region in self.regions:
+                if region.detection_polygon.contains(u):
+                    count[region] += 1
+                    continue
         return count
 
     #for a given unit, given by u
