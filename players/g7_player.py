@@ -1,6 +1,7 @@
 from ast import Num
 from cmath import acos
 from copy import deepcopy
+from ctypes.wintypes import POINT
 from doctest import DocFileSuite
 import os
 import pickle
@@ -59,17 +60,19 @@ class Player:
         self.min_dim = min_dim
         self.max_dim = max_dim
         if self.player_idx == 0: # Top left orange
-            self.angles = [(2*pi/8), (4*pi/8), 0, (3*pi/8), (pi/8) ]
+            self.angles = [np.deg2rad(0), np.deg2rad(18), np.deg2rad(46), np.deg2rad(72), np.deg2rad(90)]
         elif self.player_idx == 1: # Bottom left pink
-            self.angles = [7*pi/4, 3*pi/2, 0, 13*pi/8, 15*pi/8] 
+            self.angles = [np.deg2rad(270),np.deg2rad(288), np.deg2rad(315), np.deg2rad(342), np.deg2rad(360)] 
         elif self.player_idx == 2: # Bottom right blue
-            self.angles = [5*pi/4, 3*pi/2, pi, 11*pi/8, 9*pi/8] 
+            self.angles = [np.deg2rad(180), np.deg2rad(198), np.deg2rad(226), np.deg2rad(252), np.deg2rad(270)] 
         else: # Top right yellow
-            self.angles = [3*pi/4, pi, pi/2, 7*pi/8, 5*pi/8]
+            self.angles = [np.deg2rad(90), np.deg2rad(108), np.deg2rad(135), np.deg2rad(162), np.deg2rad(180)]
 
         # Experimenal variables
         self.day = 0
         self.other_players = [0,1,2,3]
+        self.angledef = []
+        self.idstop = []
         self.other_players.remove(self.player_idx)
         self.last_n_days_positions = {}
         self.hostility_registry = {}
@@ -249,25 +252,65 @@ class Player:
                         attackers.append(map_states[i + locx][j + locy])
 
         # Use attackers to dynamically move units?
-
+        s = 0
         for i in range(total_units):
             # Prior to day 50? set up formation
-            if self.day < 50:
-                if friendly_unit_ids[i] in self.units_angle:
-                    moves.append((1, self.units_angle[friendly_unit_ids[i]]))
+            # if self.day < 100:
+            if friendly_unit_ids[i] in self.units_angle:
+                if friendly_unit_ids[i] in offense_idx:
+                    moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
                 else:
-                    self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
-                    moves.append((1, self.angles[i % len(self.angles)]))
-            # After day 50 switch to dynamic model
+                    moves.append((1, self.units_angle[friendly_unit_ids[i]]))
             else:
                 if friendly_unit_ids[i] in offense_idx:
                     moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
                 else:
-                    if friendly_unit_ids[i] in self.units_angle:
-                        moves.append((1, self.units_angle[friendly_unit_ids[i]]) )
-                    else:
-                        self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
-                        moves.append((1, self.angles[i % len(self.angles)]))
+                    self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
+                    moves.append((1, self.angles[i % len(self.angles)]))
+            # After day 50 switch to dynamic model
+            # else:
+            #     if len(attackers) != 0:
+            #         for i in range(25-1):
+            #             for j in range(25-1):
+            #                 if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0:
+            #                     for u in range(total_units):
+            #                         while s != 5:
+            #                             x = unit_pos[self.player_idx][u].x
+            #                             y = unit_pos[self.player_idx][u].y
+            #                             if dist((x,y),(i + locx,j + locy)) < 15:
+            #                                 angle = np.arctan2((j + locy)-y,(i + locx) -x)
+            #                                 moves.append((1, angle))
+            #                                 s += 1
+            #                             else:
+            #                                 if friendly_unit_ids[u] in offense_idx:
+            #                                     moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[u] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+            #                                 else:
+            #                                     if friendly_unit_ids[u] in self.units_angle:
+            #                                         moves.append((1, self.units_angle[friendly_unit_ids[u]]) )
+            #                                     else:
+            #                                         self.units_angle[friendly_unit_ids[u]] = self.angles[u % len(self.angles)]
+            #                                         moves.append((1, self.angles[u % len(self.angles)]))
+            #                         if friendly_unit_ids[u] in offense_idx:
+            #                             moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[u] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+            #                         else:
+            #                             if friendly_unit_ids[u] in self.units_angle:
+            #                                 moves.append((1, self.units_angle[friendly_unit_ids[u]]) )
+            #                             else:
+            #                                 self.units_angle[friendly_unit_ids[u]] = self.angles[u % len(self.angles)]
+            #                                 moves.append((1, self.angles[u % len(self.angles)]))
+            #     else:
+            #         if friendly_unit_ids[i] in self.units_angle:
+            #             if friendly_unit_ids[i] in offense_idx:
+            #                 moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+            #             else:
+            #                 moves.append((1, self.units_angle[friendly_unit_ids[i]]))
+            #         else:
+            #             if friendly_unit_ids[i] in offense_idx:
+            #                 moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
+            #             else:
+            #                 self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
+            #                 moves.append((1, self.angles[i % len(self.angles)]))
+                    
 
         self.day +=1
         return moves
