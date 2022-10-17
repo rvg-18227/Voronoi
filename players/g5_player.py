@@ -177,8 +177,8 @@ class Player:
         ally_force = [
             self.repelling_force(unit_pos, ally_pos)
             for i, (ally_id, ally_pos) in enumerate(own_units)
-            if ally_id != unit_id and i % 2 == 0
-        ] # repelled by only border units
+            if ally_id != unit_id and i % 2 != 0
+        ] # repelled by only spreader units
         ally_force = np.add.reduce(ally_force)
 
         boundary_force = np.array([0.0, 0.0])
@@ -345,12 +345,12 @@ class Player:
                 )
             )
 
-        # spread out at start of game
-        if self.num_days // self.spawn_days <= 0:
-            moves = []
-            for i, (unit_id, unit_pos) in enumerate(own_units):
-                moves.append(self.naive_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units))
-            return moves
+        # # spread out at start of game
+        # if self.num_days // self.spawn_days <= 0:
+        #     moves = []
+        #     for i, (unit_id, unit_pos) in enumerate(own_units):
+        #         moves.append(self.naive_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units))
+        #     return moves
 
         enemy_units_locations = [
             ((player, i), sympy_p_float(unit_pos[player][i]))
@@ -400,14 +400,15 @@ class Player:
         for i, (unit_id, unit_pos) in enumerate(own_units):
 
             if i % 2 != 0:  # preaders are odd units, border units are even
-                is_spreader = 1
+                is_spreader = True
             else:
-                is_spreader = 0
+                is_spreader = False
 
-            if i < len(unit_pos) // 4:
-                mode = "offense"
-            else:
-                mode = "defense"
+            # if i < len(own_units) // 4:
+            #     mode = "offense"
+            # else:
+            #     mode = "defense"
+            mode = "offense"
             # closest_cluster_distance = float("inf")
             # closest_cluster = None
             # for (row, col, ids) in clusters:
