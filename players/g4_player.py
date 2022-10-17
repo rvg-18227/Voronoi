@@ -5,6 +5,7 @@ import traceback
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
+from multiprocessing import parent_process
 from os import makedirs, remove
 from random import randint, uniform
 from typing import Callable, Optional, TypeAlias
@@ -12,6 +13,8 @@ from typing import Callable, Optional, TypeAlias
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
+import torch.nn.functional as F
 from matplotlib import colors
 from matplotlib.collections import LineCollection
 from scipy.spatial import KDTree
@@ -23,6 +26,8 @@ from constants import dispute_color, player_color, tile_color
 # ==================
 # Game State Classes
 # ==================
+
+attack_roll = 0
 
 
 class GameParameters:
@@ -84,6 +89,7 @@ class StateUpdate:
         self.unit_id = unit_id
         self.unit_pos = unit_pos
         self.map_states = map_states
+
         self.cached_ownership = None
 
     # =============================
@@ -109,6 +115,15 @@ class StateUpdate:
             for enemy_id in range(4)
             if enemy_id != self.params.player_idx
         }
+
+    """
+    def enemy_i_units(self, enemy_idx):
+        return {
+            enemy_id: list(zip(self.unit_id[enemy_id], self.unit_pos[enemy_id]))
+            for enemy_id in range(4)
+            if enemy_id == enemy_idx
+        }
+    """
 
     def all_enemy_units(self):
         """Returns all enemy units in a list `[(unit_id, unit_pos)]`."""
@@ -202,7 +217,7 @@ def to_polar(p):
 
 
 def normalize(v):
-    return v / np.linalg.norm(v)
+    return v / (np.linalg.norm(v) + EPSILON)
 
 
 def repelling_force(p1, p2) -> tuple[float, float]:
@@ -719,10 +734,62 @@ class GreedyScout(Role):
         pass
 
 
+def check_border(my_player_idx, target_player_idx, vertical, horizontal):
+    # pdb.set_trace()
+    def check_pair(idx1, idx2, target1, target2):
+        if idx1 == target1 and idx2 == target2 or idx1 == target2 and idx2 == target1:
+            return True
+        else:
+            return False
+
+    if check_pair(my_player_idx, target_player_idx, 0, 1):
+        return 1 in vertical or 1 in horizontal
+    if check_pair(my_player_idx, target_player_idx, 0, 2):
+        return 3 in vertical or 3 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 0, 3):
+        return 7 in vertical or 7 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 1, 2):
+        return 2 in vertical or 2 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 1, 3):
+        return 6 in vertical or 6 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 2, 3):
+        return 4 in vertical or 4 in horizontal
+    else:
+        # somethings wrong
+        return None
+
+
+def border_detect(map_state, my_player_idx, target_player_idx):
+    base_kernel = torch.tensor([-1, 0, 1])
+    vecrtical_kernel = base_kernel.reshape(1, 1, 3, 1)
+    horizontal_kernel = base_kernel.reshape(1, 1, 1, 3)
+    map_tensor = torch.tensor(map_state).reshape(1, 100, 100)
+    # SET OCCUPATION TO SPECIFC VALUE, for conv purposes
+    map_tensor[map_tensor == -1] = -10000
+    map_tensor[map_tensor == 1] = 1
+    map_tensor[map_tensor == 2] = 2
+    map_tensor[map_tensor == 4] = 8
+    map_tensor[map_tensor == 3] = 4
+    # tmp = map_tensor.unique()
+    # pdb.set_trace()
+    vertical_edge = torch.abs(F.conv2d(map_tensor, vecrtical_kernel))
+    horizontal_edge = torch.abs(F.conv2d(map_tensor, horizontal_kernel))
+    # pdb.set_trace()
+    # plt.imshow(vertical_edge.permute(1,2,0))
+    # plt.savefig("vertical.png")
+    # plt.imshow(horizontal_edge.permute(1,2,0))
+    # plt.savefig("horizontal.png")
+    return check_border(
+        my_player_idx, target_player_idx, vertical_edge, horizontal_edge
+    )
+
+
 class Attacker(Role):
-    def __init__(self, logger, params):
+    def __init__(self, logger, params, target_player):
         super().__init__(logger, params)
-        self.noise = dict()
+        self.pincer_force = dict()
+        self.pincer_balance_assignment = 0
+        self.target_player = target_player
 
     def get_centroid(self, units):
         """
@@ -737,14 +804,22 @@ class Attacker(Role):
         return nearest_points(line, point)[0]
 
     def _turn_moves(self, update, dead_units):
+        # pdb.set_trace()
+        # tmp1 = self.params.player_idx
+        # tmp2 = self.target_player
+        # border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
+        # pdb.set_trace()
+
         ATTACK_INFLUENCE = 100
         AVOID_INFLUENCE = 300
+        SPREAD_INFLUENCE = 30
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.all_enemy_units()
+        enemy_units = update.enemy_units()
+        enemy_units = enemy_units[self.target_player]
 
-        # TODO get attack_force
+        # get attack force
         homebase_mode = True
         # get where to initiate the attack
         units_array = np.stack([v for k, v in own_units.items()])
@@ -754,9 +829,7 @@ class Attacker(Role):
             start_point = self.get_centroid(units_array)
         # get attack target and get formation
         avoid, target = self.find_target_simple(start_point, enemy_units)
-        # pdb.set_trace()
         formation = LineString([start_point, target])
-        # pdb.set_trace()
         # calcualte force
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
@@ -768,18 +841,22 @@ class Attacker(Role):
 
             attack_repulsion_force = repelling_force(unit_pos, avoid)
 
-            if unit_id not in self.noise:
-                noise_force = self.noise_force(attack_force)
-                self.noise[unit_id] = noise_force
+            attack_unit_spread_force = self.attacker_spread_force(
+                unit_pos, unit_id, own_units
+            )
 
-            # pdb.set_trace()
+            if unit_id not in self.pincer_force:
+                pincer_spread_force = self.pincer_spread_force(attack_force)
+                self.pincer_force[unit_id] = pincer_spread_force
+
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            noise_influence = 1 / dist_to_avoid * 10
+            PINCER_INFLUENCE = 1 / dist_to_avoid * 30
 
             total_force = normalize(
-                attack_repulsion_force * AVOID_INFLUENCE
+                SPREAD_INFLUENCE * attack_unit_spread_force
+                + +AVOID_INFLUENCE * attack_repulsion_force
                 + ATTACK_INFLUENCE * attack_force
-                + noise_influence * self.noise[unit_id]
+                + PINCER_INFLUENCE * self.pincer_force[unit_id]
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -804,15 +881,21 @@ class Attacker(Role):
         unit_vec, _ = force_vec(start_point, target_pos)
         return target_pos, target_pos - unit_vec * 10
 
-    def noise_force(self, attack_force):
-        # generate noise force roughly in the same direction as attack force
+    def attacker_spread_force(self, my_pos, my_id, own_units):
         # pdb.set_trace()
-        r = randint(0, 100)
+        attacker_unit_forces = [
+            repelling_force(my_pos, ally_pos)
+            for unit_id, ally_pos in own_units.items()
+            if unit_id != my_id
+        ]
+        spread_force = np.add.reduce(attacker_unit_forces)
+        return normalize(spread_force)
+
+    def pincer_spread_force(self, attack_force):
+        # alteranting left and right of the target point
         vec_perpendicular = attack_force.copy()
-        if r > 50:
-            vec_perpendicular[0] *= -1
-        else:
-            vec_perpendicular[1] *= -1
+        vec_perpendicular[self.pincer_balance_assignment] *= -1
+        self.pincer_balance_assignment = int(not bool(self.pincer_balance_assignment))
         return vec_perpendicular
 
     def attack_point(self, unit, target, closest_point):
@@ -837,6 +920,12 @@ class Attacker(Role):
         return attack_vec[0]
 
     def deallocation_candidate(self, target_point):
+        """
+        distance = []
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+            _, dist = force_vec(target_point, unit_pos)
+        """
         pass
 
 
@@ -961,7 +1050,7 @@ def early_scouts(rule_inputs: RuleInputs, uid: str):
 @spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-    if rule_inputs.update.turn > 20 and len(defender_role.units) < 20:
+    if rule_inputs.update.turn > 30 and len(defender_role.units) < 20:
         defender_role.allocate_unit(uid)
         return True
     return False
@@ -974,7 +1063,9 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid):
     total_scouts = sum(len(scouts.units) for scouts in scout_roles)
     total_attackers = sum(len(attackers.units) for attackers in attacker_roles)
     if total_scouts >= total_attackers:
-        attacker_roles[0].allocate_unit(uid)
+        global attack_roll
+        attacker_roles[attack_roll % 3].allocate_unit(uid)
+        attack_roll += 1
     else:
         scout_roles[0].allocate_unit(uid)
     return True
@@ -1084,9 +1175,11 @@ class Player:
         self.role_groups.add_group(
             RoleType.DEFENDER, LatticeDefender(self.logger, self.params, 40)
         )
-        self.role_groups.add_group(
-            RoleType.ATTACKER, Attacker(self.logger, self.params)
-        )
+        enemy_player = set([0, 1, 2, 3]) - set([player_idx])
+        for enemy_idx in enemy_player:
+            self.role_groups.add_group(
+                RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
+            )
         self.role_groups.add_group(
             RoleType.SCOUT, GreedyScout(self.logger, self.params)
         )
@@ -1141,7 +1234,10 @@ class Player:
         risks = list(
             zip(
                 enemy_unit_locations,
-                [min(100, (750 / (d1) + 750 / (d2))) for d1, d2 in risk_distances],
+                [
+                    min(100, (750 / (d1 + EPSILON) + 750 / (d2 + EPSILON)))
+                    for d1, d2 in risk_distances
+                ],
             )
         )
         # visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
