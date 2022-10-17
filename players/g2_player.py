@@ -1,6 +1,7 @@
 from collections import defaultdict
 import os
 import pickle
+from matplotlib import units
 from matplotlib.pyplot import close
 import numpy as np
 import sympy
@@ -19,22 +20,22 @@ import heapq
 DANGER_ZONE_RADIUS = 20
 
 DETECTION_RADIUS = 30
-DELTA_RADIUS = 0.1
+DELTA_RADIUS = 2
 
 #SCISSOR STARTING OUTER RADIUS
-OUTER_RADIUS = 55
-INNER_RADIUS = 50
+OUTER_RADIUS = 58
+INNER_RADIUS = 53
 
 OUTER_SPEED = 1
-INNER_SPEED = 0.6
+INNER_SPEED = INNER_RADIUS / OUTER_RADIUS
 
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
 REGION_INCREMENT = 0.5
 
 #priority of regions
-PRIORITY_ID = [4,2,0,1,3]
-PRIORITY_ID_INNER = [9,7,5,6,8]
+PRIORITY_ID = [9,7,5,6,8]
+PRIORITY_ID_INNER = [4,2,0,1,3]
 
 class ScissorRegion:
     def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius, speed):
@@ -60,6 +61,35 @@ class ScissorRegion:
 
         self.connected_scissor_region : ScissorRegion = None
         self.speed = speed
+
+        #for units in region
+        self.targets = {}
+
+    #call everyturn
+    def update_targets(self, units):
+
+        #assume units are sorted here
+        #units in u_id are in the region
+        #units is a list of [u_id], where the it is sorted by distance to self.target_point
+        n = len(units)
+
+        target = self.bounds[0]
+        opposite = self.bounds[1]
+
+        if self.direction == 1:
+            target = self.bounds[1]
+            opposite = self.bounds[0]
+
+        target_x = np.linspace(target[0], opposite[0], 2*n)
+        target_y = np.linspace(target[1], opposite[1], 2*n)
+
+        result = {}
+
+        for i in range(len(units)):
+            result[units[i]] = (target_x[i], target_y[i])
+
+        self.targets = result
+
 
     def update_polygons(self):
         self.polygon = Polygon([self.bounds[0], self.bounds[1], self.delta_bounds[1], self.delta_bounds[0]])
@@ -270,10 +300,10 @@ class Player:
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
 
-        print(self.regions)
+        #print(self.regions)
         for idx in range(SCISSOR_ZONE_COUNT):
-            self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
-            #self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
+            #self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
+            self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
 
 
         #key: u_id, val: region
@@ -502,6 +532,21 @@ class Player:
         
         return intersect_pos
 
+    def sort_by_distance(self, unit_id, r):
+
+        sorting_list = []
+
+        target = Point(r.target_point[0], r.target_point[1]) 
+
+        for u_id in unit_id:
+            if self.ally_units[u_id].distance(target) < 0.1:
+                r.changeDirection()
+
+        for u_id in unit_id:
+            sorting_list.append((self.ally_units[u_id].distance(target),u_id))
+
+        sorting_list.sort()
+        return [x[1] for x in sorting_list]
 
     def sentinel_moves(self, unit_ids) -> Dict[float, Tuple[float, float]]:
 
@@ -510,6 +555,13 @@ class Player:
         #print(enemy_count)
 
         region_contains_id, uid_in_region = self.regions_contain_id(unit_ids)
+
+        #update targetting for all regions
+        if len(uid_in_region) > 0:
+            for r in self.regions:
+                if len(region_contains_id[r]) > 0:
+                    unit_in_r = self.sort_by_distance(region_contains_id[r], r)
+                    r.update_targets(unit_in_r)
 
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
@@ -530,7 +582,7 @@ class Player:
 
             heapq.heappush(pqueue, element)
 
-        change_direction_region = []
+        #change_direction_region = []
 
         #print(uid_in_region)
         #print(dict(region_contains_id))
@@ -576,10 +628,10 @@ class Player:
                         self.regions_uid_otw[region] -= 1
 
                     #target point
-                    target = region.target_point
+                    target = region.targets[u_id]
 
-                    if math.dist(target, curr) <= 1:
-                        change_direction_region.append(region)
+                    #if math.dist(target, region.target_point) <= 1:
+                    #    change_direction_region.append(region)
 
                     moves[u_id] = self.point_move_within_scissor(curr, target, region.speed)
 
@@ -605,8 +657,8 @@ class Player:
 
                 heapq.heappush(pqueue, element_new)
 
-        for r in change_direction_region:
-            r.changeDirection()
+        #for r in change_direction_region:
+        #    r.changeDirection()
 
         #print(moves)
         return sentinel_transform_moves(moves)
