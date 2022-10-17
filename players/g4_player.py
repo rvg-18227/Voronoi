@@ -239,9 +239,12 @@ class RoleType(Enum):
     DEFENDER = 1
     ATTACKER = 2
     SCOUT = 3
+    INTERCEPTOR = 4
 
 
 class Role(ABC):
+    # Assigned when Role is inserted into RoleGroups
+    id: str
     _logger: logging.Logger
     _params: GameParameters
     _allocated_units: list[str]
@@ -249,9 +252,11 @@ class Role(ABC):
     def __init__(self, logger, params):
         self._logger = logger
         self._params = params
+
+        self.id = ""
         self.__allocated_units = []
 
-    def _debug(self, *args):
+    def debug(self, *args):
         self._logger.info(" ".join(str(a) for a in args))
 
     # ===========
@@ -317,67 +322,198 @@ class LatticeDefender(Role):
             return in_vec
         return np.array([0, 0])
 
+    def get_jitter(self, uid: str):
+        # Add decaying random direction bias
+        if not uid in self.__spawn_jitter:
+            self.__spawn_jitter[uid] = np.array((uniform(0.1, 1), uniform(0, 0.9)))
+
+        jitter_force = self.__spawn_jitter[uid]
+        self.__spawn_jitter[uid] *= 0.5
+
+        return jitter_force
+
     def _turn_moves(self, update, dead_units):
         self.counter += 1
-        envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
-        points = MultiPoint(
-            [Point(pos) for pos in update.unit_pos[self.params.player_idx]]
-        )
-        voronoi_polys = list(voronoi_diagram(points, envelope=envelope))
-
-        # Credit: G1
-        fixed_voronoi_polys = []
-        for region in voronoi_polys:
-            region_bounded = region.intersection(envelope)
-            if region_bounded.area > 0:
-                fixed_voronoi_polys.append(region_bounded)
-
-        # Visualize Voronoi regions
-        # plt.clf()
-        # for poly in fixed_voronoi_polys:
-        #     plt.fill(
-        #         *list(zip(*poly.exterior.coords)),
-        #         facecolor="#ffffcc",
-        #         edgecolor="black",
-        #         linewidth=1,
-        #     )
-        # plt.savefig(f"debug/{self.counter}.png")
-
-        defender_positions = {
-            id: pos
-            for id, pos in zip(
-                update.unit_id[self.params.player_idx],
-                update.unit_pos[self.params.player_idx],
+        try:
+            envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
+            points = MultiPoint(
+                [Point(pos) for pos in update.unit_pos[self.params.player_idx]]
             )
-            if id in self.units
-        }
+            voronoi_polys = list(voronoi_diagram(points, envelope=envelope).geoms)
+
+            # Credit: G1
+            fixed_voronoi_polys = []
+            for region in voronoi_polys:
+                region_bounded = region.intersection(envelope)
+                if region_bounded.area > 0:
+                    fixed_voronoi_polys.append(region_bounded)
+
+            # Visualize Voronoi regions
+            # plt.clf()
+            # for poly in fixed_voronoi_polys:
+            #     plt.fill(
+            #         *list(zip(*poly.exterior.coords)),
+            #         facecolor="#ffffcc",
+            #         edgecolor="black",
+            #         linewidth=1,
+            #     )
+            # plt.savefig(f"debug/{self.counter}.png")
+
+            defender_positions = {
+                id: pos
+                for id, pos in zip(
+                    update.unit_id[self.params.player_idx],
+                    update.unit_pos[self.params.player_idx],
+                )
+                if id in self.units
+            }
+
+            moves = {}
+            found = 0
+            for uid, pos in defender_positions.items():
+                jitter_force = self.get_jitter(uid)
+
+                unit_point = Point(pos[0], pos[1])
+                target = pos
+                for poly in fixed_voronoi_polys:
+                    if poly.contains(unit_point):
+                        found += 1
+                        target = np.array([poly.centroid.x, poly.centroid.y])
+                        continue
+                moves[uid] = to_polar(
+                    normalize(
+                        jitter_force
+                        + normalize(target - pos)
+                        + (100 * self.inside_radius(pos))
+                    )
+                )
+            return moves
+        except Exception as e:
+            self.debug("Exception when processing LatticeDefender moves", e)
+            return {
+                uid: to_polar(normalize(self.get_jitter(uid))) for uid in self.units
+            }
+
+    def deallocation_candidate(self, target_point):
+        pass
+
+
+class Interceptor(Role):
+    def __init__(self, logger, params):
+        super().__init__(logger, params)
+        self.noise = dict()
+
+    def get_centroid(self, units):
+        """
+        Find centroid on a cluster of points
+        """
+        return units.mean(axis=0)
+
+    def find_closest_point(self, line, point):
+        """
+        Find closest point on line segment given a point
+        """
+        return nearest_points(line, point)[0]
+
+    def _turn_moves(self, update, dead_units):
+        ATTACK_INFLUENCE = 100
+        AVOID_INFLUENCE = 300
 
         moves = {}
-        found = 0
-        for uid, pos in defender_positions.items():
-            # Add decaying random direction bias
-            if not uid in self.__spawn_jitter:
-                # self.__spawn_jitter[uid] = np.array((uniform(0.1, 1), uniform(0, 0.9)))
-                self.__spawn_jitter[uid] = np.array([0.0, 0.0])
+        own_units = update.own_units()
+        enemy_units = update.all_enemy_units()
 
-            jitter_force = self.__spawn_jitter[uid]
-            self.__spawn_jitter[uid] *= 0.5
-
-            unit_point = Point(pos[0], pos[1])
-            target = pos
-            for poly in fixed_voronoi_polys:
-                if poly.contains(unit_point):
-                    found += 1
-                    target = np.array([poly.centroid.x, poly.centroid.y])
-                    continue
-            moves[uid] = to_polar(
-                normalize(
-                    jitter_force
-                    + normalize(target - pos)
-                    + (100 * self.inside_radius(pos))
-                )
+        # TODO get attack_force
+        homebase_mode = True
+        # get where to initiate the attack
+        units_array = np.stack([v for k, v in own_units.items()])
+        if homebase_mode:  # attack from homebase
+            start_point = self.params.spawn_point
+        else:
+            start_point = self.get_centroid(units_array)
+        # get attack target and get formation
+        avoid, target = self.find_target_simple(start_point, enemy_units)
+        # pdb.set_trace()
+        formation = LineString([start_point, target])
+        # pdb.set_trace()
+        # calcualte force
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+            closest_pt_on_formation = self.find_closest_point(
+                formation, Point(unit_pos)
             )
+
+            attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
+
+            attack_repulsion_force = repelling_force(unit_pos, avoid)
+
+            if unit_id not in self.noise:
+                noise_force = self.noise_force(attack_force)
+                self.noise[unit_id] = noise_force
+
+            # pdb.set_trace()
+            dist_to_avoid = np.linalg.norm(avoid - unit_pos)
+            noise_influence = 1 / dist_to_avoid * 10
+
+            total_force = normalize(
+                attack_repulsion_force * AVOID_INFLUENCE
+                + ATTACK_INFLUENCE * attack_force
+                + noise_influence * self.noise[unit_id]
+            )
+
+            moves[unit_id] = to_polar(total_force)
         return moves
+
+    def find_target_simple(self, start_point, enemy_units):
+        # find a target to attack
+        # return 2 points, point A is where the enemy is
+        # point B is where we wanna go
+        # point A create a strong repulsive force
+        # Point B create a strong attracking force
+        # In hope that when going toward point B, our attack would "circle around" point A
+        # For now, just find a, and use heuristic(fix distance) for b
+        # find the closest point to our base
+        dist_to_home = []
+        for _, enemy_pos in enemy_units:
+            dist_to_home.append(
+                np.linalg.norm(self.params.home_base - enemy_pos).item()
+            )
+        target_idx = np.argmin(np.array(dist_to_home))
+        target_pos = enemy_units[target_idx][1]
+        unit_vec, _ = force_vec(start_point, target_pos)
+        return target_pos, target_pos - unit_vec * 10
+
+    def noise_force(self, attack_force):
+        # generate noise force roughly in the same direction as attack force
+        # pdb.set_trace()
+        r = randint(0, 100)
+        vec_perpendicular = attack_force.copy()
+        if r > 50:
+            vec_perpendicular[0] *= -1
+        else:
+            vec_perpendicular[1] *= -1
+        return vec_perpendicular
+
+    def attack_point(self, unit, target, closest_point):
+        """Given a unit, attack the target point following the foramtion.
+        Args:
+            units: attack unit
+            target: attack target
+            cloest_points: cloest point a unit is from its formation
+        Return:
+            attack vector following the formation
+        """
+        unit_vec_closest, mag_closest = force_vec(unit, closest_point.coords)
+        unit_vec_target, mag_target = force_vec(unit, target)
+        # Calculate weight for cloest point and target point
+        total_mag = mag_target + mag_closest + EPSILON
+        weight_target = mag_target / total_mag
+        weight_closest = mag_closest / total_mag
+        # Calculate move vec for each units
+        attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
+        attack_vec = attack_vec
+        attack_vec *= -1
+        return attack_vec[0]
 
     def deallocation_candidate(self, target_point):
         pass
@@ -627,18 +763,43 @@ class Attacker(Role):
 # =======================================
 # Dynamic Allocation Rules Infrastructure
 # =======================================
+class RoleGroups:
+    __role_groups: dict[RoleType, list[Role]]
+    __id_counters: dict[RoleType, int]
+
+    def __init__(self):
+        self.__role_groups = {role: [] for role in RoleType}
+        self.__id_counters = {role: 0 for role in RoleType}
+
+    def all_roles(self) -> list[Role]:
+        return [role for group in self.__role_groups.values() for role in group]
+
+    def of_type(self, type: RoleType) -> list[Role]:
+        return self.__role_groups[type]
+
+    def add_group(self, type: RoleType, role: Role):
+        role.id = f"{type}::{self.__id_counters[type]}"
+        self.__id_counters[type] += 1
+        self.__role_groups[type].append(role)
+
+    def remove_group(self, type: RoleType, id: str):
+        self.__role_groups[type] = [
+            role for role in self.__role_groups[type] if role.id != id
+        ]
+
+
 class RuleInputs:
     logger: logging.Logger
     params: GameParameters
     update: StateUpdate
-    role_groups: dict[RoleType, list[Role]]
+    role_groups: RoleGroups
 
     def __init__(
         self,
         logger: logging.Logger,
         params: GameParameters,
         update: StateUpdate,
-        role_groups: dict[RoleType, list[Role]],
+        role_groups: RoleGroups,
     ):
         self.logger = logger
         self.params = params
@@ -711,28 +872,23 @@ spawn_rules = SpawnRules()
 
 @spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
-    if (
-        rule_inputs.update.turn > 30
-        and len(rule_inputs.role_groups[RoleType.DEFENDER][0].units) < 20
-    ):
-        rule_inputs.role_groups[RoleType.DEFENDER][0].allocate_unit(uid)
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+    if rule_inputs.update.turn > 30 and len(defender_role.units) < 20:
+        defender_role.allocate_unit(uid)
         return True
     return False
 
 
 @spawn_rules.rule
 def even_scouts_attackers(rule_inputs: RuleInputs, uid):
-    total_scouts = sum(
-        len(scouts.units) for scouts in rule_inputs.role_groups[RoleType.SCOUT]
-    )
-    total_attackers = sum(
-        len(attackers.units) for attackers in rule_inputs.role_groups[RoleType.ATTACKER]
-    )
+    scout_roles = rule_inputs.role_groups.of_type(RoleType.SCOUT)
+    attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
+    total_scouts = sum(len(scouts.units) for scouts in scout_roles)
+    total_attackers = sum(len(attackers.units) for attackers in attacker_roles)
     if total_scouts >= total_attackers:
-        rule_inputs.role_groups[RoleType.ATTACKER][0].allocate_unit(uid)
+        attacker_roles[0].allocate_unit(uid)
     else:
-        rule_inputs.role_groups[RoleType.SCOUT][0].allocate_unit(uid)
-    rule_inputs.debug("scout/attacker rule")
+        scout_roles[0].allocate_unit(uid)
     return True
 
 
@@ -745,16 +901,42 @@ reallocation_rules = ReallocationRules()
 
 
 @reallocation_rules.rule
+def reassign_defenders_on_sufficient_density(rule_inputs: RuleInputs):
+    return False
+
+
+@reallocation_rules.rule
+def form_interceptors_on_threat(rule_inputs: RuleInputs):
+    rule_inputs.update.all_enemy_units()
+    return False
+
+
+@reallocation_rules.rule
+def reinforce_interceptors(rule_inputs: RuleInputs):
+    return False
+
+
+@reallocation_rules.rule
+def reinforce_defenders(rule_inputs: RuleInputs):
+    return False
+
+
+@reallocation_rules.rule
+def disband_interceptors_target_gone(rule_inputs: RuleInputs):
+    return False
+
+
+@reallocation_rules.rule
 def remove_empty_attack_groups(rule_inputs: RuleInputs):
-    if any(
-        len(group.units) == 0 for group in rule_inputs.role_groups[RoleType.ATTACKER]
-    ):
-        rule_inputs.role_groups[RoleType.ATTACKER] = [
-            group
-            for group in rule_inputs.role_groups[RoleType.ATTACKER]
-            if len(group.units) > 0
-        ]
-        return True
+    # if any(
+    #     len(group.units) == 0 for group in rule_inputs.role_groups[RoleType.ATTACKER]
+    # ):
+    #     rule_inputs.role_groups[RoleType.ATTACKER] = [
+    #         group
+    #         for group in rule_inputs.role_groups[RoleType.ATTACKER]
+    #         if len(group.units) > 0
+    #     ]
+    #     return True
     return False
 
 
@@ -766,6 +948,7 @@ class Player:
     logger: logging.Logger
     turn: int
     known_units: set[str]
+    role_groups: RoleGroups
 
     def __init__(
         self,
@@ -809,12 +992,14 @@ class Player:
         self.params.max_dim = max_dim
         self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
 
-        self.role_groups: dict[RoleType, list[Role]] = {role: [] for role in RoleType}
-        self.role_groups[RoleType.DEFENDER].append(
-            LatticeDefender(self.logger, self.params, 40)
+        self.role_groups = RoleGroups()
+        self.role_groups.add_group(
+            RoleType.DEFENDER, LatticeDefender(self.logger, self.params, 40)
         )
-        self.role_groups[RoleType.ATTACKER].append(Attacker(self.logger, self.params))
-        self.role_groups[RoleType.SCOUT].append(Scout(self.logger, self.params))
+        self.role_groups.add_group(
+            RoleType.ATTACKER, Attacker(self.logger, self.params)
+        )
+        self.role_groups.add_group(RoleType.SCOUT, Scout(self.logger, self.params))
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -874,10 +1059,7 @@ class Player:
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
         allocated_units = set(
-            uid
-            for role_group in self.role_groups.values()
-            for role in role_group
-            for uid in role.units
+            uid for role in self.role_groups.all_roles() for uid in role.units
         )
         free_units = own_units - allocated_units
         just_spawned = set(uid for uid in free_units if not uid in self.known_units)
@@ -900,8 +1082,12 @@ class Player:
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
-            for role_group in self.role_groups[role]:
-                role_moves.update(role_group.turn_moves(update))
+            for role_group in self.role_groups.of_type(role):
+                if len(role_group.units) > 0:
+                    try:
+                        role_moves.update(role_group.turn_moves(update))
+                    except Exception as e:
+                        self.debug("Exception processing role moves:", e)
         for unit_id in unit_id[self.params.player_idx]:
             if not unit_id in role_moves:
                 moves.append((0, 0))
