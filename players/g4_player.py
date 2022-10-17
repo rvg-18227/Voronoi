@@ -1109,20 +1109,21 @@ def early_scouts(rule_inputs: RuleInputs, uid: str):
 @spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-    if rule_inputs.update.turn > 30 and len(defender_role.units) < 20:
+    if rule_inputs.update.turn > 30 and len(defender_role.units) < 40:
         defender_role.allocate_unit(uid)
         return True
     return False
 
 
 @spawn_rules.rule
-def all_defense(rule_inputs: RuleInputs, uid):
-    rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
+def all_scouts(rule_inputs: RuleInputs, uid: str):
+    rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
     return True
 
 
-@spawn_rules.rule
-def even_scouts_attackers(rule_inputs: RuleInputs, uid):
+# Disabled for class
+# @spawn_rules.rule
+def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     scout_roles = rule_inputs.role_groups.of_type(RoleType.SCOUT)
     attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
     total_scouts = sum(len(scouts.units) for scouts in scout_roles)
@@ -1149,7 +1150,7 @@ def reassign_defenders_on_sufficient_density(rule_inputs: RuleInputs):
     return False
 
 
-# @reallocation_rules.rule
+@reallocation_rules.rule
 def form_interceptors_on_threat(rule_inputs: RuleInputs):
     # Visualize Clusters
     # if rule_inputs.params.player_idx == 0 and rule_inputs.update.turn % 10 == 0:
@@ -1212,7 +1213,9 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
                 )
                 defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
                 # TODO: Magic number for how many interceptors to allocate
-                for _ in range(10):
+                for _ in range(20):
+                    if len(defender_role.units) == 0:
+                        break
                     converted_defender = defender_role.deallocation_candidate(
                         rule_inputs.update, nearest_target
                     )
