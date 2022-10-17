@@ -141,14 +141,11 @@ class Player:
                 new_guard.append(guard)
         self.guard_list = new_guard
 
-        if self.current_day >= 40 and len(self.guard_list) < guard_num:
+        if self.current_day >= 50:
+            angle = np.arctan2(0, 1)
+            moves.append((1, angle))
             # the three guards as index in the points
             # grab the last three id and insert them into the list
-            cur_guard = len(ids) - 1
-            while len(self.guard_list) < guard_num and cur_guard > -1:
-                if ids[cur_guard] not in self.guard_list:
-                    self.guard_list.append(ids[cur_guard])
-                cur_guard -= 1
 
         moves = self.spread_points(current_radius, points)
         for i in range(len(moves)):
@@ -191,7 +188,7 @@ class Player:
         index = 0
         # variable base on the number of points that will be geenrated total
         angle_jump = size/self.total_points*10
-        angle_start = 45
+        angle_start = 15  # 45
         guard_index = 0
         guard_dict = {}
         for guard in self.guard_list:
