@@ -10,8 +10,8 @@ import shapely.ops
 import scipy
 from sklearn.cluster import DBSCAN
 
-from tests import plot_funcs
-from tests.plot_funcs import plot_units_and_edges, plot_poly_list, plot_incursions, plot_line_list, plot_debug_incur
+# from tests import plot_funcs
+# from tests.plot_funcs import plot_units_and_edges, plot_poly_list, plot_incursions, plot_line_list, plot_debug_incur
 
 warnings.filterwarnings("ignore", category=shapely.errors.ShapelyDeprecationWarning)
 
@@ -414,9 +414,9 @@ class Player:
         edges, edge_player_id = cg.clean_edges(edges, discrete_pts, discrete_players, pt_to_poly,
                                                region_was_unbounded, pt_to_poly_idx)
 
-        if self.current_day > 1000:
-            plot_units_and_edges(edges, edge_player_id, discrete_pts, discrete_players, pt_to_poly,
-                                 self.current_day)
+        # if self.current_day > 1000:
+        #     plot_units_and_edges(edges, edge_player_id, discrete_pts, discrete_players, pt_to_poly,
+        #                          self.current_day)
 
         # Create adjacency list for graph of armies
         adj_dict = cg.create_adj_dict(edges, discrete_pts)
