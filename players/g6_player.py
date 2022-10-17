@@ -392,8 +392,8 @@ class Spacer:
             return moves
         #print()
         # Adapted from group 4 Code
-        ENEMY_INFLUENCE = 1 # TODO: change influence values for best spacers!
-        HOME_INFLUENCE = 20
+        ENEMY_INFLUENCE = 0.4 # TODO: change influence values for best spacers!
+        HOME_INFLUENCE = 15
         ALLY_INFLUENCE = 0.5
 
         for i, unit in enumerate(self.unit_locations):
