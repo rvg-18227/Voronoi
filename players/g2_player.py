@@ -19,23 +19,26 @@ import heapq
 #HYPER PARAMETERS
 DANGER_ZONE_RADIUS = 20
 
-DETECTION_RADIUS = 30
+DETECTION_RADIUS = 20
 DELTA_RADIUS = 2
 
 #SCISSOR STARTING OUTER RADIUS
-OUTER_RADIUS = 58
+OUTER_RADIUS = 57
 INNER_RADIUS = 53
 
 OUTER_SPEED = 1
-INNER_SPEED = INNER_RADIUS / OUTER_RADIUS
+INNER_SPEED = 1
 
 #ANGLES FOR SCISSOR ZONE
 SCISSOR_ZONE_COUNT = 5
 REGION_INCREMENT = 0.5
 
 #priority of regions
-PRIORITY_ID = [9,7,5,6,8]
+PRIORITY_ID_OUTER = [9,7,5,6,8]
 PRIORITY_ID_INNER = [4,2,0,1,3]
+
+#fixed formation count
+FIXED_FORMATION_COUNT = 3
 
 class ScissorRegion:
     def __init__(self, bounds, delta_bounds, detection_bounds, id, player_idx, angles, radius, speed):
@@ -80,8 +83,8 @@ class ScissorRegion:
             target = self.bounds[1]
             opposite = self.bounds[0]
 
-        target_x = np.linspace(target[0], opposite[0], 2*n)
-        target_y = np.linspace(target[1], opposite[1], 2*n)
+        target_x = np.linspace(target[0], opposite[0], n+1)
+        target_y = np.linspace(target[1], opposite[1], n+1)
 
         result = {}
 
@@ -118,7 +121,6 @@ class ScissorRegion:
         self.target_point = self.bounds[self.direction]
 
     def changeBounds(self, radius_increment):
-        home = get_home_coords(self.player_idx)
 
         increment_l = find_increment(radius_increment, self.angles[0])
         increment_r = find_increment(radius_increment, self.angles[1])
@@ -129,7 +131,7 @@ class ScissorRegion:
         #print(increment_r)
 
         self.bounds = increment_bounds(self.bounds, increment_l, increment_r)
-        #self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
+        self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
         self.detection_bounds = increment_bounds(self.detection_bounds, increment_l, increment_r)
 
         self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(self.bounds), self.find_cp(self.delta_bounds)))
@@ -297,7 +299,7 @@ class Player:
         self.enemy_killed_unit_ids = []
 
         self.sent_radius = OUTER_RADIUS
-        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID, OUTER_SPEED)
+        self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID_OUTER, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
 
         # print(self.regions)
@@ -567,8 +569,6 @@ class Player:
         #no units > danger score > closest
         pqueue = []
 
-        #print(self.regions)
-
         #create priority list
         for r in self.regions:
             
@@ -602,19 +602,18 @@ class Player:
 
                 #only expand when
                 #experimental expansion strategy
-                #if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10):
-                if False:
 
-                    #move region up by 0.5
-                    region.changeBounds(REGION_INCREMENT)
+                #outer_ids
+                if region.id in PRIORITY_ID_OUTER:
+                    if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10) + 1:
 
-                    for u in region_contains_id[region]:
-                        target = region.target_point
+                        #move region up by 0.5
+                        region.changeBounds(REGION_INCREMENT)
 
-                        if math.dist(target, curr) <= 1:
-                            change_direction_region.append(region)
-                        
-                        moves[u] = self.point_move_within_scissor(curr, target)
+                        for u in region_contains_id[region]:
+                            target = region.target_point
+                            
+                            moves[u] = self.point_move_within_scissor(curr, target)
 
                 else:
 
@@ -724,7 +723,11 @@ class Player:
   
         alive_ally_unit_ids = list(self.ally_units.keys())
         assignable_ally_unit_ids = sorted(list(self.historical_ally_unit_ids), key=int)
-        assignable_ally_unit_ids = assignable_ally_unit_ids[3:]
+
+        #seperate fixed formation vs strategic allys
+        fixed_formation_ally_unit_ids = assignable_ally_unit_ids[:FIXED_FORMATION_COUNT]
+        assignable_ally_unit_ids = assignable_ally_unit_ids[FIXED_FORMATION_COUNT:]
+
         assignable_ally_unit_id_chunks = [assignable_ally_unit_ids[i:i+10] for i in range(0, len(assignable_ally_unit_ids), 10)]
 
         sentinel_unit_ids = \
@@ -742,8 +745,8 @@ class Player:
             [chunk[9] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 10]
 
         # Assign first units to move out at strategig angles to capture territory early game
-        fixed_formation_unit_ids = [uid for uid in assignable_ally_unit_ids[0:3] if uid in alive_ally_unit_ids]
-        moves.update(self.fixed_formation_moves(fixed_formation_unit_ids, [0, 90]))
+        fixed_formation_unit_ids = [uid for uid in fixed_formation_ally_unit_ids if uid in alive_ally_unit_ids]
+        moves.update(self.fixed_formation_moves(fixed_formation_unit_ids, [45, 20, 70]))
 
         # Assign a large portion of our units as sentinels
         moves.update(self.sentinel_moves([uid for uid in sentinel_unit_ids if uid in alive_ally_unit_ids]))
@@ -753,7 +756,8 @@ class Player:
 
         # Assign the rest of our units to be scouts
         moves.update(self.scout_moves([uid for uid in scout_unit_ids if uid in alive_ally_unit_ids]))
- 
+
+        #print(moves)
         return list(moves.values())
 
     #what is the enemy_count team_count for a given point
