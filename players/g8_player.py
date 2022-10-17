@@ -123,7 +123,8 @@ class Player:
         self.total_points = self.total_days//self.spawn_days
         self.current_day = (len(points)/(self.total_days //
                             self.spawn_days) * self.total_days)//1  # rough estimate
-        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
+        # intialize the look up dict for id => points
+        self.make_point_dict(points, ids)
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
@@ -139,7 +140,7 @@ class Player:
             current_radius += 1
             # some code to spread
         new_guard = []
-        
+
         for i in range(len(self.guard_list)):
             guard = self.guard_list[i]
             if guard in ids:
@@ -151,7 +152,7 @@ class Player:
             # grab the last three id and insert them into the list
             cur_guard = len(ids) - 1
             while len(self.guard_list) < guard_num and cur_guard > -1:
-                #if we dont have enough guard
+                # if we dont have enough guard
                 if ids[cur_guard] not in self.guard_list:
                     self.guard_list.append(ids[cur_guard])
                 cur_guard -= 1
@@ -160,7 +161,16 @@ class Player:
         for i in range(len(moves)):
             moves[i] = self.transform_move(moves[i])
 
-        # print(self.is_safe(unit_pos, map_states))
+        self.enemy_position = []
+        self.map_states = map_states
+        for i in range(4):
+            if i == (self.player_idx-1):
+                continue
+            # add all the other player's position into a list
+            self.enemy_position += list(map(np.array, unit_pos[i]))
+        self.points = list(map(np.array, unit_pos[self.player_idx]))
+        print(self.safety_heuristic(
+            [unit_pos[-1][0].x, unit_pos[-1][0].y], 20))
 
         return moves
 
@@ -208,21 +218,21 @@ class Player:
             distance = 1
             #angle = (((index) * (angle_jump) + angle_start)) % 90
             distance = 1
-            if id in self.guard_list and self.is_stay_guard == False: ## call the move guard function
-                print( self.angles[guard_index])
-                distance,angle = self.move_stay_guard(point,self.angles[guard_index],guard_index)
+            if id in self.guard_list and self.is_stay_guard == False:  # call the move guard function
+                print(self.angles[guard_index])
+                distance, angle = self.move_stay_guard(
+                    point, self.angles[guard_index], guard_index)
                 guard_index += 1
-            index +=1 
+            index += 1
             moves.append((distance, angle*(math.pi / 180)))
-
 
         return moves
 
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle : Float,
-        guard_index:int
+        angle: Float,
+        guard_index: int
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         # with the coordinate (1,0); (1,1) : (0,1)
@@ -235,9 +245,9 @@ class Player:
             move.append((0, 0))
             is_guard.append(0)
         else:
-                dist = min(g_s_dist, 1)
-                angel = g_s_ang
-                move.append((dist, angel))
+            dist = min(g_s_dist, 1)
+            angel = g_s_ang
+            move.append((dist, angel))
         # move the points back to the base so that the coordinates would the right
         return move[0]
 
@@ -260,12 +270,29 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
-    def is_safe(
-            self,
-            unit_pos,
-            map_states
-    ) -> Boolean:
-        # TODO the safety heuristic
-        # print(unit_pos)
-        # print(map_states)
-        return False
+    def safety_heuristic(self, point: list[float], rad) -> list[float]:
+        # point and how far we want to look
+        num_enemy_near = 0
+        num_ally_near = 0
+        for enemy in self.enemy_position:
+            enemy_x = enemy[0]
+            enemy_y = enemy[1]
+            if self.isInside(point[0], point[1], rad, enemy_x, enemy_y):
+                num_enemy_near += 1
+        for ally in self.points:
+            ally_x = ally[0]
+            ally_y = ally[1]
+            if self.isInside(point[0], point[1], rad, ally_x, ally_y):
+                num_ally_near += 1
+        return num_enemy_near, num_ally_near
+
+    def isInside(self, circle_x, circle_y, rad, x, y):
+
+        # Compare radius of circle
+        # with distance of its center
+        # from given point
+        if ((x - circle_x) * (x - circle_x) +
+                (y - circle_y) * (y - circle_y) <= rad * rad):
+            return True
+        else:
+            return False
