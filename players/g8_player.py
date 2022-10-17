@@ -9,13 +9,11 @@ from typing import List, Tuple
 from xmlrpc.client import Boolean
 
 import numpy as np
-from pyproj import Transformer
 from shapely.geometry import Point
 from shapely.ops import transform
 import simplekml
 import sympy
 from sympy import Circle
-from traitlets import Float
 
 
 class Player:
@@ -68,12 +66,11 @@ class Player:
         self.guard_point = []
         self.angles = [0, math.pi/4, math.pi/2]
         for angle in angles:
-            new_angel = angle -(math.pi/2 * self.player_idx)
-            new_a = self.spawn_point.x + (1 * np.cos(new_angel))
-            new_b = self.spawn_point.y+ (1 * np.sin(new_angel))
-            self.guard_point.append(Point(new_a,new_b))
+            new_angle = angle - (math.pi/2 * self.player_idx)
+            new_a = self.spawn_point.x + (1 * np.cos(new_angle))
+            new_b = self.spawn_point.y + (1 * np.sin(new_angle))
+            self.guard_point.append(Point(new_a, new_b))
         print(self.guard_point)
-        
 
     def play(
             self,
@@ -112,8 +109,9 @@ class Player:
         ids = unit_id[self.player_idx]
         base_point = points[0]
         self.total_points = self.total_days//self.spawn_days
-        self.current_day +=1
-        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
+        self.current_day += 1
+        # intialize the look up dict for id => points
+        self.make_point_dict(points, ids)
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
@@ -153,13 +151,13 @@ class Player:
         self.enemy_position = []
         self.map_states = map_states
         for i in range(4):
-            if i == (self.player_idx-1):
+            if i == (self.player_idx - 1):
                 continue
             # add all the other player's position into a list
             self.enemy_position += list(map(np.array, unit_pos[i]))
         self.points = list(map(np.array, unit_pos[self.player_idx]))
-        print(self.safety_heuristic(
-            [unit_pos[-1][0].x, unit_pos[-1][0].y], 20))
+        print(self.is_safe(
+           [unit_pos[-1][0].x, unit_pos[-1][0].y], 20))
 
         return moves
 
@@ -204,20 +202,24 @@ class Player:
             id = val[0]
             point = val[1]
             point_point = Point(point)
-            if id in self.guard_list and self.is_stay_guard == False: ## call the move guard function
-                distance,angle = self.move_stay_guard(point,self.angles[guard_index],guard_index)
+            if id in self.guard_list and self.is_stay_guard is False:  # call the move guard function
+                distance, angle = self.move_stay_guard(
+                    point, self.angles[guard_index], guard_index)
                 guard_index += 1
-            else: #if just a normal unit
-                distance = point_point.distance(self.point_formation[point_index])
-                angle = self.angle_between(point_point, self.point_formation[point_index])
-                point_index+=1
+            else:  # if just a normal unit
+                distance = point_point.distance(
+                    self.point_formation[point_index])
+                angle = self.angle_between(
+                    point_point, self.point_formation[point_index])
+                point_index += 1
             moves.append((distance, angle))
 
         return moves
+
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle: Float,
+        angle: float,
         guard_index: int
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
@@ -226,15 +228,17 @@ class Player:
         move = []
         is_guard = []
         g_s_dist = abs(guard_point.distance(self.guard_point[guard_index]))
-        g_s_ang =self.angle_between(guard_point, self.guard_point[guard_index])
+        g_s_ang = self.angle_between(
+            guard_point, self.guard_point[guard_index])
         if g_s_dist == 1 and g_s_ang == angle:
             move.append((0, 0))
             is_guard.append(0)
         else:
             dist = min(g_s_dist, 1)
-            angel = g_s_ang
-            move.append((dist, angel))
-        # move the points back to the base so that the coordinates would the right
+            angle = g_s_ang
+            move.append((dist, angle))
+        # move the points back to the base so
+        # that the coordinates would the right
         return move[0]
 
     def angle_between(
@@ -248,6 +252,7 @@ class Player:
         dx = p1[0]-p2[0]
         angle = math.atan2(dy, dx)
         return angle
+
     def transform_move(
             self,
             dist_ang: Tuple[float, float]
@@ -255,52 +260,62 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
 
-    def safety_heuristic(self, point: list[float], rad) -> list[float]:
+    def is_safe(
+            self,
+            point: list[float],
+            rad
+    ) -> tuple[float, float]:
         # point and how far we want to look
         num_enemy_near = 0
         num_ally_near = 0
         for enemy in self.enemy_position:
             enemy_x = enemy[0]
             enemy_y = enemy[1]
-            if self.isInside(point[0], point[1], rad, enemy_x, enemy_y):
+            if self.is_inside(point[0], point[1], rad, enemy_x, enemy_y):
                 num_enemy_near += 1
         for ally in self.points:
             ally_x = ally[0]
             ally_y = ally[1]
-            if self.isInside(point[0], point[1], rad, ally_x, ally_y):
+            if self.is_inside(point[0], point[1], rad, ally_x, ally_y):
                 num_ally_near += 1
         return num_enemy_near, num_ally_near
 
-    def isInside(self, circle_x, circle_y, rad, x, y):
-
+    def is_inside(
+            self,
+            circle_x,
+            circle_y,
+            rad,
+            x,
+            y
+    ) -> bool:
         # Compare radius of circle
         # with distance of its center
         # from given point
-        if ((x - circle_x) * (x - circle_x) +
-                (y - circle_y) * (y - circle_y) <= rad * rad):
+        if (x - circle_x) ** 2 + (y - circle_y) ** 2 <= rad ** 2:
             return True
         else:
             return False
-    def calculate_formation(self):
+
+    def calculate_formation(self) -> None:
         self.point_formation = []
-        number_points = len(self.point_dict) ## get the total number of points right now 
+        # get the total number of points right now
+        number_points = len(self.point_dict)
         if self.current_day >= 40:
-            number_points-=3
-            if number_points>0:
-                print( "making circle")
-                #only pi/2 radians
+            number_points -= 3
+            if number_points > 0:
+                print("making circle")
                 rad_step = math.pi/2 / number_points
-                radius_step = 80/self.total_days
+                radius_step = 80/self.total_days               # only pi/2 radians
                 cir_radius = radius_step*number_points
                 angle = 0
-                for i in range(number_points):
+                for _ in range(number_points):
                     x = cir_radius+np.cos(angle)
                     y = cir_radius+np.sin(angle)
                     angle += radius_step
-                    print(x,y)
-                    self.point_formation.append(Point(x,y))##add the point to the list
+                    print(x, y)
+                    # add the point to the list
+                    self.point_formation.append(Point(x, y))
                 print(self.point_formation)
         else:
-            for point in  range(number_points):
-                self.point_formation.append(Point(50,50))
-    
+            for point in range(number_points):
+                self.point_formation.append(Point(50, 50))
