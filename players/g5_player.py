@@ -142,7 +142,8 @@ class Player:
         #     BOUNDARY_THRESHOLD = 2
         if mode == "defense":
             ALLY_INFLUENCE = -0.1
-            ARC_MEAN_INFLUENCE = 0.5
+            ARC_MEAN_INFLUENCE = 0 # oldest 8 units, pushes defensive units
+            # use this influence when we're > 20 units away from home base
            
         else:
             ALLY_INFLUENCE = 0.2
@@ -176,8 +177,8 @@ class Player:
 
         ally_force = [
             self.repelling_force(unit_pos, ally_pos)
-            for i, (ally_id, ally_pos) in enumerate(own_units)
-            if ally_id != unit_id and i % 2 != 0
+            for ally_id, ally_pos in own_units
+            if ally_id != unit_id
         ] # repelled by only spreader units
         ally_force = np.add.reduce(ally_force)
 
