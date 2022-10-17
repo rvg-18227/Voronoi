@@ -847,7 +847,7 @@ class Attacker(Role):
     def __init__(self, logger, params, target_player):
         super().__init__(logger, params)
         self.pincer_force = dict()
-        self.pincer_balance_assignment = 0
+        self.pincer_left_side = False
         self.target_player = target_player
 
     def get_centroid(self, units):
@@ -871,13 +871,12 @@ class Attacker(Role):
 
         ATTACK_INFLUENCE = 100
         AVOID_INFLUENCE = 300
-        SPREAD_INFLUENCE = 30
+        SPREAD_INFLUENCE = 10
 
         moves = {}
         own_units = update.own_units()
         enemy_units = update.enemy_units()
-        enemy_units = enemy_units[self.target_player]
-
+        
         # get attack force
         homebase_mode = True
         # get where to initiate the attack
@@ -887,7 +886,7 @@ class Attacker(Role):
         else:
             start_point = self.get_centroid(units_array)
         # get attack target and get formation
-        avoid, target = self.find_target_simple(start_point, enemy_units)
+        avoid, target = self.find_target_simple(start_point, enemy_units[self.target_player])
         formation = LineString([start_point, target])
         # calcualte force
         for unit_id in self.units:
@@ -895,7 +894,7 @@ class Attacker(Role):
             closest_pt_on_formation = self.find_closest_point(
                 formation, Point(unit_pos)
             )
-
+            
             attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
 
             attack_repulsion_force = repelling_force(unit_pos, avoid)
@@ -909,13 +908,12 @@ class Attacker(Role):
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = 1 / dist_to_avoid * 30
+            PINCER_INFLUENCE = 1 / (dist_to_avoid - 5) * 30
 
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
-                + +AVOID_INFLUENCE * attack_repulsion_force
+                + AVOID_INFLUENCE * attack_repulsion_force * self.pincer_force[unit_id]
                 + ATTACK_INFLUENCE * attack_force
-                + PINCER_INFLUENCE * self.pincer_force[unit_id]
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -952,10 +950,14 @@ class Attacker(Role):
 
     def pincer_spread_force(self, attack_force):
         # alteranting left and right of the target point
-        vec_perpendicular = attack_force.copy()
-        vec_perpendicular[self.pincer_balance_assignment] *= -1
-        self.pincer_balance_assignment = int(not bool(self.pincer_balance_assignment))
-        return vec_perpendicular
+        dir_vector = None
+        if self.pincer_left_side:
+            dir_vector = np.array([-1, 1])
+            self.pincer_left_side = not self.pincer_left_side
+        else:
+            dir_vector = np.array([1, -1])
+            self.pincer_left_side = not self.pincer_left_side
+        return dir_vector
 
     def attack_point(self, unit, target, closest_point):
         """Given a unit, attack the target point following the foramtion.
@@ -1097,6 +1099,13 @@ class ReallocationRules:
 # Higher up means higher precedence
 spawn_rules = SpawnRules()
 
+# ATTACKER TESTING
+@spawn_rules.rule
+def all_attackers(rule_inputs: RuleInputs, uid: str):
+    global attack_roll
+    rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
+    attack_roll += 1
+    return True
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
