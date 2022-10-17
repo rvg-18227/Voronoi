@@ -300,7 +300,7 @@ class Player:
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
 
-        #print(self.regions)
+        # print(self.regions)
         for idx in range(SCISSOR_ZONE_COUNT):
             #self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
             self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
