@@ -1,21 +1,11 @@
 """Player module for Group 8 - Voronoi."""
-from distutils.spawn import spawn
 import logging
 import math
-import os
-import pickle
-from re import L
 from typing import List, Tuple
-from xmlrpc.client import Boolean
 
 import numpy as np
-from pyproj import Transformer
 from shapely.geometry import Point
-from shapely.ops import transform
-import simplekml
 import sympy
-from sympy import Circle
-from traitlets import Float
 
 
 class Player:
@@ -213,7 +203,6 @@ class Player:
                     i, self.angles[guard_index])
                 guard_index += 1
             moves.append((distance, angle*(math.pi / 180)))
-
 
         return moves
 
