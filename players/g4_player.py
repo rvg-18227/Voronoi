@@ -903,9 +903,10 @@ class Attacker(Role):
                 unit_pos, unit_id, own_units
             )
             
+            #pdb.set_trace()
             ux, uy = unit_pos
-            wall_normals = [(ux, self.min_dim), (ux, self.max_dim), (self.min_dim, uy), (self.max_dim, uy)]
-            wall_forces = [self.repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_normals = [(ux, 0), (ux, 100), (0, uy), (100, uy)]
+            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
             wall_force = normalize(np.add.reduce(wall_forces))
             
             if unit_id not in self.pincer_force:
