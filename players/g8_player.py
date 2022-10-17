@@ -76,6 +76,7 @@ class Player:
         self.precomp_dir = precomp_dir
         self.is_stay_guard = False
         self.guard_list = []
+        self.guard_point = []
 
         self.enemy_distance = 0  # how far ahead to look for enemy units before moving forward
         angles = [0, 45, 90]
@@ -122,17 +123,13 @@ class Player:
         self.total_points = self.total_days//self.spawn_days
         self.current_day = (len(points)/(self.total_days //
                             self.spawn_days) * self.total_days)//1  # rough estimate
-        min_distance = 0.5
-        # intialize the look up dict for id => points
-        self.make_point_dict(points, ids)
+        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
-        max_distance = math.pi * radius / 2 * time
         newest_point = points[-1]
         p_new, p_base = Point(newest_point), Point(base_point)
         current_radius = 0
-        # print(map_states[50])
         if len(points) > 1:
             point1 = points[1]
             p1 = Point(point1)
@@ -142,6 +139,7 @@ class Player:
             current_radius += 1
             # some code to spread
         new_guard = []
+        
         for i in range(len(self.guard_list)):
             guard = self.guard_list[i]
             if guard in ids:
@@ -153,6 +151,7 @@ class Player:
             # grab the last three id and insert them into the list
             cur_guard = len(ids) - 1
             while len(self.guard_list) < guard_num and cur_guard > -1:
+                #if we dont have enough guard
                 if ids[cur_guard] not in self.guard_list:
                     self.guard_list.append(ids[cur_guard])
                 cur_guard -= 1
@@ -201,17 +200,19 @@ class Player:
         angle_start = 45
         guard_index = 0
         guard_dict = {}
-        for guard in self.guard_list:
-            guard_dict[guard] = self.point_dict[guard]
-        for i in points:
-            index += 1
+        index = 0
+        for val in self.point_dict.items():
+            id = val[0]
+            point = val[1]
+            angle = 0
             distance = 1
-            angle = (((index) * (angle_jump) + angle_start)) % 90
-            # call the move guard function
-            if i in guard_dict.items() and self.is_stay_guard is False:
-                distance, angle = self.move_stay_guard(
-                    i, self.angles[guard_index])
+            #angle = (((index) * (angle_jump) + angle_start)) % 90
+            distance = 1
+            if id in self.guard_list and self.is_stay_guard == False: ## call the move guard function
+                print( self.angles[guard_index])
+                distance,angle = self.move_stay_guard(point,self.angles[guard_index],guard_index)
                 guard_index += 1
+            index +=1 
             moves.append((distance, angle*(math.pi / 180)))
 
 
@@ -220,7 +221,8 @@ class Player:
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle: Float
+        angle : Float,
+        guard_index:int
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         # with the coordinate (1,0); (1,1) : (0,1)
@@ -233,12 +235,11 @@ class Player:
             move.append((0, 0))
             is_guard.append(0)
         else:
-            dist = min(g_s_dist, 1)
-            angle = g_s_ang
-            move.append((dist, angle))
-        # move the points back to the base so that
-        # the coordinates would the right
-        return move
+                dist = min(g_s_dist, 1)
+                angel = g_s_ang
+                move.append((dist, angel))
+        # move the points back to the base so that the coordinates would the right
+        return move[0]
 
     def angle_between(
             self,
