@@ -145,8 +145,8 @@ class Player:
                 cur_guard -= 1
 
         moves = self.spread_points(current_radius, points)
-        for i in range(len(moves)):
-            moves[i] = self.transform_move(moves[i])
+        #for i in range(len(moves)):
+            #moves[i] = self.transform_move(moves[i])
 
         self.enemy_position = []
         self.map_states = map_states
@@ -156,8 +156,7 @@ class Player:
             # add all the other player's position into a list
             self.enemy_position += list(map(np.array, unit_pos[i]))
         self.points = list(map(np.array, unit_pos[self.player_idx]))
-        print(self.is_safe(
-           [unit_pos[-1][0].x, unit_pos[-1][0].y], 20))
+        print(moves)
 
         return moves
 
@@ -202,37 +201,30 @@ class Player:
             id = val[0]
             point = val[1]
             point_point = Point(point)
-            if id in self.guard_list and self.is_stay_guard is False:  # call the move guard function
-                distance, angle = self.move_stay_guard(
-                    point, self.angles[guard_index], guard_index)
+            if id in self.guard_list and self.is_stay_guard == False: ## call the move guard function
+                distance,angle = self.move_stay_guard(point,guard_index)
                 guard_index += 1
-            else:  # if just a normal unit
-                distance = point_point.distance(
-                    self.point_formation[point_index])
-                angle = self.angle_between(
-                    point_point, self.point_formation[point_index])
-                point_index += 1
-            moves.append((distance, angle))
-
+            else: #if just a normal unit
+                
+                distance = min(1,self.point_formation[point_index].distance(point_point))
+                print(distance)
+                angle = self.angle_between(self.point_formation[point_index],point_point )
+                point_index+=1
+            moves.append((distance, angle*(math.pi / 180)))
+        
         return moves
 
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle: float,
         guard_index: int
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
-        # with the coordinate (1,0); (1,1) : (0,1)
-        # remove the last three points
         move = []
-        is_guard = []
-        g_s_dist = abs(guard_point.distance(self.guard_point[guard_index]))
-        g_s_ang = self.angle_between(
-            guard_point, self.guard_point[guard_index])
-        if g_s_dist == 1 and g_s_ang == angle:
+        g_s_dist = abs(self.guard_point[guard_index]).distance(guard_point)
+        g_s_ang =self.angle_between( self.guard_point[guard_index],guard_point)
+        if g_s_dist == 0:
             move.append((0, 0))
-            is_guard.append(0)
         else:
             dist = min(g_s_dist, 1)
             angle = g_s_ang
@@ -301,21 +293,21 @@ class Player:
         # get the total number of points right now
         number_points = len(self.point_dict)
         if self.current_day >= 40:
-            number_points -= 3
-            if number_points > 0:
-                print("making circle")
-                rad_step = math.pi/2 / number_points
-                radius_step = 80/self.total_days               # only pi/2 radians
+            number_points-=3
+            if number_points>0:
+                print( "making circle")
+                #only pi/2 radians
+                radian_step = math.pi/2 / number_points
+                radius_step = 0.5
                 cir_radius = radius_step*number_points
                 angle = 0
                 for _ in range(number_points):
                     x = cir_radius+np.cos(angle)
                     y = cir_radius+np.sin(angle)
-                    angle += radius_step
-                    print(x, y)
-                    # add the point to the list
-                    self.point_formation.append(Point(x, y))
-                print(self.point_formation)
+                    angle += radian_step
+                    print("xy",x,y)
+                    self.point_formation.append(Point(x,y))##add the point to the list
+               
         else:
             for point in range(number_points):
                 self.point_formation.append(Point(50, 50))
