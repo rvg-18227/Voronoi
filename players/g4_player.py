@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import pdb
+import traceback
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
@@ -63,7 +64,7 @@ class StateUpdate:
     unit_pos: list[list[Point]]
     map_states: list[list[int]]
     turn: int
-    cached_ownership = Optional[
+    cached_ownership: Optional[
         tuple[
             dict[int, dict[str, list[tuple[int, int]]]],
             dict[tuple[int, int], tuple[int, str]],
@@ -83,6 +84,7 @@ class StateUpdate:
         self.unit_id = unit_id
         self.unit_pos = unit_pos
         self.map_states = map_states
+        self.cached_ownership = None
 
     # =============================
     # Role Update Utility Functions
@@ -595,43 +597,121 @@ class RadialDefender(Role):
         pass
 
 
-class Scout(Role):
+class FirstScout(Role):
+    def __init__(self, logger, params, scout_id):
+        super().__init__(logger, params)
+
     def _turn_moves(self, update, dead_units):
-        HOME_INFLUENCE = 30
         own_units = update.own_units()
-        enemy_units = update.all_enemy_units()
         moves = {}
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
-
-            ux, uy = unit_pos
-            if self.params.player_idx == 0:
-                wall_normals = [(ux, self.params.min_dim), (self.params.min_dim, uy)]
-            elif self.params.player_idx == 1:
-                wall_normals = [(ux, self.params.max_dim), (self.params.min_dim, uy)]
-            elif self.params.player_idx == 2:
-                wall_normals = [(ux, self.params.max_dim), (self.params.max_dim, uy)]
-            elif self.params.player_idx == 3:
-                wall_normals = [(ux, self.params.min_dim), (self.params.max_dim, uy)]
-            else:
-                pass
-
-            horizontal_influence = np.random.randint(40) - 10
-            if int(unit_id) % 2 == 0:
-                horizontal_force = repelling_force(unit_pos, wall_normals[0])
-            else:
-                horizontal_force = repelling_force(unit_pos, wall_normals[1])
-
-            if int(unit_id) % 4 == 0 or int(unit_id) % 4 == 1:
-                horizontal_influence = np.random.randint(30) - 10
-
-            total_force = normalize(
-                (home_force * HOME_INFLUENCE)
-                + (horizontal_force * horizontal_influence)
-            )
+            total_force = normalize((home_force * 10))
             # self._logger.debug("force", total_force)
             moves[unit_id] = to_polar(total_force)
+            # self._debug(moves)
+
+        return moves
+
+    def deallocation_candidate(self, target_point):
+        pass
+
+
+class GreedyScout(Role):
+    def __init__(self, logger, params):
+        super().__init__(logger, params)
+        self.owned = {}
+        self.first_turn = True
+
+        # unit_id -> scout_id
+        self.temp_id = {}
+        self.id_counter = 0
+
+    def closest_enemy_dist(self, update, uid, own_units):
+        enemy_units = update.all_enemy_units()
+        p = own_units[uid]
+        closest_dist = 500
+        for _, enemy_pos in enemy_units:
+            closest_dist = min(closest_dist, np.linalg.norm(p - enemy_pos))
+        return closest_dist
+
+    def _turn_moves(self, update, dead_units):
+        for uid in self.units:
+            if not uid in self.temp_id:
+                self.temp_id[uid] = self.id_counter
+                self.id_counter += 1
+
+        HOME_INFLUENCE = 30
+        own_units = update.own_units()
+        moves = {}
+        unit_to_owned, _ = update.unit_ownership()
+        for unit_id in self.units:
+            # self._debug("text")
+            # self._debug(f"uid {unit_id}")
+            # self._debug(f"owns {self.ownership}")
+            # self._debug(f"owns 2 {self.ownership[self.params.player_idx]}")
+            owns = 0
+            if unit_id in unit_to_owned[self.params.player_idx]:
+                owns = len(unit_to_owned[self.params.player_idx][unit_id])
+            if not unit_id in self.owned:
+                self.owned[unit_id] = owns
+            else:
+                owned = self.owned[unit_id]
+                if owned > owns:
+                    self.temp_id[unit_id] += 1
+            unit_pos = own_units[unit_id]
+            home_force = repelling_force(unit_pos, self.params.home_base)
+            closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
+
+            if closest_enemy_d < 2:  # RUN AWAY TO HOME
+
+                force = to_polar(normalize((home_force * HOME_INFLUENCE)))
+                move = (force[0], force[1] + np.pi)
+                moves[unit_id] = move
+            elif closest_enemy_d < 5:  # STAY PUT
+                moves[unit_id] = (0, 0)
+            else:
+                ux, uy = unit_pos
+                if self.params.player_idx == 0:
+                    wall_normals = [
+                        (ux, self.params.min_dim),
+                        (self.params.min_dim, uy),
+                    ]
+                elif self.params.player_idx == 1:
+                    wall_normals = [
+                        (ux, self.params.max_dim),
+                        (self.params.min_dim, uy),
+                    ]
+                elif self.params.player_idx == 2:
+                    wall_normals = [
+                        (ux, self.params.max_dim),
+                        (self.params.max_dim, uy),
+                    ]
+                elif self.params.player_idx == 3:
+                    wall_normals = [
+                        (ux, self.params.min_dim),
+                        (self.params.max_dim, uy),
+                    ]
+                else:
+                    pass
+
+                horizontal_influence = np.random.randint(40) - 10
+                if self.temp_id[unit_id] % 2 == 0:
+                    horizontal_force = repelling_force(unit_pos, wall_normals[0])
+                else:
+                    horizontal_force = repelling_force(unit_pos, wall_normals[1])
+
+                if self.temp_id[unit_id] % 4 <= 1:
+                    horizontal_influence = np.random.randint(30) - 10
+
+                total_force = normalize(
+                    (home_force * HOME_INFLUENCE)
+                    + (horizontal_force * horizontal_influence)
+                )
+                # self._logger.debug("force", total_force)
+                moves[unit_id] = to_polar(total_force)
+                # self._debug(moves)
 
         return moves
 
@@ -871,9 +951,17 @@ spawn_rules = SpawnRules()
 
 
 @spawn_rules.rule
+def early_scouts(rule_inputs: RuleInputs, uid: str):
+    if rule_inputs.update.turn < 20:
+        rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
+        return True
+    return False
+
+
+@spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-    if rule_inputs.update.turn > 30 and len(defender_role.units) < 20:
+    if rule_inputs.update.turn > 20 and len(defender_role.units) < 20:
         defender_role.allocate_unit(uid)
         return True
     return False
@@ -999,7 +1087,9 @@ class Player:
         self.role_groups.add_group(
             RoleType.ATTACKER, Attacker(self.logger, self.params)
         )
-        self.role_groups.add_group(RoleType.SCOUT, Scout(self.logger, self.params))
+        self.role_groups.add_group(
+            RoleType.SCOUT, GreedyScout(self.logger, self.params)
+        )
 
     def debug(self, *args):
         self.logger.info(" ".join(str(a) for a in args))
@@ -1054,7 +1144,7 @@ class Player:
                 [min(100, (750 / (d1) + 750 / (d2))) for d1, d2 in risk_distances],
             )
         )
-        visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
+        # visualize_risk(risks, enemy_unit_locations, own_units, self.turn)
 
         # Calculate free units (just spawned)
         own_units = set(uid for uid in unit_id[self.params.player_idx])
@@ -1087,7 +1177,9 @@ class Player:
                     try:
                         role_moves.update(role_group.turn_moves(update))
                     except Exception as e:
-                        self.debug("Exception processing role moves:", e)
+                        self.debug(
+                            "Exception processing role moves:", traceback.format_exc()
+                        )
         for unit_id in unit_id[self.params.player_idx]:
             if not unit_id in role_moves:
                 moves.append((0, 0))
