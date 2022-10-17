@@ -903,20 +903,25 @@ class Attacker(Role):
                 unit_pos, unit_id, own_units
             )
             
-            wall_avoid_force = None
-
+            ux, uy = unit_pos
+            wall_normals = [(ux, self.min_dim), (ux, self.max_dim), (self.min_dim, uy), (self.max_dim, uy)]
+            wall_forces = [self.repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = normalize(np.add.reduce(wall_forces))
+            
             if unit_id not in self.pincer_force:
                 pincer_spread_force = self.pincer_spread_force()
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
             PINCER_INFLUENCE = max(100/(dist_to_avoid), 50)
+            WALL_INFLUENCE = PINCER_INFLUENCE
             
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
                 + AVOID_INFLUENCE * avoid_repulsion_force
                 + ATTACK_INFLUENCE * attack_force 
                 + PINCER_INFLUENCE * normalize(self.pincer_force[unit_id] * attack_force)
+                + WALL_INFLUENCE * wall_force
             )
             
             moves[unit_id] = to_polar(total_force)
