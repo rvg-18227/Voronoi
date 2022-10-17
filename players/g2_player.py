@@ -418,14 +418,14 @@ class Player:
             
         return {int(uid): move for uid, move in moves.items()}
 
-    def scout_moves(self, unit_ids, unit_pos) -> Dict[float, Tuple[float, float]]:
+    def scout_moves(self, unit_ids) -> Dict[float, Tuple[float, float]]:
         moves = {}
-        unit_forces = self.get_forces(unit_ids, unit_pos)
+        unit_forces = self.get_forces(unit_ids)
 
         # Draft units into platoons
         #print(self.scout)
         current_scout_ids = [scout_id for scout_id in self.scout.values()]
-        free_unit_ids = [uid for uid in unit_ids[self.player_idx] if uid not in current_scout_ids]
+        free_unit_ids = [uid for uid in unit_ids if uid not in current_scout_ids]
         min_home = math.inf
         min_unit_id = math.inf
         for unit_id in free_unit_ids:
@@ -453,8 +453,7 @@ class Player:
             move_dist = None
             angle = None
             if self.scout[region] != None:
-                player_idx = unit_ids[self.player_idx].index(self.scout[region])
-                current_scout_pos = unit_pos[self.player_idx][player_idx]
+                current_scout_pos = self.ally_units[self.scout[region]]
                 region_center_point = self.entire_board_regions[region].centroid #unit_forces[self.scout[region]][3][0][1]
                 region_center_point = (region_center_point.x, region_center_point.y)
                 #print(region, region_center_point)
@@ -489,10 +488,11 @@ class Player:
                 scaled_chaser_vec = scale(rotated_chaser_vec, xfact=100, yfact=100, origin=chaser_pos)
                 new_intersect_pos = scaled_chaser_vec.intersection(scaled_target_vec)
                 chaser_to_intersect_dist = chaser_pos.distance(new_intersect_pos)
+                target_to_intersect_dist = target_pos.distance(new_intersect_pos)
 
-                if chaser_to_intersect_dist < best_dist and chaser_to_intersect_dist > 0:
+                if (chaser_to_intersect_dist + target_to_intersect_dist) < best_dist and chaser_to_intersect_dist > 0:
                     intersect_pos = new_intersect_pos
-                    best_dist = chaser_to_intersect_dist
+                    best_dist = chaser_to_intersect_dist + target_to_intersect_dist
 
             # If our target distance to intercept is much larger than the chaser distance to intercept,
             # they are likely coming right for us, so we should aim for halfway between chaser and target
@@ -669,24 +669,38 @@ class Player:
 
         # Initialize all unit moves to null so that an unspecified move is equivalent to not moving
         moves = {int(id): (0, 0) for id in unit_id[self.player_idx]}
+  
+        alive_ally_unit_ids = list(self.ally_units.keys())
+        assignable_ally_unit_ids = sorted(list(self.historical_ally_unit_ids), key=int)
+        assignable_ally_unit_ids = assignable_ally_unit_ids[3:]
+        assignable_ally_unit_id_chunks = [assignable_ally_unit_ids[i:i+10] for i in range(0, len(assignable_ally_unit_ids), 10)]
 
-        if self.player_idx == 0:    
-            # Assign first 5 units to move out at strategig angles to capture territory early game
-            fixed_formation_unit_ids = [uid for uid in list(self.historical_ally_unit_ids)[0:5] if uid in list(self.ally_units.keys())]
-            moves.update(self.fixed_formation_moves(fixed_formation_unit_ids, [45.0, 67.5, 22.5, 0, 90]))
+        sentinel_unit_ids = \
+            [chunk[0] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 1] + \
+            [chunk[1] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 2] + \
+            [chunk[2] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 3] + \
+            [chunk[3] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 4] + \
+            [chunk[4] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 5] + \
+            [chunk[5] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 6]
+        platoon_unit_ids = \
+            [chunk[6] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 7] + \
+            [chunk[7] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 8] + \
+            [chunk[8] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 9]
+        scout_unit_ids = \
+            [chunk[9] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 10]
 
-            # Dedicate half of our remaining units to sentinetls
-            sentinel_unit_ids = [uid for uid in list(self.historical_ally_unit_ids)[5:] if uid in list(self.ally_units.keys())]
-            moves.update(self.sentinel_moves(sentinel_unit_ids))
+        # Assign first units to move out at strategig angles to capture territory early game
+        fixed_formation_unit_ids = [uid for uid in assignable_ally_unit_ids[0:3] if uid in alive_ally_unit_ids]
+        moves.update(self.fixed_formation_moves(fixed_formation_unit_ids, [0, 90]))
 
-            # And the other half to platoons 
+        # Assign a large portion of our units as sentinels
+        moves.update(self.sentinel_moves([uid for uid in sentinel_unit_ids if uid in alive_ally_unit_ids]))
 
-        elif self.player_idx == 1:
-            pass 
-        elif self.player_idx == 2:
-            pass
-        elif self.player_idx == 3:
-            pass
+        # Assign a smaller chunk of our units to platoons
+        moves.update(self.platoon_moves([uid for uid in platoon_unit_ids if uid in alive_ally_unit_ids]))
+
+        # Assign the rest of our units to be scouts
+        moves.update(self.scout_moves([uid for uid in scout_unit_ids if uid in alive_ally_unit_ids]))
  
         return list(moves.values())
 
@@ -740,22 +754,22 @@ class Player:
         dist_to_left = Point(100, current_y).distance(current_point)
         return [((current_x, 0), dist_to_top), ((current_x, 100), dist_to_bottom), ((100, current_y), dist_to_right), ((0, current_y), dist_to_left)]
 
-    def closest_friend_force(self, current_unit, current_pos, unit_pos, unit_id) -> List[Tuple[Tuple[float, float], float]]:
-        if(len(unit_id[self.player_idx]) < 2):
+    def closest_friend_force(self, current_unit) -> List[Tuple[Tuple[float, float], float]]:
+        current_pos = self.ally_units[current_unit]
+
+        if(len(list(self.ally_units.keys())) < 2):
             return None
 
         closest_unit_dist = math.inf
-        for i in range(len(unit_pos[self.player_idx])):
-            if i == current_unit:
+        for friend_unit, friend_unit_pos in self.ally_units.items():
+            if friend_unit == current_unit:
                 continue
-            friend_unit = unit_id[self.player_idx][i]
-            friend_unit_pos = unit_pos[self.player_idx][i]
             dist = friend_unit_pos.distance(current_pos)
             if dist < closest_unit_dist:
                 closest_unit_dist = dist
         return [((friend_unit_pos.x, friend_unit_pos.y), closest_unit_dist)]
 
-    def least_popular_region_force(self, unit_pos):
+    def least_popular_region_force(self):
         number_regions = len(self.entire_board_regions)
         unit_per_region = np.zeros(number_regions)
         unclaimed_regions = [region_id for region_id in self.scout if self.scout[region_id] is None]
@@ -779,10 +793,9 @@ class Player:
         for index in range(number_regions):
             if index in unclaimed_regions:
                 current_poly = self.entire_board_regions[index]
-                for player_num in range(4):
-                    for unit in unit_pos[player_num]:
-                        if current_poly.contains(unit):
-                            unit_per_region[index] += 1
+                for unit in list(self.ally_units.values()) + list(self.enemy_units.values()):
+                    if current_poly.contains(unit):
+                        unit_per_region[index] += 1
             else:
                 unit_per_region[index] = math.inf
 
@@ -792,15 +805,12 @@ class Player:
         #print(center)
         return [(index_min_region, (center.x, center.y))]
 
-    def get_forces(self, unit_id, unit_pos):
-        forces = {id: [] for id in unit_id[self.player_idx]}
-        for i in range(len(unit_id[self.player_idx])):
-            unit = unit_id[self.player_idx][i]
-            current_pos = unit_pos[self.player_idx][i]
+    def get_forces(self, unit_ids):
+        forces = {id: [] for id in unit_ids}
+        for unit, current_pos in [(uid, pos) for uid, pos in self.ally_units.items() if uid in unit_ids]:
             home_coords = self.get_home_coords()
-            
             forces[unit].append([(home_coords.x, home_coords.y), home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
-            forces[unit].append(self.closest_friend_force(i, current_pos, unit_pos, unit_id))
-            forces[unit].append(self.least_popular_region_force(unit_pos))
+            forces[unit].append(self.closest_friend_force(unit))
+            forces[unit].append(self.least_popular_region_force())
         return forces
