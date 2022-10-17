@@ -7,6 +7,7 @@ import math
 import sympy
 from sympy import Point,Polygon
 import shapely.geometry
+import matplotlib.path as mpltPath
 """Player module for Group 8 probabilistic model - Voronoi."""
 
 class Player:
@@ -85,41 +86,42 @@ class Player:
         for point in points:
             direction = self.get_direction(point)
             distance = 1
-            moves.append((direction,distance))
+            moves.append(self.transform_move((direction,distance)))
+
         return moves
     def get_direction(self,point:list[float]):
         
         direction_score = []
         for i in range(len(self.parts_angle)-1):
-            distance = 5
+            distance = 2
             angle1 = self.parts_angle[i]
-            angle2 = self.parts_angle[i]
+            angle2 = self.parts_angle[i+1]
             point = np.array(point)
             ## find all the points that are encircled by the angle
-            p1 = self.get_point(point,angle1,distance=5)
-            p2 = self.get_point(point,angle2,distance=5)
+            #p1 = self.get_point(point,angle1,distance=5)
+            #p2 = self.get_point(point,angle2,distance=5)
             
             
             #heuristic we are considering
             #edge within 5 blocks
-            edge_score = self.find_edge_score(point,angle1,angle2,distance) 
-            
+            #edge_score = self.find_edge_score(point,angle1,angle2,distance) 
             # puts the point back onto the map ( basically a triangle)
             #enemy within 5 blocks
-            enemy_score = self.find_enemy_score(point,angle1,angle2,distance)
+            enemy_score,ally_score = self.find_enemy_ally_score(point,angle1,angle2,distance)
             #ally within 5 blocks
-            ally_score = self.find_ally_score(point,angle1,angle2,distance)
+            #ally_score = self.find_ally_score(point,angle1,angle2,distance)
             #Free open space within 10 blocks( using other player's coordinate)
             open_space_score = self.find_open_space_score(point,angle1,angle2,distance)
-
-            total_score = (edge_score*-1+ open_space_score  + (enemy_score*-1  + ally_score))/4
+            #edge_score*-1+
+            total_score = ( open_space_score  + (enemy_score*-1  + ally_score))/4
             direction_score.append(total_score)
-
-        
+        smallest = min(direction_score)
+        direction_score = [i+smallest for i in direction_score] #make all val positive
         norm_direction = [float(i)/sum(direction_score) for i in direction_score]
         index = self.rng.choice(range(len(norm_direction)), p = norm_direction)
-        within = self.rng.random()* 720/self.n #choose within the area
+        within = self.rng.random()* math.radians(720/self.n) #choose within the area
         direction  = self.parts_angle[index] + within
+        print(direction)
         return direction
     def checkboundary(self,point:list[float])->list[float]:
         x,y = point
@@ -127,7 +129,7 @@ class Player:
         new_y = y
         if x>= 100:
             new_x = 100
-        if y >= 0:
+        if y >= 100:
             new_y = 100
         if x<= 0:
             new_x = 0
@@ -140,6 +142,7 @@ class Player:
         x,y = point
         x_val = x + math.cos(angle)*distance
         y_val = y + math.sin(angle)*distance
+        
         return [x_val,y_val]
     def find_edge_score(self,point:list[float],angle1,angle2,distance) -> float:
         ##the area exceeding the boundary/ the area we are looking 
@@ -159,24 +162,27 @@ class Player:
         return score
     
 
-    def find_enemy_score(self,point:list[float],angle1,angle2,distance) -> int:
+    def find_enemy_ally_score(self,point:list[float],angle1,angle2,distance) -> int:
         # the number of enemy enclosed / the current number of enemies
+       
+        
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1 = self.checkboundary(p1)
         p2 = self.checkboundary(p2)
-        high_x = max(p1[0],p2[0],point[0])
-        high_y = max(p1[1],p2[1],point[1])
-        low_x = min(p1[0],p2[0],point[0])
-        low_y = min(p1[1],p2[1],point[1])
-        num_enemy_enclosed = 0
-        for enemy in self.enemy_position:
-            enemy_x = enemy[0]
-            enemy_y = enemy[1]
-            if low_x<= enemy_x<=high_x and low_y<= enemy_y<=high_y:
-                num_enemy_enclosed+=1
-        return num_enemy_enclosed/(self.cur_unit*3) #normalize
-    
+        polygon = [p1,p2,point]
+        path = mpltPath.Path(polygon)
+        enemy_inside = path.contains_points(self.enemy_position)
+        num_enemy_enclosed = np.count_nonzero(enemy_inside)
+        ally_insde = path.contains_points(self.points)
+        num_ally_enclosed = np.count_nonzero(ally_insde)
+        return num_enemy_enclosed/(self.cur_unit*3),num_ally_enclosed/self.cur_unit #normalize
+    def transform_move(
+            self,
+            dist_ang: Tuple[float, float]
+    ) -> Tuple[float, float]:
+        dist, rad_ang = dist_ang
+        return (dist, rad_ang - (math.pi/2 * self.player_idx))
     def find_ally_score(self,point:list[float],angle1,angle2,distance) -> float:
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
@@ -199,22 +205,20 @@ class Player:
         p1 = self.checkboundary(p1)
         p2 = self.checkboundary(p2)
         np_map = np.array(self.map_states)
-        
         high_x = max(p1[0],p2[0],point[0],0)
         high_y = max(p1[1],p2[1],point[1],0)
         low_x = min(p1[0],p2[0],point[0],100)
         low_y = min(p1[1],p2[1],point[1],100)
-
         y_range = list(range(math.floor(low_y),math.ceil(high_y)))
         x_range = list(range(math.floor(low_x),math.ceil(high_x)))
         np_map = np_map[:,y_range]
         np_map = np_map[x_range,:]
-        not_yet_occupied_cell = 0
-        for x in range(math.floor(low_x),math.ceil(high_x)):
-            for y in range(math.floor(low_y),math.ceil(high_y)):
-                if self.map_states[x][y] != self.player_idx and self.map_states[x][y] != -1:
-                    not_yet_occupied_cell +=1
-        possible_area = math.ceil(high_x)-math.floor(low_x) * (math.ceil(high_x)-math.floor(low_x))
+        my_space = np.full(np_map.shape,self.player_idx+1)
+        conflic_space = np.full(np_map.shape,-1.0)
+        count1  = np.count_nonzero(np.equal(my_space,np_map))
+        count2  =np.count_nonzero( np.equal(conflic_space,np_map))
+        not_yet_occupied_cell = count2 + count1
+        possible_area = np_map.shape[0]*np_map.shape[1]
         return not_yet_occupied_cell/(abs(possible_area))
 
 
