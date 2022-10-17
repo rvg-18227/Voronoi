@@ -431,7 +431,7 @@ class Player:
         #     moves = self.play_cautious(unit_id, unit_pos, vor_regions, pt_player_dict, pt_to_poly_idx, adj_dict,
         #                                superpolygon, s_neighbors)
 
-        incursions = self.get_incursions_polys(vor_regions, discrete_pt2player, poly_idx_to_pt)
+        # incursions = self.get_incursions_polys(vor_regions, discrete_pt2player, poly_idx_to_pt)
         # print(incursions)
         # if len(incursions) > 0:
         #     all_polys = list(pt_to_poly.values())
