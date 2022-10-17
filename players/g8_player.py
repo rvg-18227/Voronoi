@@ -1,11 +1,21 @@
 """Player module for Group 8 - Voronoi."""
+from distutils.spawn import spawn
 import logging
 import math
+import os
+import pickle
+from re import L
 from typing import List, Tuple
+from xmlrpc.client import Boolean
 
 import numpy as np
+from pyproj import Transformer
 from shapely.geometry import Point
+from shapely.ops import transform
+import simplekml
 import sympy
+from sympy import Circle
+from traitlets import Float
 
 
 class Player:
@@ -40,6 +50,21 @@ class Player:
             precomp_dir (str): Directory path to store/load pre-computation
         """
 
+        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
+
+        # # precompute check
+        # if os.path.isfile(precomp_path):
+        #     # Getting back the objects:
+        #     with open(precomp_path, "rb") as f:
+        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
+        # else:
+        #     # Compute objects to store
+        #     self.obj0, self.obj1, self.obj2 = _
+
+        #     # Dump the objects
+        #     with open(precomp_path, 'wb') as f:
+        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
+
         self.rng = rng
         self.logger = logger
         self.total_days = total_days
@@ -51,19 +76,12 @@ class Player:
         self.precomp_dir = precomp_dir
         self.is_stay_guard = False
         self.guard_list = []
-        self.current_day = 0
 
-        # how far ahead to look for enemy units before moving forward
-        self.enemy_distance = 0
-        angles = [0, math.pi/4, math.pi/2]
-        self.guard_point = []
-        self.angles = [0, math.pi/4, math.pi/2]
+        self.enemy_distance = 0  # how far ahead to look for enemy units before moving forward
+        angles = [0, 45, 90]
+        self.angles = []
         for angle in angles:
-            new_angle = angle - (math.pi/2 * self.player_idx)
-            new_a = self.spawn_point.x + (1 * np.cos(new_angle))
-            new_b = self.spawn_point.y + (1 * np.sin(new_angle))
-            self.guard_point.append(Point(new_a, new_b))
-        print(self.guard_point)
+            self.angles.append(angle - (math.pi/2 * self.player_idx))
 
     def play(
             self,
@@ -102,16 +120,19 @@ class Player:
         ids = unit_id[self.player_idx]
         base_point = points[0]
         self.total_points = self.total_days//self.spawn_days
-        self.current_day += 1
+        self.current_day = (len(points)/(self.total_days //
+                            self.spawn_days) * self.total_days)//1  # rough estimate
+        min_distance = 0.5
         # intialize the look up dict for id => points
         self.make_point_dict(points, ids)
-        # f = 3
-        # time = self.total_days//self.spawn_days
-        # radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
-        # newest_point = points[-1]
-        # p_new= Point(newest_point)
-        p_base = Point(base_point)
+        f = 3
+        time = self.total_days//self.spawn_days
+        radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
+        max_distance = math.pi * radius / 2 * time
+        newest_point = points[-1]
+        p_new, p_base = Point(newest_point), Point(base_point)
         current_radius = 0
+        # print(map_states[50])
         if len(points) > 1:
             point1 = points[1]
             p1 = Point(point1)
@@ -121,7 +142,6 @@ class Player:
             current_radius += 1
             # some code to spread
         new_guard = []
-
         for i in range(len(self.guard_list)):
             guard = self.guard_list[i]
             if guard in ids:
@@ -133,24 +153,15 @@ class Player:
             # grab the last three id and insert them into the list
             cur_guard = len(ids) - 1
             while len(self.guard_list) < guard_num and cur_guard > -1:
-                # if we dont have enough guard
                 if ids[cur_guard] not in self.guard_list:
                     self.guard_list.append(ids[cur_guard])
                 cur_guard -= 1
 
         moves = self.spread_points(current_radius, points)
-        # for i in range(len(moves)):
-        # moves[i] = self.transform_move(moves[i])
+        for i in range(len(moves)):
+            moves[i] = self.transform_move(moves[i])
 
-        self.enemy_position = []
-        self.map_states = map_states
-        for i in range(4):
-            if i == (self.player_idx - 1):
-                continue
-            # add all the other player's position into a list
-            self.enemy_position += list(map(np.array, unit_pos[i]))
-        self.points = list(map(np.array, unit_pos[self.player_idx]))
-        print(moves)
+        # print(self.is_safe(unit_pos, map_states))
 
         return moves
 
@@ -186,49 +197,48 @@ class Player:
         size = len(points)
         index = 0
         # variable base on the number of points that will be geenrated total
-        # angle_jump = size/self.total_points*10
-        # angle_start = 45
+        angle_jump = size/self.total_points*10
+        angle_start = 45
         guard_index = 0
-        point_index = 0
-        self.calculate_formation()
-        for val in self.point_dict.items():
-            idn = val[0]
-            point = val[1]
-            point_point = Point(point)
-            if idn in self.guard_list and self.is_stay_guard is False:
-                distance, angle = self.move_stay_guard(point, guard_index)
+        guard_dict = {}
+        for guard in self.guard_list:
+            guard_dict[guard] = self.point_dict[guard]
+        for i in points:
+            index += 1
+            distance = 1
+            angle = (((index) * (angle_jump) + angle_start)) % 90
+            # call the move guard function
+            if i in guard_dict.items() and self.is_stay_guard is False:
+                distance, angle = self.move_stay_guard(
+                    i, self.angles[guard_index])
                 guard_index += 1
-            else:  # if just a normal unit
+            moves.append((distance, angle*(math.pi / 180)))
 
-                distance = min(
-                    1, self.point_formation[point_index].distance(point_point))
-                print(distance)
-                angle = self.angle_between(
-                    self.point_formation[point_index], point_point)
-                point_index += 1
-            moves.append((distance, angle))
 
         return moves
 
     def move_stay_guard(
         self,
         guard_point: Point,
-        guard_index: int
+        angle: Float
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
+        # with the coordinate (1,0); (1,1) : (0,1)
+        # remove the last three points
         move = []
-        g_s_dist = abs(self.guard_point[guard_index].distance(guard_point))
-        g_s_ang = self.angle_between(
-            self.guard_point[guard_index], guard_point)
-        if g_s_dist == 0:
+        is_guard = []
+        g_s_dist = abs(guard_point.distance(self.spawn_point))
+        g_s_ang = abs(angle-self.angle_between(guard_point, self.spawn_point))
+        if g_s_dist == 1 and g_s_ang == angle:
             move.append((0, 0))
+            is_guard.append(0)
         else:
             dist = min(g_s_dist, 1)
             angle = g_s_ang
             move.append((dist, angle))
-        # move the points back to the base so
-        # that the coordinates would the right
-        return move[0]
+        # move the points back to the base so that
+        # the coordinates would the right
+        return move
 
     def angle_between(
             self,
@@ -237,8 +247,8 @@ class Player:
     ) -> float:
         p1 = np.array(p1)
         p2 = np.array(p2)
-        dy = p1[1] - p2[1]
-        dx = p1[0] - p2[0]
+        dy = p1[1]-p2[1]
+        dx = p1[0]-p2[0]
         angle = math.atan2(dy, dx)
         return angle
 
@@ -251,60 +261,10 @@ class Player:
 
     def is_safe(
             self,
-            point: list[float],
-            rad
-    ) -> tuple[float, float]:
-        # point and how far we want to look
-        num_enemy_near = 0
-        num_ally_near = 0
-        for enemy in self.enemy_position:
-            enemy_x = enemy[0]
-            enemy_y = enemy[1]
-            if self.is_inside(point[0], point[1], rad, enemy_x, enemy_y):
-                num_enemy_near += 1
-        for ally in self.points:
-            ally_x = ally[0]
-            ally_y = ally[1]
-            if self.is_inside(point[0], point[1], rad, ally_x, ally_y):
-                num_ally_near += 1
-        return num_enemy_near, num_ally_near
-
-    def is_inside(
-            self,
-            circle_x,
-            circle_y,
-            rad,
-            x,
-            y
-    ) -> bool:
-        # Compare radius of circle
-        # with distance of its center
-        # from given point
-        if (x - circle_x) ** 2 + (y - circle_y) ** 2 <= rad ** 2:
-            return True
-        else:
-            return False
-
-    def calculate_formation(self) -> None:
-        self.point_formation = []
-        # get the total number of points right now
-        number_points = len(self.point_dict)
-        if self.current_day >= 40:
-            number_points -= 3
-            if number_points > 0:
-                print("making circle")
-                # only pi/2 radians
-                radian_step = math.pi/2 / number_points
-                radius_step = 0.5
-                cir_radius = radius_step*number_points
-                angle = 0
-                for _ in range(number_points):
-                    x = cir_radius+np.cos(angle)
-                    y = cir_radius+np.sin(angle)
-                    angle += radian_step
-                    print("xy", x, y)
-                    # add the point to the list
-                    self.point_formation.append(Point(x, y))
-        else:
-            for _ in range(number_points):
-                self.point_formation.append(Point(50, 50))
+            unit_pos,
+            map_states
+    ) -> Boolean:
+        # TODO the safety heuristic
+        # print(unit_pos)
+        # print(map_states)
+        return False

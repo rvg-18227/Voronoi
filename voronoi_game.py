@@ -349,24 +349,21 @@ class VoronoiGame:
         if distance > 1.0:
             distance = 1.0
             self.logger.debug("Distance rectified to max distance of 1 km")
+
         new_a = a + (distance * np.cos(angle))
         new_b = b + (distance * np.sin(angle))
-        print(new_a,new_b)
+
         if new_a < 0:
-            
             new_a = 0
             new_b = b + (-a * np.tan(angle))
         elif new_a >= 100:
-            
             new_a = 99.99999999
             new_b = b + ((new_a-a) * np.tan(angle))
 
         if new_b < 0:
-            
             new_b = 0
             new_a = a + (-b / np.tan(angle))
         elif new_b >= 100:
-           
             new_b = 99.99999999
             new_a = a + ((new_b-b) / np.tan(angle))
 
