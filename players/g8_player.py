@@ -209,7 +209,7 @@ class Player:
     def move_stay_guard(
         self,
         guard_point: Point,
-        angle: Float
+        angle: float
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         # with the coordinate (1,0); (1,1) : (0,1)
@@ -252,7 +252,7 @@ class Player:
             self,
             unit_pos,
             map_states
-    ) -> Boolean:
+    ) -> bool:
         # TODO the safety heuristic
         # print(unit_pos)
         # print(map_states)
