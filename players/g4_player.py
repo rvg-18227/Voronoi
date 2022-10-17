@@ -869,9 +869,9 @@ class Attacker(Role):
         # border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
         # pdb.set_trace()
 
-        ATTACK_INFLUENCE = 100
+        ATTACK_INFLUENCE = 200
         AVOID_INFLUENCE = 300
-        SPREAD_INFLUENCE = 10
+        SPREAD_INFLUENCE = 50
 
         moves = {}
         own_units = update.own_units()
@@ -897,28 +897,32 @@ class Attacker(Role):
             
             attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
 
-            attack_repulsion_force = repelling_force(unit_pos, avoid)
+            avoid_repulsion_force = repelling_force(unit_pos, avoid)
 
             attack_unit_spread_force = self.attacker_spread_force(
                 unit_pos, unit_id, own_units
             )
+            
+            wall_avoid_force = None
 
             if unit_id not in self.pincer_force:
-                pincer_spread_force = self.pincer_spread_force(attack_force)
+                pincer_spread_force = self.pincer_spread_force()
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = 1 / (dist_to_avoid - 5) * 30
-
+            PINCER_INFLUENCE = max(100/(dist_to_avoid), 50)
+            
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
-                + AVOID_INFLUENCE * attack_repulsion_force * self.pincer_force[unit_id]
-                + ATTACK_INFLUENCE * attack_force
+                + AVOID_INFLUENCE * avoid_repulsion_force
+                + ATTACK_INFLUENCE * attack_force 
+                + PINCER_INFLUENCE * normalize(self.pincer_force[unit_id] * attack_force)
             )
-
+            
             moves[unit_id] = to_polar(total_force)
         return moves
-
+    
+    
     def find_target_simple(self, start_point, enemy_units):
         # find a target to attack
         # return 2 points, point A is where the enemy is
@@ -936,7 +940,7 @@ class Attacker(Role):
         target_idx = np.argmin(np.array(dist_to_home))
         target_pos = enemy_units[target_idx][1]
         unit_vec, _ = force_vec(start_point, target_pos)
-        return target_pos, target_pos - unit_vec * 10
+        return target_pos, target_pos - unit_vec * 20
 
     def attacker_spread_force(self, my_pos, my_id, own_units):
         # pdb.set_trace()
@@ -948,7 +952,7 @@ class Attacker(Role):
         spread_force = np.add.reduce(attacker_unit_forces)
         return normalize(spread_force)
 
-    def pincer_spread_force(self, attack_force):
+    def pincer_spread_force(self):
         # alteranting left and right of the target point
         dir_vector = None
         if self.pincer_left_side:
@@ -957,7 +961,7 @@ class Attacker(Role):
         else:
             dir_vector = np.array([1, -1])
             self.pincer_left_side = not self.pincer_left_side
-        return dir_vector
+        return normalize(dir_vector)
 
     def attack_point(self, unit, target, closest_point):
         """Given a unit, attack the target point following the foramtion.
@@ -978,7 +982,7 @@ class Attacker(Role):
         attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
         attack_vec = attack_vec
         attack_vec *= -1
-        return attack_vec[0]
+        return normalize(attack_vec[0])
 
     def deallocation_candidate(self, update, target_point):
         """
