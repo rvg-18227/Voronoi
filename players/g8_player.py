@@ -67,8 +67,8 @@ class Player:
         self.angles = [0, math.pi/4, math.pi/2]
         for angle in angles:
             new_angle = angle - (math.pi/2 * self.player_idx)
-            new_a = 0 + (1 * np.cos(new_angle))
-            new_b = 99 + (1 * np.sin(new_angle))
+            new_a = self.spawn_point.x + (1 * np.cos(new_angle))
+            new_b = self.spawn_point.y + (1 * np.sin(new_angle))
             self.guard_point.append(Point(new_a, new_b))
         print(self.guard_point)
 
@@ -145,8 +145,8 @@ class Player:
                 cur_guard -= 1
 
         moves = self.spread_points(current_radius, points)
-        for i in range(len(moves)):
-            moves[i] = self.transform_move(moves[i])
+        #for i in range(len(moves)):
+            #moves[i] = self.transform_move(moves[i])
 
         self.enemy_position = []
         self.map_states = map_states
@@ -206,43 +206,14 @@ class Player:
                 guard_index += 1
             else: #if just a normal unit
                 
-                distance =self.point_formation[point_index].distance(point_point)
+                distance = min(1,self.point_formation[point_index].distance(point_point))
                 print(distance)
                 angle = self.angle_between(self.point_formation[point_index],point_point )
-                
-                print("--------------------")
-                print(angle)
-                print(angle * 180/math.pi)
-                print("destination: ",np.array(self.point_formation[point_index]))
-                pred_point = self.move_unit(distance,angle,np.array(point_point))
-                print("we have:", pred_point)
-                print("--------------------")
                 point_index+=1
-            moves.append((distance, angle))
+            moves.append((distance, angle*(math.pi / 180)))
         
         return moves
-    def move_unit(self,distance, angle,p):
-        angle = float(angle)
-        a = p[0]
-        b = p[1]
-        print(a,b)
-        new_a = a + (distance * np.cos(angle))
-        new_b = b + (distance * np.sin(angle))
-        print("cur_val",(new_a,new_b))
-        if new_a < 0:
-            new_a = 0
-            new_b = b + (-a * np.tan(angle))
-        elif new_a >= 100:
-            new_a = 99.99999999
-            new_b = b + ((new_a-a) * np.tan(angle))
 
-        if new_b < 0:
-            new_b = 0
-            new_a = a + (-b / np.tan(angle))
-        elif new_b >= 100:
-            new_b = 99.99999999
-            new_a = a + ((new_b-b) / np.tan(angle))
-        return (new_a,new_b)
     def move_stay_guard(
         self,
         guard_point: Point,
@@ -250,7 +221,7 @@ class Player:
     ) -> List[Tuple[float, float]]:
         # move the last three points to guard the base
         move = []
-        g_s_dist = (self.guard_point[guard_index]).distance(guard_point)
+        g_s_dist = abs(self.guard_point[guard_index]).distance(guard_point)
         g_s_ang =self.angle_between( self.guard_point[guard_index],guard_point)
         if g_s_dist == 0:
             move.append((0, 0))
@@ -331,8 +302,8 @@ class Player:
                 cir_radius = radius_step*number_points
                 angle = 0
                 for _ in range(number_points):
-                    x = 0 + cir_radius+np.cos(angle)
-                    y = 100 + cir_radius+np.sin(angle)
+                    x = cir_radius+np.cos(angle)
+                    y = cir_radius+np.sin(angle)
                     angle += radian_step
                     print("xy",x,y)
                     self.point_formation.append(Point(x,y))##add the point to the list
