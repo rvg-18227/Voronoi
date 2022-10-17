@@ -1,3 +1,4 @@
+from multiprocessing import parent_process
 import numpy as np
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points
@@ -43,10 +44,12 @@ class StateUpdate:
         params: GameParameters,
         unit_id: list[list[str]],
         unit_pos: list[list[Point]],
+        map_states: list[list[int]]
     ):
         self.params = params
         self.unit_id = unit_id
         self.unit_pos = unit_pos
+        self.map_states = map_states
 
     # =============================
     # Role Update Utility Functions
@@ -107,11 +110,6 @@ def repelling_force(p1, p2) -> tuple[float, float]:
     dir, mag = force_vec(p1, p2)
     # Inverse magnitude: closer things apply greater force
     return dir * 1 / (mag + EPSILON)
-
-def repelling_force_stronger(p1, p2) -> tuple[float, float]:
-    dir, mag = force_vec(p1, p2)
-    # Inverse magnitude: closer things apply greater force
-    return dir * 1 / (mag + EPSILON)**2
 
 EASING_EXP = 5
 
@@ -317,7 +315,57 @@ class Scout(Role):
     def deallocation_candidate(self, target_point):
         pass
 
+import torch
+import torch.nn.functional as F
 
+def check_border(my_player_idx, target_player_idx, vertical, horizontal):
+    #pdb.set_trace()
+    def check_pair(idx1, idx2, target1, target2):
+        if (
+            idx1 == target1 and idx2 == target2 
+            or idx1 == target2 and idx2 == target1):
+            return True
+        else:
+            return False
+    if check_pair(my_player_idx, target_player_idx, 0, 1):
+        return 1 in vertical or 1 in horizontal
+    if check_pair(my_player_idx, target_player_idx, 0, 2):
+        return 3 in vertical or 3 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 0, 3):
+        return 7 in vertical or 7 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 1, 2):
+        return 2 in vertical or 2 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 1, 3):
+        return 6 in vertical or 6 in horizontal
+    elif check_pair(my_player_idx, target_player_idx, 2, 3):
+        return 4 in vertical or 4 in horizontal
+    else:
+        # somethings wrong
+        return None
+    
+    
+def border_detect(map_state, my_player_idx, target_player_idx):
+    base_kernel = torch.tensor([-1,0,1])
+    vecrtical_kernel = base_kernel.reshape(1, 1, 3, 1)
+    horizontal_kernel = base_kernel.reshape(1, 1, 1, 3)
+    map_tensor = torch.tensor(map_state).reshape(1, 100, 100)
+    # SET OCCUPATION TO SPECIFC VALUE, for conv purposes
+    map_tensor[map_tensor == -1] = -10000
+    map_tensor[map_tensor == 1] = 1
+    map_tensor[map_tensor == 2] = 2
+    map_tensor[map_tensor == 4] = 8
+    map_tensor[map_tensor == 3] = 4
+    #tmp = map_tensor.unique()
+    #pdb.set_trace()
+    vertical_edge = torch.abs(F.conv2d(map_tensor, vecrtical_kernel))
+    horizontal_edge = torch.abs(F.conv2d(map_tensor, horizontal_kernel))
+    #pdb.set_trace()
+    #plt.imshow(vertical_edge.permute(1,2,0))
+    #plt.savefig("vertical.png")
+    #plt.imshow(horizontal_edge.permute(1,2,0))
+    #plt.savefig("horizontal.png")
+    return check_border(my_player_idx, target_player_idx, vertical_edge, horizontal_edge)
+    
 class Attacker(Role):
     def __init__(self, logger, params, target_player):
         super().__init__(logger, params)
@@ -338,6 +386,12 @@ class Attacker(Role):
         return nearest_points(line, point)[0]
 
     def _turn_moves(self, update, dead_units):
+        #pdb.set_trace()
+        #tmp1 = self.params.player_idx
+        #tmp2 = self.target_player
+        #border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
+        #pdb.set_trace()
+        
         ATTACK_INFLUENCE = 100
         AVOID_INFLUENCE = 300
         SPREAD_INFLUENCE = 30
@@ -345,10 +399,9 @@ class Attacker(Role):
         moves = {}
         own_units = update.own_units()
         enemy_units = update.enemy_units()
-        #pdb.set_trace()
         enemy_units = enemy_units[self.target_player]
         
-        # TODO get attack_force
+        # get attack force
         homebase_mode = True
         # get where to initiate the attack
         units_array = np.stack([v for k, v in own_units.items()])
@@ -358,9 +411,7 @@ class Attacker(Role):
             start_point = self.get_centroid(units_array)
         # get attack target and get formation
         avoid, target = self.find_target_simple(start_point, enemy_units)
-        # pdb.set_trace()
         formation = LineString([start_point, target])
-        # pdb.set_trace()
         # calcualte force
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
@@ -378,7 +429,6 @@ class Attacker(Role):
                 pincer_spread_force = self.pincer_spread_force(attack_force)
                 self.pincer_force[unit_id] = pincer_spread_force
 
-            # pdb.set_trace()
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
             PINCER_INFLUENCE = 1 / dist_to_avoid * 30
 
@@ -414,7 +464,7 @@ class Attacker(Role):
     def attacker_spread_force(self, my_pos, my_id, own_units):
         #pdb.set_trace()
         attacker_unit_forces = [
-            repelling_force_stronger(my_pos, ally_pos) for unit_id, ally_pos in own_units.items() if unit_id != my_id
+            repelling_force(my_pos, ally_pos) for unit_id, ally_pos in own_units.items() if unit_id != my_id
         ]
         spread_force = np.add.reduce(attacker_unit_forces)
         return normalize(spread_force)
@@ -446,10 +496,15 @@ class Attacker(Role):
         attack_vec = attack_vec
         attack_vec *= -1
         return attack_vec[0]
-
+    
     def deallocation_candidate(self, target_point):
+        '''
+        distance = []
+        for unit_id in self.units:
+            unit_pos = own_units[unit_id]
+            _, dist = force_vec(target_point, unit_pos)
+        '''
         pass
-
 
 class Player:
     params: GameParameters
@@ -556,7 +611,7 @@ class Player:
             for player_units in unit_pos
         ]
 
-        update = StateUpdate(self.params, unit_id, unit_pos)
+        update = StateUpdate(self.params, unit_id, unit_pos, map_states)
 
         own_units = list(update.own_units().items())
         enemy_unit_locations = [pos for _, pos in update.all_enemy_units()]
@@ -587,6 +642,7 @@ class Player:
         MIN_RADIUS = 5
         idle = 0
         for uid in free_units:
+            '''
             assigned = False
 
             # TODO: framework for prioritizing allocation rules
@@ -625,6 +681,8 @@ class Player:
                 for attackers in self.role_groups[RoleType.ATTACKER]
             )
             if total_scouts >= total_attackers:
+                # when assigning attack, if theres no border, dont even try to attack the enemy player
+                #if check_border() TODO
                 self.role_groups[RoleType.ATTACKER][self.attack_roll % 3].allocate_unit(uid)
                 self.attack_roll += 1
                 assigned = True
@@ -636,9 +694,9 @@ class Player:
                 continue
 
             idle += 1
-
-            
-            
+            '''
+            self.role_groups[RoleType.ATTACKER][self.attack_roll % 3].allocate_unit(uid)
+            self.attack_roll += 1
 
         if idle > 0:
             self.debug(f"Turn {self.turn}: {idle} idle units")
