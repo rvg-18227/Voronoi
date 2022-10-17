@@ -50,21 +50,6 @@ class Player:
             precomp_dir (str): Directory path to store/load pre-computation
         """
 
-        # precomp_path = os.path.join(precomp_dir, "{}.pkl".format(map_path))
-
-        # # precompute check
-        # if os.path.isfile(precomp_path):
-        #     # Getting back the objects:
-        #     with open(precomp_path, "rb") as f:
-        #         self.obj0, self.obj1, self.obj2 = pickle.load(f)
-        # else:
-        #     # Compute objects to store
-        #     self.obj0, self.obj1, self.obj2 = _
-
-        #     # Dump the objects
-        #     with open(precomp_path, 'wb') as f:
-        #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
-
         self.rng = rng
         self.logger = logger
         self.total_days = total_days
@@ -76,13 +61,19 @@ class Player:
         self.precomp_dir = precomp_dir
         self.is_stay_guard = False
         self.guard_list = []
-        self.guard_point = []
+        self.current_day = 0
 
         self.enemy_distance = 0  # how far ahead to look for enemy units before moving forward
-        angles = [0, 45, 90]
-        self.angles = []
+        angles = [0, math.pi/4, math.pi/2]
+        self.guard_point = []
+        self.angles = [0, math.pi/4, math.pi/2]
         for angle in angles:
-            self.angles.append(angle - (math.pi/2 * self.player_idx))
+            new_angel = angle -(math.pi/2 * self.player_idx)
+            new_a = self.spawn_point.x + (1 * np.cos(new_angel))
+            new_b = self.spawn_point.y+ (1 * np.sin(new_angel))
+            self.guard_point.append(Point(new_a,new_b))
+        print(self.guard_point)
+        
 
     def play(
             self,
@@ -121,10 +112,8 @@ class Player:
         ids = unit_id[self.player_idx]
         base_point = points[0]
         self.total_points = self.total_days//self.spawn_days
-        self.current_day = (len(points)/(self.total_days //
-                            self.spawn_days) * self.total_days)//1  # rough estimate
-        # intialize the look up dict for id => points
-        self.make_point_dict(points, ids)
+        self.current_day +=1
+        self.make_point_dict(points,ids) ## intialize the look up dict for id => points
         f = 3
         time = self.total_days//self.spawn_days
         radius = math.sqrt((f * self.max_dim ** 2 * 4 / math.pi))
@@ -206,28 +195,25 @@ class Player:
         size = len(points)
         index = 0
         # variable base on the number of points that will be geenrated total
-        angle_jump = size/self.total_points*10
-        angle_start = 45
+        #angle_jump = size/self.total_points*10
+        #angle_start = 45
         guard_index = 0
-        guard_dict = {}
-        index = 0
+        point_index = 0
+        self.calculate_formation()
         for val in self.point_dict.items():
             id = val[0]
             point = val[1]
-            angle = 0
-            distance = 1
-            #angle = (((index) * (angle_jump) + angle_start)) % 90
-            distance = 1
-            if id in self.guard_list and self.is_stay_guard == False:  # call the move guard function
-                print(self.angles[guard_index])
-                distance, angle = self.move_stay_guard(
-                    point, self.angles[guard_index], guard_index)
+            point_point = Point(point)
+            if id in self.guard_list and self.is_stay_guard == False: ## call the move guard function
+                distance,angle = self.move_stay_guard(point,self.angles[guard_index],guard_index)
                 guard_index += 1
-            index += 1
-            moves.append((distance, angle*(math.pi / 180)))
+            else: #if just a normal unit
+                distance = point_point.distance(self.point_formation[point_index])
+                angle = self.angle_between(point_point, self.point_formation[point_index])
+                point_index+=1
+            moves.append((distance, angle))
 
         return moves
-
     def move_stay_guard(
         self,
         guard_point: Point,
@@ -239,8 +225,8 @@ class Player:
         # remove the last three points
         move = []
         is_guard = []
-        g_s_dist = abs(guard_point.distance(self.spawn_point))
-        g_s_ang = abs(angle-self.angle_between(guard_point, self.spawn_point))
+        g_s_dist = abs(guard_point.distance(self.guard_point[guard_index]))
+        g_s_ang =self.angle_between(guard_point, self.guard_point[guard_index])
         if g_s_dist == 1 and g_s_ang == angle:
             move.append((0, 0))
             is_guard.append(0)
@@ -262,7 +248,6 @@ class Player:
         dx = p1[0]-p2[0]
         angle = math.atan2(dy, dx)
         return angle
-
     def transform_move(
             self,
             dist_ang: Tuple[float, float]
@@ -296,3 +281,26 @@ class Player:
             return True
         else:
             return False
+    def calculate_formation(self):
+        self.point_formation = []
+        number_points = len(self.point_dict) ## get the total number of points right now 
+        if self.current_day >= 40:
+            number_points-=3
+            if number_points>0:
+                print( "making circle")
+                #only pi/2 radians
+                rad_step = math.pi/2 / number_points
+                radius_step = 80/self.total_days
+                cir_radius = radius_step*number_points
+                angle = 0
+                for i in range(number_points):
+                    x = cir_radius+np.cos(angle)
+                    y = cir_radius+np.sin(angle)
+                    angle += radius_step
+                    print(x,y)
+                    self.point_formation.append(Point(x,y))##add the point to the list
+                print(self.point_formation)
+        else:
+            for point in  range(number_points):
+                self.point_formation.append(Point(50,50))
+    
