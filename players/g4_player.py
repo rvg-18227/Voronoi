@@ -9,7 +9,7 @@ from itertools import repeat
 from multiprocessing import parent_process
 from os import makedirs, remove
 from random import randint, uniform
-from typing import Callable, Optional, TypeAlias
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,6 +23,7 @@ from scipy.spatial import KDTree
 from shapely.geometry import LineString, MultiPoint, Point, Polygon, box
 from shapely.ops import nearest_points, voronoi_diagram
 from sklearn.cluster import DBSCAN
+from typing_extensions import TypeAlias
 
 from constants import dispute_color, player_color, tile_color
 
