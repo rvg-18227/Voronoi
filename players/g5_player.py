@@ -49,7 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
-        self.block_size = 2
+        self.block_size = 5
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
         elif self.player_idx == 1:
@@ -107,7 +107,8 @@ class Player:
         c3 = map_states[col][row + self.block_size - 1]
         c4 = map_states[col + self.block_size - 1][row + self.block_size - 1]
         s = set([c1, c2, c3, c4])
-        if len(s) > 1 and self.player_idx in s:
+        print(row, col, s)
+        if len(s) > 1 and self.player_idx + 1 in s:
             return True
         else:
             return False
@@ -124,7 +125,7 @@ class Player:
         
 
     def border_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean):
-        border_row, border_col, border_center, border_dist = closest_border
+        border_x, border_y, border_center, border_dist = closest_border
         #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
         HOME_INFLUENCE = 0.0
@@ -140,7 +141,7 @@ class Player:
         #     ENEMY_INFLUENCE = 0.6
         #     BOUNDARY_THRESHOLD = 2
         if mode == "defense":
-            ALLY_INFLUENCE = -0.2
+            ALLY_INFLUENCE = -0.1
             ARC_MEAN_INFLUENCE = 0.5
            
         else:
@@ -157,10 +158,10 @@ class Player:
         
         BOUNDARY_FACTOR = 5
 
-        #border_forces = [self.attractive_force(unit_pos, border_center) for row, col, border_center, border_dist in borders_dist]
+        border_forces = [self.attractive_force(unit_pos, border_center) for x, y, border_center, border_dist in borders_dist]
         
-        #border_force = np.add.reduce(border_forces)
-        border_force = self.attractive_force(unit_pos, border_center)
+        border_force = np.add.reduce(border_forces)
+        #border_force = self.attractive_force(unit_pos, border_center)
         
         if self.num_days // self.spawn_days > 8:
             arc_mean_force = self.attractive_force(unit_pos, offensive_arc_mean)
@@ -296,6 +297,25 @@ class Player:
 
         return self.to_polar(total_force)
 
+    def is_in_map(self, pos):
+        return 0 <= pos[0] < 100 and 0 <= pos[1] < 100
+
+    def is_border_cell(self, x, y, map_states):
+        top = (x, y - 1)
+        bottom = (x, y + 1)
+        left = (x - 1, y)
+        right = (x + 1, y)
+        top_left = (x - 1, y - 1)
+        top_right = (x + 1, y - 1)
+        bottom_left = (x - 1, y + 1)
+        bottom_right = (x + 1, y + 1)
+        neighbors = [top, bottom, left, right, top_left, top_right, bottom_left, bottom_right]
+        for neighbor in neighbors:
+            if self.is_in_map(neighbor):
+                if map_states[neighbor[0]][neighbor[1]] != self.player_idx + 1:
+                    return True
+        return False
+
 
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
@@ -325,7 +345,7 @@ class Player:
                 )
             )
 
-        if self.num_days // self.spawn_days <= 20:
+        if self.num_days // self.spawn_days <= 0:
             moves = []
             for i, (unit_id, unit_pos) in enumerate(own_units):
                 moves.append(self.naive_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units))
@@ -360,11 +380,17 @@ class Player:
             #             sparse.append((row, col))
 
             borders = []
-            for row in range(100 // self.block_size):
-                for col in range(100 // self.block_size):
-                    if self.is_border_block(row, col, map_states):
-                        borders.append((row, col))
+            # for row in range(100 // self.block_size):
+            #     for col in range(100 // self.block_size):
+            #         if self.is_border_block(row, col, map_states):
+            #             borders.append((row, col))
             #print(borders)
+            for x in range(100):
+                for y in range(100):
+                    if map_states[x][y] == self.player_idx + 1:
+                       if self.is_border_cell(x, y, map_states):
+                           borders.append((x, y))
+
             moves = []
 
             own_units.sort(key=lambda x: x[0])
@@ -372,7 +398,7 @@ class Player:
             # sparse_assignment_set = set()
             offensive_arc_mean = np.mean([unit_pos for unit_id, unit_pos in own_units[:8]], axis=0)
             for i, (unit_id, unit_pos) in enumerate(own_units):
-                if i < 8:
+                if i < len(unit_pos) // 4:
                     mode = "offense"
                 else:
                     mode = "defense"
@@ -398,26 +424,29 @@ class Player:
                 #         break
                 # if closest_sparse is None:
                 #     closest_sparse = sparse_dist[0]
-
+                
+                #print(borders)
                 borders_dist = []
-                for (row, col) in borders:
-                    border_center = self.get_block_center(row, col)
-                    borders_dist.append((row, col, border_center, np.linalg.norm(border_center - unit_pos)))
+                for (x, y) in borders:
+                    # border_center = self.get_block_center(row, col)
+                    border_center = np.array([x+0.5, y+0.5])
+                    borders_dist.append((x, y, border_center, np.linalg.norm(border_center - unit_pos)))
                 
                 borders_dist.sort(key=lambda x: x[3])
                 closest_border = None
-                for (row, col, center, dist) in borders_dist:
-                    if (row, col) not in border_assignment_set:
-                        border_assignment_set.add((row, col))
-                        closest_border = (row, col, center, dist)
+                for (x, y, center, dist) in borders_dist:
+                    if (x, y) not in border_assignment_set:
+                        border_assignment_set.add((x, y))
+                        closest_border = (x, y, center, dist)
                         break
+                
                 if closest_border is None:
                     if len(borders_dist) > 0:
                         closest_border = borders_dist[0]
                     else:
-                        closest_border = (50 // self.block_size, 50 // self.block_size, np.array([50.0, 50.0]), 
+                        closest_border = (50, 50, np.array([50.0, 50.0]), 
                                         np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
-                
+
                 moves.append(self.border_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, 
                                                 own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean))
             return moves
