@@ -176,9 +176,9 @@ class Player:
 
         ally_force = [
             self.repelling_force(unit_pos, ally_pos)
-            for ally_id, ally_pos in own_units
-            if ally_id != unit_id
-        ]
+            for i, (ally_id, ally_pos) in enumerate(own_units)
+            if ally_id != unit_id and i % 2 == 0
+        ] # repelled by only border units
         ally_force = np.add.reduce(ally_force)
 
         boundary_force = np.array([0.0, 0.0])
@@ -250,8 +250,8 @@ class Player:
 
         ally_force = [
             self.repelling_force(unit_pos, ally_pos)
-            for i, (ally_id, ally_pos) in enumerate(own_units)
-            if ally_id != unit_id and i % 2 != 0
+            for ally_id, ally_pos in own_units
+            if ally_id != unit_id
         ]
         ally_force = np.add.reduce(ally_force)
 
@@ -345,11 +345,12 @@ class Player:
                 )
             )
 
-        '''if self.num_days // self.spawn_days <= 0:
+        # spread out at start of game
+        if self.num_days // self.spawn_days <= 0:
             moves = []
             for i, (unit_id, unit_pos) in enumerate(own_units):
                 moves.append(self.naive_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units))
-            return moves'''
+            return moves
 
         enemy_units_locations = [
             ((player, i), sympy_p_float(unit_pos[player][i]))
@@ -398,7 +399,7 @@ class Player:
         offensive_arc_mean = np.mean([unit_pos for unit_id, unit_pos in own_units[:8]], axis=0)
         for i, (unit_id, unit_pos) in enumerate(own_units):
 
-            if i % 2:  # int(unit_id) % 2 does worse
+            if i % 2 != 0:  # preaders are odd units, border units are even
                 is_spreader = 1
             else:
                 is_spreader = 0
