@@ -112,6 +112,9 @@ class Player:
         self.total_points = self.total_days//self.spawn_days
         self.current_day = (len(points)/(self.total_days //
                             self.spawn_days) * self.total_days)//1  # rough estimate
+        self.enemy_position = []
+        self.map_states = map_states
+
         min_distance = 0.5
         # intialize the look up dict for id => points
         self.make_point_dict(points, ids)
@@ -250,10 +253,60 @@ class Player:
 
     def is_safe(
             self,
-            unit_pos,
-            map_states
+            point: list[float],
+            rad
+    ) -> tuple[float, float]:
+        # point and how far we want to look
+        num_enemy_near = 0
+        num_ally_near = 0
+        for enemy in self.enemy_position:
+            enemy_x = enemy[0]
+            enemy_y = enemy[1]
+            if self.is_inside(point[0], point[1], rad, enemy_x, enemy_y):
+                num_enemy_near += 1
+        for ally in self.points:
+            ally_x = ally[0]
+            ally_y = ally[1]
+            if self.is_inside(point[0], point[1], rad, ally_x, ally_y):
+                num_ally_near += 1
+        return num_enemy_near, num_ally_near
+
+    def is_inside(
+            self,
+            circle_x,
+            circle_y,
+            rad,
+            x,
+            y
     ) -> bool:
-        # TODO the safety heuristic
-        # print(unit_pos)
-        # print(map_states)
-        return False
+        # Compare radius of circle
+        # with distance of its center
+        # from given point
+        if (x - circle_x) ** 2 + (y - circle_y) ** 2 <= rad ** 2:
+            return True
+        else:
+            return False
+
+    def calculate_formation(self) -> None:
+        self.point_formation = []
+        # get the total number of points right now
+        number_points = len(self.point_dict)
+        if self.current_day >= 40:
+            number_points -= 3
+            if number_points > 0:
+                # print("making circle")
+                # only pi/2 radians
+                radian_step = math.pi/2 / number_points
+                radius_step = 0.5
+                cir_radius = radius_step*number_points
+                angle = 0
+                for _ in range(number_points):
+                    x = cir_radius+np.cos(angle)
+                    y = cir_radius+np.sin(angle)
+                    angle += radian_step
+                    #  print("xy", x, y)
+                    # add the point to the list
+                    self.point_formation.append(Point(x, y))
+        else:
+            for _ in range(number_points):
+                self.point_formation.append(Point(50, 50))
