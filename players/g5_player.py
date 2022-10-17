@@ -124,7 +124,7 @@ class Player:
         return distance, angle
         
 
-    def border_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean):
+    def border_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean, attract_to_closest_border):
         border_x, border_y, border_center, border_dist = closest_border
         #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
@@ -159,10 +159,12 @@ class Player:
         
         BOUNDARY_FACTOR = 5
 
-        border_forces = [self.attractive_force(unit_pos, border_center) for x, y, border_center, border_dist in borders_dist]
+        if attract_to_closest_border:
+            border_force = self.attractive_force(unit_pos, border_center)
+        else:
+            border_forces = [self.attractive_force(unit_pos, border_center) for x, y, border_center, border_dist in borders_dist]
+            border_force = np.add.reduce(border_forces)
         
-        border_force = np.add.reduce(border_forces)
-        #border_force = self.attractive_force(unit_pos, border_center)
         
         if self.num_days // self.spawn_days > 8:
             arc_mean_force = self.attractive_force(unit_pos, offensive_arc_mean)
@@ -179,7 +181,7 @@ class Player:
             self.repelling_force(unit_pos, ally_pos)
             for ally_id, ally_pos in own_units
             if ally_id != unit_id
-        ] # repelled by only spreader units
+        ]
         ally_force = np.add.reduce(ally_force)
 
         boundary_force = np.array([0.0, 0.0])
@@ -218,79 +220,6 @@ class Player:
             (arc_mean_force * ARC_MEAN_INFLUENCE)
             + (border_force * BORDER_INFLUENCE)
             + (enemy_force * ENEMY_INFLUENCE)
-            + (home_force * HOME_INFLUENCE)
-            + (ally_force * ALLY_INFLUENCE)
-            + (boundary_force * BOUNDARY_INFLUENCE)
-        )
-
-        return self.to_polar(total_force)
-
-    def cluster_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, closest_cluster, closest_cluster_distance, mode, borders):
-        row, col, ids = closest_cluster
-        ENEMY_INFLUENCE = 1
-        HOME_INFLUENCE = 3
-        ALLY_INFLUENCE = 1
-        CLUSTER_ENEMY_INFLUENCE = 5 * (1 / closest_cluster_distance)
-        BOUNDARY_INFLUENCE = 1
-        BOUNDARY_THRESHOLD = 0.1
-        BOUNDARY_FACTOR = 1
-        
-        cluster_enemy_unit_forces = [
-            self.repelling_force(unit_pos, enemy_pos)
-            for enemy, enemy_pos in enemy_units_locations
-            if enemy in ids
-        ]
-        cluster_enemy_force = np.add.reduce(cluster_enemy_unit_forces)
-
-        other_enemy_unit_forces = [
-            self.attractive_force(unit_pos, enemy_pos)
-            for enemy, enemy_pos in enemy_units_locations
-            if enemy not in ids
-        ]
-        other_enemy_force = np.add.reduce(other_enemy_unit_forces)
-
-        ally_force = [
-            self.repelling_force(unit_pos, ally_pos)
-            for ally_id, ally_pos in own_units
-            if ally_id != unit_id
-        ]
-        ally_force = np.add.reduce(ally_force)
-
-        boundary_force = np.array([0.0, 0.0])
-        top_repelling_force = np.array([0.0, 1.0])
-        bottom_repelling_force = np.array([0.0, -1.0])
-        left_repelling_force = np.array([1.0, 0.0])
-        right_repelling_force = np.array([-1.0, 0.0])
-        if unit_pos[0] < BOUNDARY_THRESHOLD:
-            if unit_pos[0] > 0:
-                boundary_force += left_repelling_force * (1.0 / unit_pos[0])
-            else:
-                boundary_force += left_repelling_force * BOUNDARY_FACTOR
-        if unit_pos[0] > 100 - BOUNDARY_THRESHOLD:
-            if unit_pos[0] < 100:
-                boundary_force += right_repelling_force * (1.0 / (100.0 - unit_pos[0]))
-            else:
-                boundary_force += right_repelling_force * BOUNDARY_FACTOR
-        if unit_pos[1] < BOUNDARY_THRESHOLD:
-            if unit_pos[1] > 0:
-                boundary_force += top_repelling_force * (1.0 / unit_pos[1])
-            else:
-                boundary_force += top_repelling_force * BOUNDARY_FACTOR
-        if unit_pos[1] > 100 - BOUNDARY_THRESHOLD:
-            if unit_pos[1] < 100:
-                boundary_force += bottom_repelling_force * (1.0 / (100.0 - unit_pos[1]))
-            else:
-                boundary_force += bottom_repelling_force * BOUNDARY_FACTOR
-        
-        if unit_pos[0] == self.homebase[0] and unit_pos[1] == self.homebase[1]:
-            home_force = np.array([0.0, 0.0])
-        else:
-            home_force = self.repelling_force(unit_pos, self.homebase)
-        
-
-        total_force = self.normalize(
-            + (cluster_enemy_force * CLUSTER_ENEMY_INFLUENCE)
-            + (other_enemy_force * ENEMY_INFLUENCE)
             + (home_force * HOME_INFLUENCE)
             + (ally_force * ALLY_INFLUENCE)
             + (boundary_force * BOUNDARY_INFLUENCE)
@@ -361,36 +290,30 @@ class Player:
         ]
 
 
-        CLUSTER_THRESHOLD = 10
 
         block_count =  [[set()] * (100 // self.block_size) for i in range(100 // self.block_size)]
         for enemy, enemy_pos in enemy_units_locations:
             col, row = int(enemy_pos[0]), int(enemy_pos[1])
             block_count[row // self.block_size][col // self.block_size].add(enemy)
 
-        # clusters = []
-        # for row in range(100 // self.block_size):
-        #     for col in range(100 // self.block_size):
-        #         if len(block_count[row][col]) >= CLUSTER_THRESHOLD:
-        #             clusters.append((row, col, block_count[row][col]))
-
-        # sparse = []
-        # for row in range(100 // self.block_size):
-        #     for col in range(100 // self.block_size):
-        #         if len(block_count[row][col]) <= 1:
-        #             sparse.append((row, col))
-
         borders = []
-        # for row in range(100 // self.block_size):
-        #     for col in range(100 // self.block_size):
-        #         if self.is_border_block(row, col, map_states):
-        #             borders.append((row, col))
-        #print(borders)
         for x in range(100):
             for y in range(100):
                 if map_states[x][y] == self.player_idx + 1:
                    if self.is_border_cell(x, y, map_states):
                        borders.append((x, y))
+
+        homebase_borders_dist = []
+        for (x, y) in borders:
+            border_center = np.array([x+0.5, y+0.5])
+            homebase_borders_dist.append((x, y, border_center, np.linalg.norm(border_center - self.homebase)))
+        homebase_borders_dist.sort(key=lambda x: x[3])
+        if len(homebase_borders_dist) == 0:
+            homebase_invasion = True
+        elif homebase_borders_dist[0][3] < 20:
+            homebase_invasion = True
+        else:
+            homebase_invasion = False
 
         moves = []
 
@@ -400,43 +323,19 @@ class Player:
         offensive_arc_mean = np.mean([unit_pos for unit_id, unit_pos in own_units[:8]], axis=0)
         for i, (unit_id, unit_pos) in enumerate(own_units):
 
-            if i % 2 != 0:  # preaders are odd units, border units are even
-                is_spreader = True
+            if homebase_invasion and len(own_units) - i <= 5:
+                attract_to_closest_border = True
             else:
-                is_spreader = False
+                attract_to_closest_border = False
 
-            # if i < len(own_units) // 4:
-            #     mode = "offense"
-            # else:
-            #     mode = "defense"
-            mode = "offense"
-            # closest_cluster_distance = float("inf")
-            # closest_cluster = None
-            # for (row, col, ids) in clusters:
-            #     cluster_center = np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
-            #     # print(unit_pos, cluster_center, np.linalg.norm(cluster_center - unit_pos))
-            #     if np.linalg.norm(cluster_center - unit_pos) < closest_cluster_distance:
-            #         closest_cluster_distance = np.linalg.norm(cluster_center - unit_pos)
-            #         closest_cluster = (row, col, ids)
-            # sparse_dist = []
-            # for (row, col) in sparse:
-            #     sparse_center = self.get_block_center(row, col)
-            #     sparse_dist.append((row, col, sparse_center, np.linalg.norm(sparse_center - unit_pos)))
-            # sparse_dist.sort(key=lambda x: x[3])
-            # closest_sparse = None
-
-            # for (row, col, center, dist) in sparse_dist:
-            #     if (row, col) not in sparse_assignment_set:
-            #         sparse_assignment_set.add((row, col))
-            #         closest_sparse = (row, col, center, dist)
-            #         break
-            # if closest_sparse is None:
-            #     closest_sparse = sparse_dist[0]
-
+            if i < len(own_units) // 4:
+                mode = "offense"
+            else:
+                mode = "defense"
+            
             #print(borders)
             borders_dist = []
             for (x, y) in borders:
-                # border_center = self.get_block_center(row, col)
                 border_center = np.array([x+0.5, y+0.5])
                 borders_dist.append((x, y, border_center, np.linalg.norm(border_center - unit_pos)))
 
@@ -455,10 +354,8 @@ class Player:
                     closest_border = (50, 50, np.array([50.0, 50.0]),
                                     np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
 
-            if is_spreader:
-                moves.append(self.naive_strategy(unit_id, unit_pos, map_states, current_scores, total_scores, own_units))
-            else:
-                moves.append(self.border_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
-                            own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean))
+
+            moves.append(self.border_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
+                        own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean, attract_to_closest_border))
         return moves
 
