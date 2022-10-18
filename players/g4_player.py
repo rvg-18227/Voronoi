@@ -871,7 +871,7 @@ class Attacker(Role):
 
         ATTACK_INFLUENCE = 200
         AVOID_INFLUENCE = 300
-        SPREAD_INFLUENCE = 50
+        SPREAD_INFLUENCE = 100
 
         moves = {}
         own_units = update.own_units()
@@ -914,8 +914,8 @@ class Attacker(Role):
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = max(100/(dist_to_avoid), 50)
-            WALL_INFLUENCE = PINCER_INFLUENCE
+            PINCER_INFLUENCE = 50/(dist_to_avoid)
+            WALL_INFLUENCE = PINCER_INFLUENCE + 30
             
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
@@ -946,7 +946,10 @@ class Attacker(Role):
         target_idx = np.argmin(np.array(dist_to_home))
         target_pos = enemy_units[target_idx][1]
         unit_vec, _ = force_vec(start_point, target_pos)
-        return target_pos, target_pos - unit_vec * 20
+        return target_pos, target_pos - unit_vec * 10
+    
+    def find_target_sophisticated(self, start_point, enemy_units):
+        pass
 
     def attacker_spread_force(self, my_pos, my_id, own_units):
         # pdb.set_trace()
@@ -1110,12 +1113,12 @@ class ReallocationRules:
 spawn_rules = SpawnRules()
 
 # ATTACKER TESTING
-@spawn_rules.rule
-def all_attackers(rule_inputs: RuleInputs, uid: str):
-    global attack_roll
-    rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
-    attack_roll += 1
-    return True
+# @spawn_rules.rule
+# def all_attackers(rule_inputs: RuleInputs, uid: str):
+#     global attack_roll
+#     rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
+#     attack_roll += 1
+#     return True
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
@@ -1134,14 +1137,14 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
     return False
 
 
-@spawn_rules.rule
-def all_scouts(rule_inputs: RuleInputs, uid: str):
-    rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
-    return True
+# @spawn_rules.rule
+# def all_scouts(rule_inputs: RuleInputs, uid: str):
+#     rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
+#     return True
 
 
 # Disabled for class
-# @spawn_rules.rule
+@spawn_rules.rule
 def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     scout_roles = rule_inputs.role_groups.of_type(RoleType.SCOUT)
     attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
@@ -1149,7 +1152,7 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     total_attackers = sum(len(attackers.units) for attackers in attacker_roles)
     if total_scouts >= total_attackers:
         global attack_roll
-        attacker_roles[attack_roll % 3].allocate_unit(uid)
+        attacker_roles[attack_roll % 2].allocate_unit(uid)
         attack_roll += 1
     else:
         scout_roles[0].allocate_unit(uid)
@@ -1321,7 +1324,7 @@ class Player:
         self.role_groups.add_group(
             RoleType.DEFENDER, LatticeDefender(self.logger, self.params, 40)
         )
-        enemy_player = set([0, 1, 2, 3]) - set([player_idx])
+        enemy_player = set([0, 1, 3]) - set([player_idx])
         for enemy_idx in enemy_player:
             self.role_groups.add_group(
                 RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
