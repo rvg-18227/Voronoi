@@ -156,7 +156,7 @@ class StateUpdate:
         `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
         """
         if self.cached_ownership is not None:
-            return self.cached_ownership
+           return self.cached_ownership
 
         # player -> unit -> [(x, y)]
         unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
@@ -857,11 +857,18 @@ def target_rank(start_point, update, my_player_idx, num_target):
         for unit_id in unit_ownership[player_idx]:
             tile_owned = len(unit_ownership[player_idx][unit_id])
             heuristic_lookup[(player_idx, unit_id)] = tile_owned/10000 * WEIGHT_TILE#normalize it with max tile
-    for player_idx in enemy_units:
-        for unit_id, unit_pos in enemy_units[player_idx]:
-            _, distance_to_start = force_vec(unit_pos, start_point)
-            heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2)) * WEIGHT_DIST#normalize it with max distaince on board
+    
+    # for player_idx in enemy_units:
+    #     for unit_id, unit_pos in enemy_units[player_idx]:
+    #         _, distance_to_start = force_vec(unit_pos, start_point)
+    #         try:
+    #             heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2)) * WEIGHT_DIST#normalize it with max distaince on board
+    #         except KeyError:
+    #             #pdb.set_trace()
+    #             heuristic_lookup[(player_idx, unit_id)] = -100
+    #             print("somethings wrong")
     # rank the heuristic value
+    #pdb.set_trace()
     heuristic_ranking = [(k, v) for k, v in heuristic_lookup.items()]
     heuristic_ranking.sort(key=lambda x: x[1], reverse=True)
     top_k = heuristic_ranking[:num_target]
@@ -898,6 +905,13 @@ def density_heatmap(enemy_unit):
     plt.savefig("horizontal.png")
     return heat_map
     
+def assign_target(targets, avoid, role_groups):
+    for group in role_groups:
+        # get cloest point to targets from units
+        assignment = []
+    return assignment
+
+
 class Attacker(Role):
     def __init__(self, logger, params):
         super().__init__(logger, params)
@@ -1167,12 +1181,12 @@ class ReallocationRules:
 spawn_rules = SpawnRules()
 
 # ATTACKER TESTING
-# @spawn_rules.rule
-# def all_attackers(rule_inputs: RuleInputs, uid: str):
-#     global attack_roll
-#     rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
-#     attack_roll += 1
-#     return True
+@spawn_rules.rule
+def all_attackers(rule_inputs: RuleInputs, uid: str):
+    global attack_roll
+    rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
+    attack_roll += 1
+    return True
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
@@ -1206,7 +1220,7 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     total_attackers = sum(len(attackers.units) for attackers in attacker_roles)
     if total_scouts >= total_attackers:
         global attack_roll
-        attacker_roles[attack_roll % 2].allocate_unit(uid)
+        attacker_roles[attack_roll % 3].allocate_unit(uid)
         attack_roll += 1
     else:
         scout_roles[0].allocate_unit(uid)
@@ -1380,7 +1394,7 @@ class Player:
         )
         
         num_attack_group = 3
-        for i in range(num_attack_group):
+        for _ in range(num_attack_group):
             self.role_groups.add_group(
                 RoleType.ATTACKER, Attacker(self.logger, self.params)
             )
@@ -1478,11 +1492,12 @@ class Player:
                 start_point = self.params.home_base
                 targets, avoids = target_rank(start_point, update, self.player_idx, 3)
                 # for each target, find a attack team best suitable for the task
-                for role_group in self.role_groups.of_type(role):
-                    #pdb.set_trace()
-                    role_moves.update(role_group.turn_moves(update, target=targets[0], avoid=avoids[0]))
-                    role_moves.update(role_group.turn_moves(update, target=targets[1], avoid=avoids[1]))
-                    role_moves.update(role_group.turn_moves(update, target=targets[2], avoid=avoids[2]))
+                role_moves.update(role_group.turn_moves(update, target=targets[0], avoid=avoids[0]))
+                role_moves.update(role_group.turn_moves(update, target=targets[1], avoid=avoids[1]))
+                role_moves.update(role_group.turn_moves(update, target=targets[2], avoid=avoids[2]))
+                # assigned_target = assign_target(targets, avoid, self.role_groups.of_type(Attacker))
+                # for role_group, target, avoid in assigned_target:
+                #     role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid))
                 # for role_group in self.role_groups.of_type(role):
                 #     for target_idx, target in enumerate(targets):
                 #         # since targets are rank by heuristic
