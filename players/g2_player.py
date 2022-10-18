@@ -261,7 +261,7 @@ def get_regions_away_home(region_num, home):
     for unit_id in region_dict:
         region = region_dict[unit_id]
         current_center = region.centroid
-        if home_coord.distance(current_center) < 50:
+        if home_coord.distance(current_center) < INNER_RADIUS:
             del region_copy[unit_id]
     return region_copy
 
