@@ -1,3 +1,4 @@
+from collections import defaultdict
 import logging
 import multiprocessing
 import pdb
@@ -843,7 +844,7 @@ def border_detect(map_state, my_player_idx, target_player_idx):
         my_player_idx, target_player_idx, vertical_edge, horizontal_edge
     )
 
-def target_rank(start_point, update, my_player_idx, num_target):
+def target_rank(update, start_point, my_player_idx, num_target):
     # return heuristic target with len(targets) = num_targets
     unit_ownership = update.unit_ownership()[0]
     enemy_units =  update.enemy_units()
@@ -881,7 +882,7 @@ def target_rank(start_point, update, my_player_idx, num_target):
     for target_pos in targets:
         unit_vec, _ = force_vec(start_point, target_pos)
         avoids.append(target_pos - unit_vec * 10)
-    return targets, avoids
+    return avoids, targets
 
 def density_heatmap(enemy_unit):
     # create a heatmap base on enemy density
@@ -905,10 +906,31 @@ def density_heatmap(enemy_unit):
     plt.savefig("horizontal.png")
     return heat_map
     
-def assign_target(targets, avoid, role_groups):
-    for group in role_groups:
-        # get cloest point to targets from units
-        assignment = []
+def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx):
+    #pdb.set_trace()
+    assignment = []
+    role_groups = role_groups.copy()
+    for idx, t in enumerate(targets):
+        group_dist = defaultdict(list)
+        for group in role_groups:
+            if len(group.units) == 0:
+                _, dist = force_vec(t, home_base)
+                group_dist[group].append(dist)
+            else:
+                for u in group.units:
+                    try:
+                        u_pos = update.unit_id_to_pos(my_player_idx, u)
+                    except KeyError:
+                        # dead unit
+                        u_pos = home_base
+                    _, dist = force_vec(t, u_pos)
+                    group_dist[group].append(dist)
+        # select the group that has the lowest distance to target
+        #pdb.set_trace()
+        group_dist = [(k, v) for k, v in group_dist.items()]
+        group_dist.sort(key=lambda x: min(x[1]))
+        assignment.append((group_dist[0][0], t, avoids[idx]))
+        role_groups.remove(group_dist[0][0])
     return assignment
 
 
@@ -1180,7 +1202,7 @@ class ReallocationRules:
 # Higher up means higher precedence
 spawn_rules = SpawnRules()
 
-# ATTACKER TESTING
+#ATTACKER TESTING
 @spawn_rules.rule
 def all_attackers(rule_inputs: RuleInputs, uid: str):
     global attack_roll
@@ -1491,14 +1513,14 @@ class Player:
                 #pdb.set_trace()
                 heatmap = density_heatmap(update.all_enemy_units())
                 start_point = self.params.home_base
-                targets, avoids = target_rank(start_point, update, self.player_idx, 3)
+                targets, avoids = target_rank(update, start_point, self.player_idx, 3)
                 # for each target, find a attack team best suitable for the task
-                role_moves.update(self.role_groups.of_type(role)[0].turn_moves(update, target=targets[0], avoid=avoids[0]))
-                role_moves.update(self.role_groups.of_type(role)[1].turn_moves(update, target=targets[1], avoid=avoids[1]))
-                role_moves.update(self.role_groups.of_type(role)[2].turn_moves(update, target=targets[2], avoid=avoids[2]))
-                # assigned_target = assign_target(targets, avoid, self.role_groups.of_type(Attacker))
-                # for role_group, target, avoid in assigned_target:
-                #     role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid))
+                # role_moves.update(self.role_groups.of_type(role)[0].turn_moves(update, target=targets[0], avoid=avoids[0]))
+                # role_moves.update(self.role_groups.of_type(role)[1].turn_moves(update, target=targets[1], avoid=avoids[1]))
+                # role_moves.update(self.role_groups.of_type(role)[2].turn_moves(update, target=targets[2], avoid=avoids[2]))
+                assigned_target = assign_target(update, targets, avoids, self.role_groups.of_type(role), self.params.home_base, self.player_idx)
+                for role_group, target, avoid in assigned_target:
+                    role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid))
                 # for role_group in self.role_groups.of_type(role):
                 #     for target_idx, target in enumerate(targets):
                 #         # since targets are rank by heuristic
