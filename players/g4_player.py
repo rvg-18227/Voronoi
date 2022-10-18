@@ -747,15 +747,13 @@ class GreedyScout(Role):
     def deallocation_candidate(self, update, target_point):
         pass
 
-
+# Attacker stuff==============================================================
 def check_border(my_player_idx, target_player_idx, vertical, horizontal):
-    # pdb.set_trace()
     def check_pair(idx1, idx2, target1, target2):
         if idx1 == target1 and idx2 == target2 or idx1 == target2 and idx2 == target1:
             return True
         else:
             return False
-
     if check_pair(my_player_idx, target_player_idx, 0, 1):
         return 1 in vertical or 1 in horizontal
     if check_pair(my_player_idx, target_player_idx, 0, 2):
@@ -771,7 +769,6 @@ def check_border(my_player_idx, target_player_idx, vertical, horizontal):
     else:
         # somethings wrong
         return None
-
 
 def border_detect(map_state, my_player_idx, target_player_idx):
     base_kernel = torch.tensor([-1, 0, 1])
@@ -804,7 +801,7 @@ def target_rank(update, start_point, my_player_idx, num_target):
     # for each unit, assign a score based on unit it own and distance from base (risk)
     heuristic_lookup = dict()
     WEIGHT_TILE = 100
-    WEIGHT_DIST = 20
+    WEIGHT_DIST = 50
     for player_idx in unit_ownership:
         if my_player_idx == player_idx:
             continue
@@ -885,18 +882,18 @@ def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx
     return assignment
 
 def get_avoid_influence(heatmap, target):
+    def clamp(coord):
+        coord = int(coord)
+        new_coord = coord
+        if coord > 99:
+            new_coord = 99
+        elif coord < 0:
+            new_coord = 0
+        return new_coord
     base_influence = 300
     x, y = target
-    x = int(x)
-    y = int(y)
-    if x > 99:
-        x = 99
-    elif x < 0:
-        x = 0
-    if y > 99:
-        y = 99
-    elif y < 0:
-        y = 0
+    x = clamp(x)
+    y = clamp(y)
     density_at_target = heatmap[0, int(x), int(y)].item()
     return density_at_target * base_influence
     
@@ -959,7 +956,7 @@ class Attacker(Role):
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = 50/(dist_to_avoid)
+            PINCER_INFLUENCE = AVOID_INFLUENCE/(dist_to_avoid)
             WALL_INFLUENCE = PINCER_INFLUENCE + 30
             
             total_force = normalize(
