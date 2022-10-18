@@ -1488,13 +1488,14 @@ class Player:
         for role in RoleType:
             if role == RoleType.ATTACKER:
                 # calculate heuristic
+                #pdb.set_trace()
                 heatmap = density_heatmap(update.all_enemy_units())
                 start_point = self.params.home_base
                 targets, avoids = target_rank(start_point, update, self.player_idx, 3)
                 # for each target, find a attack team best suitable for the task
-                role_moves.update(role_group.turn_moves(update, target=targets[0], avoid=avoids[0]))
-                role_moves.update(role_group.turn_moves(update, target=targets[1], avoid=avoids[1]))
-                role_moves.update(role_group.turn_moves(update, target=targets[2], avoid=avoids[2]))
+                role_moves.update(self.role_groups.of_type(role)[0].turn_moves(update, target=targets[0], avoid=avoids[0]))
+                role_moves.update(self.role_groups.of_type(role)[1].turn_moves(update, target=targets[1], avoid=avoids[1]))
+                role_moves.update(self.role_groups.of_type(role)[2].turn_moves(update, target=targets[2], avoid=avoids[2]))
                 # assigned_target = assign_target(targets, avoid, self.role_groups.of_type(Attacker))
                 # for role_group, target, avoid in assigned_target:
                 #     role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid))
