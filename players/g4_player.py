@@ -25,6 +25,8 @@ from typing_extensions import TypeAlias
 
 from constants import dispute_color, player_color, tile_color
 
+THREADED = True
+
 # ==================
 # Game State Classes
 # ==================
@@ -44,6 +46,15 @@ class GameParameters:
     home_base: tuple[float, float]
 
 
+class StrategyParameters:
+    min_defenders: int
+    interceptor_strength: int
+
+    def __init__(self, params: GameParameters):
+        self.min_defenders = 10 if params.spawn_days < 5 else 20
+        self.interceptor_strength = 5 if params.spawn_days < 5 else 3
+
+
 def get_nearest_unit(
     args: tuple[tuple[int, int], int, KDTree, dict[int, str]]
 ) -> tuple[tuple[int, int], int, str]:
@@ -58,7 +69,6 @@ def get_nearest_unit(
 
 # Pool initialization must be below the declaration for get_nearest_unit
 # Pool initialization is global to re-use the same process pool
-THREADED = True
 if THREADED:
     pool = multiprocessing.Pool(multiprocessing.cpu_count())
 
@@ -209,9 +219,12 @@ class StateUpdate:
                 [unit_pos for _, unit_pos in enemy_units[enemy]]
             )
             for enemy in enemies
+            if len(enemy_units[enemy]) > 0
         }
         clusters: dict[int, dict[int, list[str]]] = {enemy: {} for enemy in enemies}
         for enemy in enemies:
+            if not enemy in dbscans:
+                continue
             for unit_idx, label in enumerate(dbscans[enemy].labels_):
                 if label == -1:
                     continue
@@ -241,9 +254,9 @@ class StateUpdate:
         territory_points = MultiPoint(territory_points)
         hull_poly = territory_points.convex_hull
         envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
-        self.cached_territory_hull = hull_poly.union(
-            hull_poly.buffer(0.5)
-        ).intersection(envelope)
+        self.cached_territory_hull = hull_poly.union(hull_poly.buffer(1)).intersection(
+            envelope
+        )
         return self.cached_territory_hull
 
 
@@ -299,6 +312,10 @@ def ease_out(x):
         return 1
     else:
         return 1 - ((1 - x) ** EASING_EXP)
+
+
+def near(a, b):
+    return np.abs(a - b) < 0.01
 
 
 # =================
@@ -363,6 +380,14 @@ class Role(ABC):
     def turn_moves(self, update: StateUpdate):
         return self._turn_moves(update)
 
+    def _closest_unit(self, update: StateUpdate, target_point: NDArray[np.float32]):
+        unit_idx_to_id = {idx: uid for idx, uid in enumerate(self.units)}
+        kdtree = KDTree(
+            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in self.units]
+        )
+        _, unit_idx = kdtree.query(target_point)
+        return unit_idx_to_id[unit_idx]
+
     # ===================
     # Role Specialization
     # ===================
@@ -396,10 +421,29 @@ class LatticeDefender(Role):
 
     def inside_territory(self, update: StateUpdate, unit_pos: NDArray[np.float32]):
         pos_point = Point(unit_pos)
-        if not update.territory_hull().contains(pos_point):
-            in_vec, _ = force_vec(self.params.home_base, unit_pos)
+        territory = update.territory_hull()
+        in_vec, _ = force_vec(self.params.home_base, unit_pos)
+        if not pos_point.intersects(territory):
+            self.debug("Defender not in territory ??", pos_point.distance(territory))
             return in_vec
-        return np.array([0, 0])
+        else:
+            _, nearest_border = nearest_points(pos_point, territory.exterior)
+            border_distance = pos_point.distance(territory.exterior)
+            self.debug(border_distance)
+            # Near the walls doesn't count
+            if (
+                near(nearest_border.x, 0)
+                or near(nearest_border.x, self.params.max_dim)
+                or near(nearest_border.y, 0)
+                or near(nearest_border.y, self.params.max_dim)
+            ):
+                return np.array([0, 0])
+            # On the interior of the territory
+            elif border_distance > 10:
+                return np.array([0, 0])
+            # Near the border of the territory
+            else:
+                return in_vec
 
     def get_jitter(self, uid: str):
         # Add decaying random direction bias
@@ -451,7 +495,6 @@ class LatticeDefender(Role):
             }
 
             moves = {}
-            found = 0
             for uid, pos in defender_positions.items():
                 jitter_force = self.get_jitter(uid)
 
@@ -459,7 +502,6 @@ class LatticeDefender(Role):
                 target = pos
                 for poly in fixed_voronoi_polys:
                     if poly.contains(unit_point):
-                        found += 1
                         target = np.array([poly.centroid.x, poly.centroid.y])
                         continue
                 moves[uid] = to_polar(
@@ -477,12 +519,7 @@ class LatticeDefender(Role):
             }
 
     def deallocation_candidate(self, update, target_point):
-        unit_idx_to_id = {idx: uid for idx, uid in enumerate(self.units)}
-        kdtree = KDTree(
-            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in self.units]
-        )
-        _, unit_idx = kdtree.query(target_point)
-        return unit_idx_to_id[unit_idx]
+        return self._closest_unit(update, target_point)
 
 
 class Interceptor(Role):
@@ -976,6 +1013,7 @@ class RoleGroups:
 class RuleInputs:
     logger: logging.Logger
     params: GameParameters
+    strategy_params: StrategyParameters
     update: StateUpdate
     role_groups: RoleGroups
 
@@ -983,11 +1021,13 @@ class RuleInputs:
         self,
         logger: logging.Logger,
         params: GameParameters,
+        strategy_params: StrategyParameters,
         update: StateUpdate,
         role_groups: RoleGroups,
     ):
         self.logger = logger
         self.params = params
+        self.strategy_params = strategy_params
         self.update = update
         self.role_groups = role_groups
 
@@ -1066,7 +1106,7 @@ class ReallocationRules:
 spawn_rules = SpawnRules()
 
 
-@spawn_rules.rule
+# @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
     if rule_inputs.update.turn < 20:
         rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
@@ -1135,10 +1175,6 @@ def reassign_defenders_on_sufficient_density(rule_inputs: RuleInputs):
     return False
 
 
-# TODO: Should vary based on spawn rate
-INTERCEPTOR_STRENGTH = 5
-
-
 @reallocation_rules.rule
 def form_interceptors_on_threat(rule_inputs: RuleInputs):
     # Visualize Clusters
@@ -1203,8 +1239,11 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
                     RoleType.INTERCEPTOR, interceptor_role
                 )
                 defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-                for _ in range(INTERCEPTOR_STRENGTH):
-                    if len(defender_role.units) == 0:
+                for _ in range(rule_inputs.strategy_params.interceptor_strength):
+                    if (
+                        len(defender_role.units)
+                        <= rule_inputs.strategy_params.min_defenders
+                    ):
                         break
                     converted_defender = defender_role.deallocation_candidate(
                         rule_inputs.update, point_to_floats(nearest_target)
@@ -1230,7 +1269,7 @@ def release_interceptors_on_retreat(rule_inputs: RuleInputs):
                     interceptor_role.target_player, target
                 )
             )
-            for target in targets
+            for target in interceptor_role.target_units
         ]
         if all(
             not rule_inputs.update.territory_hull().contains(target_pos)
@@ -1264,7 +1303,9 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
     # Sort Interceptor groups by target tile ownership
     unit_ownership, _ = rule_inputs.update.unit_ownership()
     interceptors_weighted = []
+    total_interceptor_units = 0
     for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        total_interceptor_units += len(interceptor_role.units)
         total_target_ownership = sum(
             len(unit_ownership[interceptor_role.target_player][target_unit])
             for target_unit in interceptor_role.target_units
@@ -1293,13 +1334,15 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
         )
         nearest_target_position = point_to_floats(nearest_target_position)
         current_interceptors = len(interceptor_role.units)
-        if current_interceptors < INTERCEPTOR_STRENGTH:
-            rule_inputs.debug(
-                f"Reinforcing {interceptor_role.id} with {INTERCEPTOR_STRENGTH - current_interceptors} units"
-            )
-            for _ in range(INTERCEPTOR_STRENGTH - current_interceptors):
-                if len(defender_role.units) == 0:
-                    return
+        if current_interceptors < rule_inputs.strategy_params.interceptor_strength:
+            for _ in range(
+                rule_inputs.strategy_params.interceptor_strength - current_interceptors
+            ):
+                if (
+                    len(defender_role.units)
+                    <= rule_inputs.strategy_params.min_defenders
+                ):
+                    return did_reallocations
 
                 converted_defender = defender_role.deallocation_candidate(
                     rule_inputs.update, nearest_target_position
@@ -1361,6 +1404,8 @@ class Player:
         self.params.min_dim = min_dim
         self.params.max_dim = max_dim
         self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
+
+        self.strategy_params = StrategyParameters(self.params)
 
         self.role_groups = RoleGroups()
         self.role_groups.add_group(
@@ -1444,6 +1489,12 @@ class Player:
         if len(idle_units) > 0:
             self.debug(f"{len(idle_units)} idle units!")
 
+        for role in RoleType:
+            role_groups = self.role_groups.of_type(role)
+            total_role_units = sum(len(role_group.units) for role_group in role_groups)
+            self.debug(f"{role}: {total_role_units} in {len(role_groups)} groups")
+        self.debug("----------")
+
         # Phase 1: inform roles of turn update, remove dead units
         # -------------------------------------------------------
         for role in RoleType:
@@ -1452,7 +1503,9 @@ class Player:
 
         # Phase 2: apply spawn rules
         # --------------------------
-        rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
+        rule_inputs = RuleInputs(
+            self.logger, self.params, self.strategy_params, update, self.role_groups
+        )
         for uid in just_spawned:
             spawn_rules.apply_rules(rule_inputs, uid)
 
