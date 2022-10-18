@@ -253,6 +253,18 @@ def get_board_regions(region_number):
             index += 1
     return regions_by_id
 
+
+def get_regions_away_home(region_num, home):
+    region_dict = get_board_regions(region_num)
+    region_copy = region_dict.copy()
+    home_coord = home
+    for unit_id in region_dict:
+        region = region_dict[unit_id]
+        current_center = region.centroid
+        if home_coord.distance(current_center) < 50:
+            del region_copy[unit_id]
+    return region_copy
+
 class Player:
     def __init__(self, rng: np.random.Generator, logger: logging.Logger, total_days: int, spawn_days: int,
                  player_idx: int, spawn_point: sympy.geometry.Point2D, min_dim: int, max_dim: int, precomp_dir: str) \
@@ -297,6 +309,7 @@ class Player:
         self.enemy_units: Dict[str, Point] = {}
         self.enemy_units_yesterday: Dict[str, Point] = {}
         self.enemy_killed_unit_ids = []
+        self.home_coords = self.get_home_coords()
 
         self.sent_radius = OUTER_RADIUS
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID_OUTER, OUTER_SPEED)
@@ -319,7 +332,7 @@ class Player:
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
 
         #dictionary of entire board broken up into regions
-        self.entire_board_regions = get_board_regions(5)
+        self.entire_board_regions = get_regions_away_home(20, self.home_coords)
         #dict of scouts and their current region id occupied
         self.scout = dict.fromkeys(region_id for region_id in self.entire_board_regions)
 
@@ -450,14 +463,20 @@ class Player:
             
         return {int(uid): move for uid, move in moves.items()}
 
-    def scout_moves(self, unit_ids) -> Dict[float, Tuple[float, float]]:
+    def scout_moves(self, unit_ids, map_states) -> Dict[float, Tuple[float, float]]:
         moves = {}
-        unit_forces = self.get_forces(unit_ids)
+        unit_forces = self.get_forces(unit_ids, map_states)
 
-        # Draft units into platoons
         #print(self.scout)
         current_scout_ids = [scout_id for scout_id in self.scout.values()]
         free_unit_ids = [uid for uid in unit_ids if uid not in current_scout_ids]
+
+        for region in self.scout:
+            # Remove killed units
+            for uid in self.ally_killed_unit_ids:
+                if uid == self.scout[region]:
+                    self.scout[region] = None
+
         min_home = math.inf
         min_unit_id = math.inf
         for unit_id in free_unit_ids:
@@ -473,22 +492,15 @@ class Player:
                     #print(least_pop_region_id)
                 self.scout[least_pop_region_id] = min_unit_id
 
-        for region in self.scout:
-            # Remove killed units
-            for uid in self.ally_killed_unit_ids:
-                if uid == self.scout[region]:
-                    self.scout[region] = None
 
             # Assign movement path towards empty region for scout
         for region in self.scout:
-            #print(region, self.scout[region], "Hello")
             move_dist = None
             angle = None
-            if self.scout[region] != None:
+            if self.scout[region] is not None:
                 current_scout_pos = self.ally_units[self.scout[region]]
                 region_center_point = self.entire_board_regions[region].centroid #unit_forces[self.scout[region]][3][0][1]
                 region_center_point = (region_center_point.x, region_center_point.y)
-                #print(region, region_center_point)
                 if current_scout_pos.distance(Point(region_center_point)) == 0:
                     move_dist = 0
                     angle = 0
@@ -498,8 +510,6 @@ class Player:
                                         region_center_point[0] - current_scout_pos.x)
 
                 moves[self.scout[region]] = (move_dist, angle)
-        #print(moves)
-        #print(self.scout)
         return {int(uid): move for uid, move in moves.items()}
 
     def intercept_point(self, target_unit_id, chaser_unit_id) -> float:
@@ -755,9 +765,9 @@ class Player:
         moves.update(self.platoon_moves([uid for uid in platoon_unit_ids if uid in alive_ally_unit_ids]))
 
         # Assign the rest of our units to be scouts
-        moves.update(self.scout_moves([uid for uid in scout_unit_ids if uid in alive_ally_unit_ids]))
+        moves.update(self.scout_moves([uid for uid in scout_unit_ids if uid in alive_ally_unit_ids], map_states))
+        #moves.update(self.scout_moves([uid for uid in alive_ally_unit_ids], map_states))
 
-        #print(moves)
         return list(moves.values())
 
     #what is the enemy_count team_count for a given point
@@ -825,7 +835,7 @@ class Player:
                 closest_unit_dist = dist
         return [((friend_unit_pos.x, friend_unit_pos.y), closest_unit_dist)]
 
-    def least_popular_region_force(self):
+    def least_popular_region_force(self, map_states):
         number_regions = len(self.entire_board_regions)
         unit_per_region = np.zeros(number_regions)
         unclaimed_regions = [region_id for region_id in self.scout if self.scout[region_id] is None]
@@ -855,18 +865,62 @@ class Player:
             else:
                 unit_per_region[index] = math.inf
 
+        #try to find non-occulded path where other
+        # try to find non-occulded path
+        non_occluded_path = False
+        for i in range(len(unit_per_region +1)):
+            index_min_region = int(np.argmin(unit_per_region))
+            min_poly = self.entire_board_regions[index_min_region]
+            center = min_poly.centroid
+            if self.path_home(center, map_states):
+                non_occluded_path = True
+                break
+        if non_occluded_path:
+            return [(index_min_region, (center.x, center.y))]
+
+        #otherwise, no occluded path, return sparsest region
         index_min_region = int(np.argmin(unit_per_region))
         min_poly = self.entire_board_regions[index_min_region]
         center = min_poly.centroid
-        #print(center)
         return [(index_min_region, (center.x, center.y))]
 
-    def get_forces(self, unit_ids):
+    def path_home(self, center, map_states):
+        path = True
+        home = self.home_coords
+        home_coords = (home.x, home.y*-1)
+        center_coords = (center.x, center.y*-1)
+        m = (home_coords[1] - center_coords[1]) / (home_coords[0] - center_coords[0])
+        b = home_coords[1] - m*home_coords[0]
+
+        if home_coords[0] > center_coords[0]:
+            start_x = math.floor(center_coords[0])
+            end_x = math.floor(home_coords[0])
+        else:
+            start_x = math.floor(home_coords[0])
+            end_x = math.floor(center_coords[0])
+        if start_x < 0:
+            start_x = 0
+        if end_x > 99:
+            end_x = 99
+        for i in range(start_x, end_x+1):
+            current_y = m*i + b
+            floored_y = -1*math.floor(current_y)
+            if floored_y > 99:
+                floored_y = 99
+            elif floored_y < 0:
+                floored_y = 0
+            current_cell_state = map_states[i][floored_y]
+            if current_cell_state != self.player_idx+1:
+                path = False
+
+        return path
+
+    def get_forces(self, unit_ids, map_states):
         forces = {id: [] for id in unit_ids}
         for unit, current_pos in [(uid, pos) for uid, pos in self.ally_units.items() if uid in unit_ids]:
             home_coords = self.get_home_coords()
             forces[unit].append([(home_coords.x, home_coords.y), home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
             forces[unit].append(self.closest_friend_force(unit))
-            forces[unit].append(self.least_popular_region_force())
+            forces[unit].append(self.least_popular_region_force(map_states))
         return forces
