@@ -330,6 +330,8 @@ class Player:
 
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
+        self.defender_platoon_ids = []
+        self.attacker_platoon_ids = []
 
         #dictionary of entire board broken up into regions
         self.entire_board_regions = get_regions_away_home(20, self.home_coords)
@@ -343,7 +345,7 @@ class Player:
             return Point(0.5, 99.5)
         elif self.player_idx == 2:
             return Point(99.5, 99.5)
-        elif self.player_idx == 3:
+        else:
             return Point(99.5, 0.5)
 
     def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
@@ -355,7 +357,7 @@ class Player:
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
     
-    def point_move_within_scissor(self, p1, p2, max_dist):
+    def point_move_within_scissor(self, p1, p2, max_dist=1):
         dist = min(max_dist, math.dist(p1,p2)-0.00001)
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
@@ -404,7 +406,7 @@ class Player:
         right_flank_dest_pos = self.clamp_point_within_map(right_flank_dest_pos)
 
         # The leader will wait for the flanks to get in position before moving out
-        if left_flank_pos.distance(left_flank_dest_pos) > 1.01 or right_flank_pos.distance(right_flank_dest_pos) > 1.01:
+        if left_flank_pos.distance(left_flank_dest_pos) > 1.1 or right_flank_pos.distance(right_flank_dest_pos) > 1.1:
             leader_dest_pos = leader_pos
 
         moves = {}
@@ -449,7 +451,26 @@ class Player:
                 leader_point = self.ally_units[platoon['unit_ids'][0]]
                 min_dist = math.inf
                 target_id = None
-                for pos, uid in [(pos, uid) for uid, pos in self.enemy_units.items() if uid not in [p['target'] for p in self.platoons.values()]]:
+
+                enemy_unit_ids_in_territory = []
+                enemy_unit_ids_encroaching_on_territory = []
+                home_point = self.get_home_coords()
+                for uid, pos in self.enemy_units.items():
+                    dist_to_home = home_point.distance(pos)
+                    if dist_to_home <= INNER_RADIUS:
+                        enemy_unit_ids_in_territory.append((uid, pos))
+                    elif dist_to_home >= OUTER_RADIUS and dist_to_home <= (OUTER_RADIUS + 20):
+                        enemy_unit_ids_encroaching_on_territory.append((uid, pos))
+
+                if pid not in self.defender_platoon_ids and pid not in self.attacker_platoon_ids:
+                    if len(self.defender_platoon_ids) < 3:
+                        self.defender_platoon_ids.append(pid)
+                    else:
+                        self.attacker_platoon_ids.append(pid)
+
+                targetable_units = enemy_unit_ids_in_territory if pid in self.defender_platoon_ids else enemy_unit_ids_encroaching_on_territory 
+
+                for uid, pos in targetable_units:
                     dist = leader_point.distance(pos)
                     if dist < min_dist:
                         min_dist = dist
