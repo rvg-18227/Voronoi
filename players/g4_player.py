@@ -1,6 +1,8 @@
+from collections import defaultdict
 import logging
 import multiprocessing
 import pdb
+import math
 import traceback
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -151,7 +153,6 @@ class StateUpdate:
     def unit_ownership(self):
         """
         Returns tile/unit ownership information `(unit_to_owned, tile_to_unit)`.
-
         `unit_to_owned`: dict of dicts `player_idx -> unit_id -> [(tile_x, tile_y)]`
         `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
         """
@@ -352,7 +353,7 @@ class Role(ABC):
     def params(self):
         return self._params
 
-    def turn_update(self, update: StateUpdate):
+    def turn_update(self, update: StateUpdate, **kwargs):
         alive_units = set(update.own_units().keys())
         allocated_set = set(self.__allocated_units)
         dead_units = allocated_set - alive_units
@@ -360,8 +361,8 @@ class Role(ABC):
 
         self._turn_update(update, dead_units)
 
-    def turn_moves(self, update: StateUpdate):
-        return self._turn_moves(update)
+    def turn_moves(self, update: StateUpdate, **kwargs):
+        return self._turn_moves(update, **kwargs)
 
     # ===================
     # Role Specialization
@@ -796,13 +797,114 @@ def border_detect(map_state, my_player_idx, target_player_idx):
         my_player_idx, target_player_idx, vertical_edge, horizontal_edge
     )
 
+def target_rank(update, start_point, my_player_idx, num_target):
+    # return heuristic target with len(targets) = num_targets
+    unit_ownership = update.unit_ownership()[0]
+    enemy_units =  update.enemy_units()
+    # for each unit, assign a score based on unit it own and distance from base (risk)
+    heuristic_lookup = dict()
+    WEIGHT_TILE = 100
+    WEIGHT_DIST = 20
+    for player_idx in unit_ownership:
+        if my_player_idx == player_idx:
+            continue
+        for unit_id in unit_ownership[player_idx]:
+            tile_owned = len(unit_ownership[player_idx][unit_id])
+            heuristic_lookup[(player_idx, unit_id)] = tile_owned/10000 * WEIGHT_TILE#normalize it with max tile
+    for player_idx in enemy_units:
+        for unit_id, unit_pos in enemy_units[player_idx]:
+            _, distance_to_start = force_vec(unit_pos, start_point)
+            try:
+                heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2) + EPSILON) * WEIGHT_DIST#normalize it with max distaince on board
+            except KeyError:
+                #pdb.set_trace()
+                heuristic_lookup[(player_idx, unit_id)] = -100
+                print("somethings wrong")
+    # rank the heuristic value
+    #pdb.set_trace()
+    heuristic_ranking = [(k, v) for k, v in heuristic_lookup.items()]
+    heuristic_ranking.sort(key=lambda x: x[1], reverse=True)
+    top_k = heuristic_ranking[:num_target]
+    targets = []
+    for t, h in top_k:
+        targets.append(update.unit_id_to_pos(t[0],t[1]))
+    # use n unit vec pas target pos as heurist for attacking
+    #pdb.set_trace()
+    avoids = []
+    for target_pos in targets:
+        unit_vec, _ = force_vec(start_point, target_pos)
+        avoids.append(target_pos - unit_vec * 10)
+    return avoids, targets
 
+def density_heatmap(enemy_unit):
+    # create a heatmap base on enemy density
+    kernel = torch.tensor([[1,1,1],
+                           [1,3,1],
+                           [1,1,1]], dtype=torch.float)
+    kernel = kernel/torch.norm(kernel, p=2)
+    kernel = kernel.reshape(1,1,3,3)
+    heat_map = torch.zeros(100, 100)
+    for _, unit_pos in enemy_unit:
+        x, y = unit_pos
+        x = int(x)
+        y = int(y)
+        heat_map[x, y] += 1
+    #npdb.set_trace()
+    heat_map = heat_map.reshape(1,100,100)
+    heat_map = F.conv2d(heat_map, kernel, padding="same")
+    plt.imshow(heat_map.permute(1,2,0))
+    plt.savefig("heatmap.png")
+    #heat_map = heat_map/torch.norm(heat_map, p=2)
+    return heat_map
+    
+def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx):
+    #pdb.set_trace()
+    assignment = []
+    role_groups = role_groups.copy()
+    for idx, t in enumerate(targets):
+        group_dist = defaultdict(list)
+        for group in role_groups:
+            if len(group.units) == 0:
+                _, dist = force_vec(t, home_base)
+                group_dist[group].append(dist)
+            else:
+                for u in group.units:
+                    try:
+                        u_pos = update.unit_id_to_pos(my_player_idx, u)
+                    except KeyError:
+                        # dead unit
+                        u_pos = home_base
+                    _, dist = force_vec(t, u_pos)
+                    group_dist[group].append(dist)
+        # select the group that has the lowest distance to target
+        #pdb.set_trace()
+        group_dist = [(k, v) for k, v in group_dist.items()]
+        group_dist.sort(key=lambda x: min(x[1]))
+        assignment.append((group_dist[0][0], t, avoids[idx]))
+        role_groups.remove(group_dist[0][0])
+    return assignment
+
+def get_avoid_influence(heatmap, target):
+    base_influence = 300
+    x, y = target
+    x = int(x)
+    y = int(y)
+    if x > 99:
+        x = 99
+    elif x < 0:
+        x = 0
+    if y > 99:
+        y = 99
+    elif y < 0:
+        y = 0
+    density_at_target = heatmap[0, int(x), int(y)].item()
+    return density_at_target * base_influence
+    
 class Attacker(Role):
-    def __init__(self, logger, params, target_player):
+    def __init__(self, logger, params):
         super().__init__(logger, params)
         self.pincer_force = dict()
-        self.pincer_balance_assignment = 0
-        self.target_player = target_player
+        self.pincer_left_side = False
 
     def get_centroid(self, units):
         """
@@ -818,33 +920,18 @@ class Attacker(Role):
 
     def _turn_update(self, update, dead_units):
         pass
-
-    def _turn_moves(self, update):
-        # pdb.set_trace()
-        # tmp1 = self.params.player_idx
-        # tmp2 = self.target_player
-        # border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
-        # pdb.set_trace()
-
-        ATTACK_INFLUENCE = 100
-        AVOID_INFLUENCE = 300
-        SPREAD_INFLUENCE = 30
+    
+    def _turn_moves(self, update, avoid, target, avoid_influence):
+        ATTACK_INFLUENCE = 200
+        AVOID_INFLUENCE = avoid_influence
+        SPREAD_INFLUENCE = 100
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.enemy_units()
-        enemy_units = enemy_units[self.target_player]
-
+        
         # get attack force
-        homebase_mode = True
-        # get where to initiate the attack
-        units_array = np.stack([v for k, v in own_units.items()])
-        if homebase_mode:  # attack from homebase
-            start_point = self.params.spawn_point
-        else:
-            start_point = self.get_centroid(units_array)
+        start_point = self.params.spawn_point
         # get attack target and get formation
-        avoid, target = self.find_target_simple(start_point, enemy_units)
         formation = LineString([start_point, target])
         # calcualte force
         for unit_id in self.units:
@@ -852,32 +939,41 @@ class Attacker(Role):
             closest_pt_on_formation = self.find_closest_point(
                 formation, Point(unit_pos)
             )
-
+            
             attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
 
-            attack_repulsion_force = repelling_force(unit_pos, avoid)
+            avoid_repulsion_force = repelling_force(unit_pos, avoid)
 
             attack_unit_spread_force = self.attacker_spread_force(
                 unit_pos, unit_id, own_units
             )
-
+            
+            #pdb.set_trace()
+            ux, uy = unit_pos
+            wall_normals = [(ux, 0), (ux, 100), (0, uy), (100, uy)]
+            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = normalize(np.add.reduce(wall_forces))
+            
             if unit_id not in self.pincer_force:
-                pincer_spread_force = self.pincer_spread_force(attack_force)
+                pincer_spread_force = self.pincer_spread_force()
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = 1 / dist_to_avoid * 30
-
+            PINCER_INFLUENCE = 50/(dist_to_avoid)
+            WALL_INFLUENCE = PINCER_INFLUENCE + 30
+            
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
-                + +AVOID_INFLUENCE * attack_repulsion_force
-                + ATTACK_INFLUENCE * attack_force
-                + PINCER_INFLUENCE * self.pincer_force[unit_id]
+                + AVOID_INFLUENCE * avoid_repulsion_force
+                + ATTACK_INFLUENCE * attack_force 
+                + PINCER_INFLUENCE * normalize(self.pincer_force[unit_id] * attack_force)
+                + WALL_INFLUENCE * wall_force
             )
-
+            
             moves[unit_id] = to_polar(total_force)
         return moves
-
+    
+    
     def find_target_simple(self, start_point, enemy_units):
         # find a target to attack
         # return 2 points, point A is where the enemy is
@@ -896,6 +992,9 @@ class Attacker(Role):
         target_pos = enemy_units[target_idx][1]
         unit_vec, _ = force_vec(start_point, target_pos)
         return target_pos, target_pos - unit_vec * 10
+    
+    def find_target_sophisticated(self, start_point, enemy_units):
+        pass
 
     def attacker_spread_force(self, my_pos, my_id, own_units):
         # pdb.set_trace()
@@ -907,12 +1006,16 @@ class Attacker(Role):
         spread_force = np.add.reduce(attacker_unit_forces)
         return normalize(spread_force)
 
-    def pincer_spread_force(self, attack_force):
+    def pincer_spread_force(self):
         # alteranting left and right of the target point
-        vec_perpendicular = attack_force.copy()
-        vec_perpendicular[self.pincer_balance_assignment] *= -1
-        self.pincer_balance_assignment = int(not bool(self.pincer_balance_assignment))
-        return vec_perpendicular
+        dir_vector = None
+        if self.pincer_left_side:
+            dir_vector = np.array([-1, 1])
+            self.pincer_left_side = not self.pincer_left_side
+        else:
+            dir_vector = np.array([1, -1])
+            self.pincer_left_side = not self.pincer_left_side
+        return normalize(dir_vector)
 
     def attack_point(self, unit, target, closest_point):
         """Given a unit, attack the target point following the foramtion.
@@ -933,7 +1036,7 @@ class Attacker(Role):
         attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
         attack_vec = attack_vec
         attack_vec *= -1
-        return attack_vec[0]
+        return normalize(attack_vec[0])
 
     def deallocation_candidate(self, update, target_point):
         """
@@ -1065,6 +1168,13 @@ class ReallocationRules:
 # Higher up means higher precedence
 spawn_rules = SpawnRules()
 
+#ATTACKER TESTING
+# @spawn_rules.rule
+# def all_attackers(rule_inputs: RuleInputs, uid: str):
+#     global attack_roll
+#     rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
+#     attack_roll += 1
+#     return True
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
@@ -1092,22 +1202,22 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
     return False
 
 
-@spawn_rules.rule
-def all_defense(rule_inputs: RuleInputs, uid: str):
-    rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-    return True
-
-
 # @spawn_rules.rule
-def all_scouts(rule_inputs: RuleInputs, uid: str):
-    # rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
-    # rule_inputs.debug("Scout")
-    rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-    return True
+# def all_defense(rule_inputs: RuleInputs, uid: str):
+#     rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
+#     return True
+
+
+# # @spawn_rules.rule
+# def all_scouts(rule_inputs: RuleInputs, uid: str):
+#     # rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
+#     # rule_inputs.debug("Scout")
+#     rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
+#     return True
 
 
 # Disabled for class
-# @spawn_rules.rule
+@spawn_rules.rule
 def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     scout_roles = rule_inputs.role_groups.of_type(RoleType.SCOUT)
     attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
@@ -1366,10 +1476,11 @@ class Player:
         self.role_groups.add_group(
             RoleType.DEFENDER, LatticeDefender(self.logger, self.params)
         )
-        enemy_player = set([0, 1, 2, 3]) - set([player_idx])
-        for enemy_idx in enemy_player:
+        
+        num_attack_group = 3
+        for _ in range(num_attack_group):
             self.role_groups.add_group(
-                RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
+                RoleType.ATTACKER, Attacker(self.logger, self.params)
             )
         self.role_groups.add_group(
             RoleType.SCOUT, GreedyScout(self.logger, self.params)
@@ -1465,14 +1576,35 @@ class Player:
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
-            for role_group in self.role_groups.of_type(role):
-                if len(role_group.units) > 0:
-                    try:
-                        role_moves.update(role_group.turn_moves(update))
-                    except Exception as e:
-                        self.debug(
-                            "Exception processing role moves:", traceback.format_exc()
-                        )
+            if role == RoleType.ATTACKER:
+                #pdb.set_trace()
+                heatmap = density_heatmap(update.all_enemy_units())
+                # calculate heuristic
+                start_point = self.params.home_base
+                targets, avoids = target_rank(update, start_point, self.player_idx, 3)
+                # for each target, find a attack team best suitable for the task
+                assigned_target = assign_target(update, targets, avoids, self.role_groups.of_type(role), self.params.home_base, self.player_idx)
+                for role_group, target, avoid in assigned_target:
+                    if len(role_group.units) > 0:
+                        try:
+                            # for each target, also calculate its density based on heatmap
+                            avoid_influence = get_avoid_influence(heatmap, target)
+                            #pdb.set_trace()
+                            role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid, avoid_influence=avoid_influence))
+                        except Exception as e:
+                            pdb.set_trace()
+                            self.debug(
+                                "Exception processing role moves:", traceback.format_exc()
+                            )
+            else:
+                for role_group in self.role_groups.of_type(role):
+                    if len(role_group.units) > 0:
+                        try:
+                            role_moves.update(role_group.turn_moves(update))
+                        except Exception as e:
+                            self.debug(
+                                "Exception processing role moves:", traceback.format_exc()
+                            )
         for unit_id in unit_id[self.params.player_idx]:
             if not unit_id in role_moves:
                 moves.append((0, 0))
