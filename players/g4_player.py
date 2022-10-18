@@ -152,19 +152,15 @@ class StateUpdate:
     def unit_ownership(self):
         """
         Returns tile/unit ownership information `(unit_to_owned, tile_to_unit)`.
-
         `unit_to_owned`: dict of dicts `player_idx -> unit_id -> [(tile_x, tile_y)]`
         `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
         """
         if self.cached_ownership is not None:
-           return self.cached_ownership
+            return self.cached_ownership
 
         # player -> unit -> [(x, y)]
         unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
-            0: {},
-            1: {},
-            2: {},
-            3: {},
+            player: {uid: [] for uid in self.unit_id[player]} for player in range(4)
         }
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
@@ -201,10 +197,7 @@ class StateUpdate:
 
         for result in results:
             pos, owning_player, closest_uid = result
-            if not closest_uid in unit_to_owned[owning_player]:
-                unit_to_owned[owning_player][closest_uid] = []
             unit_to_owned[owning_player][closest_uid].append(pos)
-
             tile_to_unit[pos] = (owning_player, closest_uid)
 
         self.cached_ownership = (unit_to_owned, tile_to_unit)
@@ -858,16 +851,15 @@ def target_rank(update, start_point, my_player_idx, num_target):
         for unit_id in unit_ownership[player_idx]:
             tile_owned = len(unit_ownership[player_idx][unit_id])
             heuristic_lookup[(player_idx, unit_id)] = tile_owned/10000 * WEIGHT_TILE#normalize it with max tile
-    
-    # for player_idx in enemy_units:
-    #     for unit_id, unit_pos in enemy_units[player_idx]:
-    #         _, distance_to_start = force_vec(unit_pos, start_point)
-    #         try:
-    #             heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2)) * WEIGHT_DIST#normalize it with max distaince on board
-    #         except KeyError:
-    #             #pdb.set_trace()
-    #             heuristic_lookup[(player_idx, unit_id)] = -100
-    #             print("somethings wrong")
+    for player_idx in enemy_units:
+        for unit_id, unit_pos in enemy_units[player_idx]:
+            _, distance_to_start = force_vec(unit_pos, start_point)
+            try:
+                heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2) + EPSILON) * WEIGHT_DIST#normalize it with max distaince on board
+            except KeyError:
+                #pdb.set_trace()
+                heuristic_lookup[(player_idx, unit_id)] = -100
+                print("somethings wrong")
     # rank the heuristic value
     #pdb.set_trace()
     heuristic_ranking = [(k, v) for k, v in heuristic_lookup.items()]
@@ -901,9 +893,8 @@ def density_heatmap(enemy_unit):
     heat_map = heat_map.reshape(1,100,100)
     heat_map = F.conv2d(heat_map, kernel, padding="same")
     plt.imshow(heat_map.permute(1,2,0))
-    plt.savefig("vertical.png")
-    plt.imshow(heat_map.permute(1,2,0))
-    plt.savefig("horizontal.png")
+    plt.savefig("heatmap.png")
+    #heat_map = heat_map/torch.norm(heat_map, p=2)
     return heat_map
     
 def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx):
@@ -933,7 +924,22 @@ def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx
         role_groups.remove(group_dist[0][0])
     return assignment
 
-
+def get_avoid_influence(heatmap, target):
+    base_influence = 300
+    x, y = target
+    x = int(x)
+    y = int(y)
+    if x > 99:
+        x = 99
+    elif x < 0:
+        x = 0
+    if y > 99:
+        y = 99
+    elif y < 0:
+        y = 0
+    density_at_target = heatmap[0, int(x), int(y)].item()
+    return density_at_target * base_influence
+    
 class Attacker(Role):
     def __init__(self, logger, params):
         super().__init__(logger, params)
@@ -952,31 +958,18 @@ class Attacker(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units, avoid, target):
-        # pdb.set_trace()
-        # tmp1 = self.params.player_idx
-        # tmp2 = self.target_player
-        # border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
-        # pdb.set_trace()
+    def _turn_moves(self, update, dead_units, avoid, target, avoid_influence):
 
         ATTACK_INFLUENCE = 200
-        AVOID_INFLUENCE = 300
+        AVOID_INFLUENCE = avoid_influence
         SPREAD_INFLUENCE = 100
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.enemy_units()
         
         # get attack force
-        homebase_mode = True
-        # get where to initiate the attack
-        units_array = np.stack([v for k, v in own_units.items()])
-        if homebase_mode:  # attack from homebase
-            start_point = self.params.spawn_point
-        else:
-            start_point = self.get_centroid(units_array)
+        start_point = self.params.spawn_point
         # get attack target and get formation
-        #avoid, target = self.find_target_simple(start_point, enemy_units[self.target_player])
         formation = LineString([start_point, target])
         # calcualte force
         for unit_id in self.units:
@@ -1509,31 +1502,24 @@ class Player:
         role_moves = {}
         for role in RoleType:
             if role == RoleType.ATTACKER:
-                # calculate heuristic
                 #pdb.set_trace()
                 heatmap = density_heatmap(update.all_enemy_units())
+                # calculate heuristic
                 start_point = self.params.home_base
                 targets, avoids = target_rank(update, start_point, self.player_idx, 3)
                 # for each target, find a attack team best suitable for the task
-                # role_moves.update(self.role_groups.of_type(role)[0].turn_moves(update, target=targets[0], avoid=avoids[0]))
-                # role_moves.update(self.role_groups.of_type(role)[1].turn_moves(update, target=targets[1], avoid=avoids[1]))
-                # role_moves.update(self.role_groups.of_type(role)[2].turn_moves(update, target=targets[2], avoid=avoids[2]))
                 assigned_target = assign_target(update, targets, avoids, self.role_groups.of_type(role), self.params.home_base, self.player_idx)
                 for role_group, target, avoid in assigned_target:
-                    role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid))
-                # for role_group in self.role_groups.of_type(role):
-                #     for target_idx, target in enumerate(targets):
-                #         # since targets are rank by heuristic
-                #         # target in the beginning of the list should take priority
-                #         for role_group in self.role_groups.of_type(role):
-                #             if len(role_group.units) > 0:
-                #                 pdb.set_trace()
-                #                 try:
-                #                     role_moves.update(role_group.turn_moves(update, target))
-                #                 except Exception as e:
-                #                     self.debug(
-                #                         "Exception processing role moves:", traceback.format_exc()
-                #                     )
+                    if len(role_group.units) > 0:
+                        try:
+                            # for each target, also calculate its density based on heatmap
+                            avoid_influence = get_avoid_influence(heatmap, target)
+                            #pdb.set_trace()
+                            role_moves.update(role_group.turn_moves(update, target=target, avoid=avoid, avoid_influence=avoid_influence))
+                        except Exception as e:
+                                self.debug(
+                                    "Exception processing role moves:", traceback.format_exc()
+                                )
             else:
                 for role_group in self.role_groups.of_type(role):
                     if len(role_group.units) > 0:
