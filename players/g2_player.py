@@ -298,6 +298,10 @@ class Player:
         #     with open(precomp_path, 'wb') as f:
         #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
 
+        #game play
+        self.spawn_days = spawn_days
+        self.game_length = total_days
+
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
@@ -372,6 +376,30 @@ class Player:
             for idx, unit_id
             in enumerate(unit_ids)
         }
+
+    def short_game_moves(self, unit_ids, move_size=1):
+        number_units = self.game_length/self.spawn_days
+        angle_jump = 90/number_units
+        unit_id_list = []
+        angle_list = []
+        for unit_id in unit_ids:
+            if unit_id == 1:
+                unit_id_list.append(unit_id)
+                angle_increment = 45
+                angle_list.append(angle_increment)
+            elif unit_id % 2 == 0:
+                unit_id_list.append(unit_id)
+                angle_increment = unit_id*angle_jump % 90
+                angle_list.append(angle_increment)
+            else:
+                unit_id_list.append(unit_id)
+                angle_increment = (90 - unit_id*angle_jump) % 90
+                angle_list.append(angle_increment)
+
+        return self.fixed_formation_moves(unit_id_list, angle_list)
+
+
+
     
     def clamp_point_within_map(self, point: Point) -> Point:
         x = min(99.9, max(0.1, point.x))
@@ -754,6 +782,12 @@ class Player:
   
         alive_ally_unit_ids = list(self.ally_units.keys())
         assignable_ally_unit_ids = sorted(list(self.historical_ally_unit_ids), key=int)
+
+        # if game length < 50, special plan
+        if self.game_length <= 50:
+            print(assignable_ally_unit_ids)
+            moves.update(self.short_game_moves(assignable_ally_unit_ids))
+            return list(moves.values())
 
         #seperate fixed formation vs strategic allys
         fixed_formation_ally_unit_ids = assignable_ally_unit_ids[:FIXED_FORMATION_COUNT]
