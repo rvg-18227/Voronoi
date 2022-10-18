@@ -144,8 +144,9 @@ class StateUpdate:
     def unit_id_to_pos(self, player: int, unit_id: str) -> NDArray[np.float32]:
         return self.player_unit_id_to_pos[(player, unit_id)]
 
-    def unit_idx_to_id(self, player: int, idx: int) -> str:
-        return self.player_unit_idx_to_id[player][idx]
+    def unit_idx_to_id(self, player: int, idx: int) -> Optional[str]:
+        unit_idx_to_id = self.player_unit_idx_to_id[player]
+        return unit_idx_to_id[idx] if idx in unit_idx_to_id else None
 
     def unit_ownership(self):
         """
@@ -164,12 +165,7 @@ class StateUpdate:
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
 
-        player_unit_idx_to_id = {
-            player: {idx: uid for idx, uid in enumerate(self.unit_id[player])}
-            for player in range(4)
-        }
         player_kdtrees = {player: KDTree(self.unit_pos[player]) for player in range(4)}
-
         work: list[tuple[tuple[int, int], int, KDTree, dict[int, str]]] = []
         for tile_x in range(self.params.max_dim):
             for tile_y in range(self.params.max_dim):
@@ -185,7 +181,7 @@ class StateUpdate:
                         (tile_x, tile_y),
                         owning_player,
                         player_kdtrees[owning_player],
-                        player_unit_idx_to_id[owning_player],
+                        self.player_unit_idx_to_id[owning_player],
                     )
                 )
 
@@ -208,10 +204,6 @@ class StateUpdate:
 
         enemies = self.enemies()
         enemy_units = self.enemy_units()
-        player_unit_idx_to_id = {
-            enemy: {idx: uid for idx, uid in enumerate(self.unit_id[enemy])}
-            for enemy in enemies
-        }
         dbscans = {
             enemy: DBSCAN(eps=3, min_samples=1).fit(
                 [unit_pos for _, unit_pos in enemy_units[enemy]]
@@ -225,7 +217,9 @@ class StateUpdate:
                     continue
                 if not label in clusters[enemy]:
                     clusters[enemy][label] = []
-                clusters[enemy][label].append(player_unit_idx_to_id[enemy][unit_idx])
+                clusters[enemy][label].append(
+                    self.player_unit_idx_to_id[enemy][unit_idx]
+                )
         self.cached_clusters = clusters
         return clusters
 
@@ -322,19 +316,19 @@ class RoleType(Enum):
 class Role(ABC):
     # Assigned when Role is inserted into RoleGroups
     id: str
-    _logger: logging.Logger
+    __logger: logging.Logger
     _params: GameParameters
-    _allocated_units: list[str]
+    __allocated_units: list[str]
 
     def __init__(self, logger, params):
-        self._logger = logger
+        self.__logger = logger
         self._params = params
 
         self.id = ""
         self.__allocated_units = []
 
     def debug(self, *args):
-        self._logger.info(" ".join(str(a) for a in args))
+        self.__logger.info(" ".join(str(a) for a in args))
 
     # ===========
     # Role Common
@@ -344,8 +338,10 @@ class Role(ABC):
         self.__allocated_units.append(unit_id)
 
     def deallocate_unit(self, unit_id: str):
+        if not unit_id in self.__allocated_units:
+            raise KeyError(f"Unit {unit_id} is not in {self.id}")
         self.__allocated_units = [
-            unit for unit in self.__allocated_units if unit != unit_id
+            uid for uid in self.__allocated_units if uid != unit_id
         ]
 
     @property
@@ -481,11 +477,12 @@ class LatticeDefender(Role):
             }
 
     def deallocation_candidate(self, update, target_point):
+        unit_idx_to_id = {idx: uid for idx, uid in enumerate(self.units)}
         kdtree = KDTree(
             [update.unit_id_to_pos(self.params.player_idx, uid) for uid in self.units]
         )
         _, unit_idx = kdtree.query(target_point)
-        return update.unit_idx_to_id(self.params.player_idx, unit_idx)
+        return unit_idx_to_id[unit_idx]
 
 
 class Interceptor(Role):
@@ -1016,8 +1013,13 @@ class SpawnRules:
 
     def apply_rules(self, rule_inputs: RuleInputs, uid: str):
         for rule_func in self.rules:
-            if rule_func(rule_inputs, uid):
-                return
+            try:
+                if rule_func(rule_inputs, uid):
+                    return
+            except Exception as e:
+                rule_inputs.debug(
+                    "Exception processing spawn_rules:", traceback.format_exc()
+                )
         rule_inputs.debug("Failed to apply any rules to", uid)
 
 
@@ -1046,8 +1048,14 @@ class ReallocationRules:
             rounds += 1
             continuing = False
             for rule_func in self.rules:
-                if rule_func(rule_inputs):
-                    continuing = True
+                try:
+                    if rule_func(rule_inputs):
+                        continuing = True
+                except Exception as e:
+                    rule_inputs.debug(
+                        "Exception processing reallocation_rules:",
+                        traceback.format_exc(),
+                    )
 
 
 # =============================
@@ -1073,7 +1081,7 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
         len(interceptor_role.units)
         for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
     )
-    TARGET_DENSITY = rule_inputs.update.territory_hull().area / 50
+    TARGET_DENSITY = rule_inputs.update.territory_hull().area / 100
     rule_inputs.debug(f"{len(defender_role.units)}/{TARGET_DENSITY} defenders")
     if (
         rule_inputs.update.turn > 30
@@ -1252,6 +1260,7 @@ def disband_interceptors_target_gone(rule_inputs: RuleInputs):
 @reallocation_rules.rule
 def reinforce_interceptors(rule_inputs: RuleInputs):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+
     # Sort Interceptor groups by target tile ownership
     unit_ownership, _ = rule_inputs.update.unit_ownership()
     interceptors_weighted = []
@@ -1269,6 +1278,7 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
         )
     ]
 
+    did_reallocations = False
     for interceptor_role in prioritized_interceptors:
         target_positions = [
             Point(
@@ -1289,13 +1299,15 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
             )
             for _ in range(INTERCEPTOR_STRENGTH - current_interceptors):
                 if len(defender_role.units) == 0:
-                    break
+                    return
+
                 converted_defender = defender_role.deallocation_candidate(
                     rule_inputs.update, nearest_target_position
                 )
                 defender_role.deallocate_unit(converted_defender)
                 interceptor_role.allocate_unit(converted_defender)
-    return False
+                did_reallocations = True
+    return did_reallocations
 
 
 # ======
