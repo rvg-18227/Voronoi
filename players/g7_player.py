@@ -131,12 +131,14 @@ class Player:
         return attackers
 
     # Find the nearest unit to a given space
-    def nearest_units_to_unit(self, unit_position, unit_position_list, min_d=20):
+    def nearest_units_to_unit(self, unit_position, unit_position_list, min_d=3):
         neighbor_dict = {'friendly': [], 'enemy':[]}
         # Iterate through all units to check for 
         for player in [0,1,2,3]:
             for unit in unit_position_list[player]:
-                if unit.distance(unit_position) <= min_d:
+                d = unit.distance(unit_position)
+                # Assuming distance = 0 is the same unit
+                if d <= min_d and d != 0.0:
                     if player == self.player_idx:
                         neighbor_dict['friendly'].append(unit)
                     else:
@@ -363,15 +365,14 @@ class Player:
                 [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(current_unit_pos, np_spaces)
 
                 # if a unit is within 20 and there are no attackers continue in principle direction
-                if self.home_point.distance(current_unit_pos) < 20 and distance_empty_space >  10:
-                    continue # Continue moving this unit in principle direction since it is so close to home
+                if self.home_point.distance(current_unit_pos) < 25 and distance_empty_space >  10:
+                   continue # Continue moving this unit in principle direction since it is so close to home
 
                 # Find direction and distance to nearest space, need to normalize and test direction
                 
 
                 # Find all nearby units
                 [teammates, enemies] = self.nearest_units_to_unit(current_unit_pos, unit_pos)
-
                 # Find angle to move away from nearby unit if friendly and move around unit if enemy
                 team_distance = 0
                 enemy_distance = 0
@@ -409,7 +410,16 @@ class Player:
                     # Speed should be 1 here I think basically no matter what
                     # Direction can be as simple as combination of those two angles
                 if not closest_enemy and closest_teammate:
-                    pass
+                    diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
+                    theta_team = atan2(diff_y, diff_x)
+
+                    # Go in opposite direction
+                    if theta_team < 0:
+                        theta_team+=pi
+                    else:
+                        theta_team-=pi
+
+                    self.unit_pos_angle[unit]['angle'] = theta_team
 
                 # 2. nothing around -> move towards empty space or if close to home move in principle direction
                     # Speed should be 1
@@ -423,13 +433,15 @@ class Player:
                     # As we get closer to enemies with no support move away faster
                     # As we get further from home move faster aswell
                 elif closest_enemy and not closest_teammate:
-                    pass
+                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                    self.unit_pos_angle[unit]['distance'] = 1
 
                 # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
                     # Speed based on saftey metrics again
                     # offset angle to get around enemies if we have more support than danger
                 else:
-                    pass
+                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                    self.unit_pos_angle[unit]['distance'] = 1
 
 
 
