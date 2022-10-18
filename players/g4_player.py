@@ -161,10 +161,7 @@ class StateUpdate:
 
         # player -> unit -> [(x, y)]
         unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
-            0: {},
-            1: {},
-            2: {},
-            3: {},
+            player: {uid: [] for uid in self.unit_id[player]} for player in range(4)
         }
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
@@ -201,10 +198,7 @@ class StateUpdate:
 
         for result in results:
             pos, owning_player, closest_uid = result
-            if not closest_uid in unit_to_owned[owning_player]:
-                unit_to_owned[owning_player][closest_uid] = []
             unit_to_owned[owning_player][closest_uid].append(pos)
-
             tile_to_unit[pos] = (owning_player, closest_uid)
 
         self.cached_ownership = (unit_to_owned, tile_to_unit)
