@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import pdb
+import math
 import traceback
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -339,14 +340,14 @@ class Role(ABC):
     def params(self):
         return self._params
 
-    def turn_moves(self, update: StateUpdate):
+    def turn_moves(self, update: StateUpdate, **kwargs):
         # TODO: This should be a play phase before doing anything else
         alive_units = set(update.own_units().keys())
         allocated_set = set(self.__allocated_units)
         dead_units = allocated_set - alive_units
         self.__allocated_units = list(allocated_set - dead_units)
 
-        return self._turn_moves(update, dead_units)
+        return self._turn_moves(update, dead_units, **kwargs)
 
     # ===================
     # Role Specialization
@@ -842,13 +843,66 @@ def border_detect(map_state, my_player_idx, target_player_idx):
         my_player_idx, target_player_idx, vertical_edge, horizontal_edge
     )
 
+def target_rank(start_point, update, my_player_idx, num_target):
+    # return heuristic target with len(targets) = num_targets
+    unit_ownership = update.unit_ownership()[0]
+    enemy_units =  update.enemy_units()
+    # for each unit, assign a score based on unit it own and distance from base (risk)
+    heuristic_lookup = dict()
+    WEIGHT_TILE = 100
+    WEIGHT_DIST = 20
+    for player_idx in unit_ownership:
+        if my_player_idx == player_idx:
+            continue
+        for unit_id in unit_ownership[player_idx]:
+            tile_owned = len(unit_ownership[player_idx][unit_id])
+            heuristic_lookup[(player_idx, unit_id)] = tile_owned/10000 * WEIGHT_TILE#normalize it with max tile
+    for player_idx in enemy_units:
+        for unit_id, unit_pos in enemy_units[player_idx]:
+            _, distance_to_start = force_vec(unit_pos, start_point)
+            heuristic_lookup[(player_idx, unit_id)] += 1/(distance_to_start/math.sqrt(100**2 + 100**2)) * WEIGHT_DIST#normalize it with max distaince on board
+    # rank the heuristic value
+    heuristic_ranking = [(k, v) for k, v in heuristic_lookup.items()]
+    heuristic_ranking.sort(key=lambda x: x[1], reverse=True)
+    top_k = heuristic_ranking[:num_target]
+    targets = []
+    for t, h in top_k:
+        targets.append(update.unit_id_to_pos(t[0],t[1]))
+    # use n unit vec pas target pos as heurist for attacking
+    #pdb.set_trace()
+    avoids = []
+    for target_pos in targets:
+        unit_vec, _ = force_vec(start_point, target_pos)
+        avoids.append(target_pos - unit_vec * 10)
+    return targets, avoids
 
+def density_heatmap(enemy_unit):
+    # create a heatmap base on enemy density
+    kernel = torch.tensor([[1,1,1],
+                           [1,3,1],
+                           [1,1,1]], dtype=torch.float)
+    kernel = kernel/torch.norm(kernel, p=2)
+    kernel = kernel.reshape(1,1,3,3)
+    heat_map = torch.zeros(100, 100)
+    for _, unit_pos in enemy_unit:
+        x, y = unit_pos
+        x = int(x)
+        y = int(y)
+        heat_map[x, y] += 1
+    #npdb.set_trace()
+    heat_map = heat_map.reshape(1,100,100)
+    heat_map = F.conv2d(heat_map, kernel, padding="same")
+    plt.imshow(heat_map.permute(1,2,0))
+    plt.savefig("vertical.png")
+    plt.imshow(heat_map.permute(1,2,0))
+    plt.savefig("horizontal.png")
+    return heat_map
+    
 class Attacker(Role):
-    def __init__(self, logger, params, target_player):
+    def __init__(self, logger, params):
         super().__init__(logger, params)
         self.pincer_force = dict()
         self.pincer_left_side = False
-        self.target_player = target_player
 
     def get_centroid(self, units):
         """
@@ -862,7 +916,7 @@ class Attacker(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_moves(self, update, dead_units, avoid, target):
         # pdb.set_trace()
         # tmp1 = self.params.player_idx
         # tmp2 = self.target_player
@@ -886,7 +940,7 @@ class Attacker(Role):
         else:
             start_point = self.get_centroid(units_array)
         # get attack target and get formation
-        avoid, target = self.find_target_simple(start_point, enemy_units[self.target_player])
+        #avoid, target = self.find_target_simple(start_point, enemy_units[self.target_player])
         formation = LineString([start_point, target])
         # calcualte force
         for unit_id in self.units:
@@ -1324,10 +1378,11 @@ class Player:
         self.role_groups.add_group(
             RoleType.DEFENDER, LatticeDefender(self.logger, self.params, 40)
         )
-        enemy_player = set([0, 1, 3]) - set([player_idx])
-        for enemy_idx in enemy_player:
+        
+        num_attack_group = 3
+        for i in range(num_attack_group):
             self.role_groups.add_group(
-                RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
+                RoleType.ATTACKER, Attacker(self.logger, self.params)
             )
         self.role_groups.add_group(
             RoleType.SCOUT, GreedyScout(self.logger, self.params)
@@ -1417,14 +1472,39 @@ class Player:
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
-            for role_group in self.role_groups.of_type(role):
-                if len(role_group.units) > 0:
-                    try:
-                        role_moves.update(role_group.turn_moves(update))
-                    except Exception as e:
-                        self.debug(
-                            "Exception processing role moves:", traceback.format_exc()
-                        )
+            if role == RoleType.ATTACKER:
+                # calculate heuristic
+                heatmap = density_heatmap(update.all_enemy_units())
+                start_point = self.params.home_base
+                targets, avoids = target_rank(start_point, update, self.player_idx, 3)
+                # for each target, find a attack team best suitable for the task
+                for role_group in self.role_groups.of_type(role):
+                    #pdb.set_trace()
+                    role_moves.update(role_group.turn_moves(update, target=targets[0], avoid=avoids[0]))
+                    role_moves.update(role_group.turn_moves(update, target=targets[1], avoid=avoids[1]))
+                    role_moves.update(role_group.turn_moves(update, target=targets[2], avoid=avoids[2]))
+                # for role_group in self.role_groups.of_type(role):
+                #     for target_idx, target in enumerate(targets):
+                #         # since targets are rank by heuristic
+                #         # target in the beginning of the list should take priority
+                #         for role_group in self.role_groups.of_type(role):
+                #             if len(role_group.units) > 0:
+                #                 pdb.set_trace()
+                #                 try:
+                #                     role_moves.update(role_group.turn_moves(update, target))
+                #                 except Exception as e:
+                #                     self.debug(
+                #                         "Exception processing role moves:", traceback.format_exc()
+                #                     )
+            else:
+                for role_group in self.role_groups.of_type(role):
+                    if len(role_group.units) > 0:
+                        try:
+                            role_moves.update(role_group.turn_moves(update))
+                        except Exception as e:
+                            self.debug(
+                                "Exception processing role moves:", traceback.format_exc()
+                            )
         for unit_id in unit_id[self.params.player_idx]:
             if not unit_id in role_moves:
                 moves.append((0, 0))
