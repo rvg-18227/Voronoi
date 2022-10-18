@@ -108,8 +108,18 @@ class Player:
             self.hostility_registry[other_player] = 1
 
     def find_attackers(self,map_states):
-        locx = self.locx
-        locy = self.locy
+        if self.player_idx == 0:
+            locx = 0
+            locy = 0
+        elif self.player_idx == 1:
+            locx = 0
+            locy = 75
+        elif self.player_idx == 2:
+            locx = 75
+            locy = 75
+        elif self.player_idx == 3:
+            locx = 75
+            locy = 0
         attackers = []
         if self.day > 49:
             for i in range(25-1):
@@ -336,7 +346,7 @@ class Player:
             self.unit_pos_angle[friendly_unit_ids[i]]['pos'] = unit_pos[self.player_idx][i]
 
         ### previous strats
-        #attackers = self.find_attackers(map_states) broken right now
+        attackers = self.find_attackers(map_states)
         offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
         offense_idx = [i['move'] for i in offense]
         ###
