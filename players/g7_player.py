@@ -289,7 +289,83 @@ class Player:
             # print('player, :', player, 'mid_angle', mid_angle*180/pi, '(my_unit_id, ene1_id, ene2_id): (', unit_id[self.player_idx][my_unit_idx], unit_id[player][ene_unit_1_idx], unit_id[player][ene_unit_2_idx], ')')
         
         return strategies
+    
+    def closest_t(self, current_unit_pos, teammates, team_distance, closest_teammate_dist, closest_teammate):
+        for t in teammates:
+            if t == current_unit_pos:
+                d = 0
+            else:
+                d = t.distance(current_unit_pos)
+            # on top of eachother will throw error
+            if d != 0:
+                team_distance += 1/d
+            if d < closest_teammate_dist:
+                closest_teammate_dist = d
+                closest_teammate = t
+        return team_distance, closest_teammate_dist, closest_teammate
+    
+    def closest_e(self, current_unit_pos, enemies, enemy_distance, closest_enemy_dist, closest_enemy):
+        for e in enemies:
+            if e == current_unit_pos:
+                d = 0
+            else:
+                d = e.distance(current_unit_pos)
+            # on top of eachother will throw error
+            if d != 0:
+                enemy_distance += 1/d
+            if d < closest_enemy_dist:
+                closest_enemy_dist = d
+                closest_enemy = e
+        return enemy_distance, closest_enemy_dist, closest_enemy
+        
+    def behavior(self, closest_teammate, closest_enemy, unit, current_unit_pos, direction_empty_space, closest_teammate_dist, closest_enemy_dist):
+        dist = 0
+        angle = 0
+        # From here would like to see 4 core behaviors
 
+        # 1. no enemies around -> move towards combination of away from teamates and towards empty space
+            # Speed should be 1 here I think basically no matter what
+            # Direction can be as simple as combination of those two angles
+        if not closest_enemy and closest_teammate:
+            diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
+            theta_team = atan2(diff_y, diff_x)
+
+            # Go in opposite direction
+            if theta_team < 0:
+                theta_team+=pi
+            else:
+                theta_team-=pi
+
+            return theta_team, 1
+
+        # 2. nothing around -> move towards empty space or if close to home move in principle direction
+            # Speed should be 1
+            # direction given by direction_empty_space
+        elif not closest_enemy and not closest_teammate:
+            angle = direction_empty_space
+            dist = 1
+            return angle, dist
+        
+        # 3. only enemies around -> move in combination of opposite from enemies and towards home
+            # Speed towards home should depend on distance from home and distance from enemies
+            # As we get closer to enemies with no support move away faster
+            # As we get further from home move faster aswell
+        elif closest_enemy and not closest_teammate:
+            angle = atan2(self.home_point.x - current_unit_pos.x, self.home_point.y - current_unit_pos.y)
+            if current_unit_pos.distance(self.home_point) < closest_enemy_dist and closest_teammate_dist > closest_enemy_dist:
+                dist = .5
+            else: 
+                dist = 1
+            return angle, dist
+
+        # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
+            # Speed based on saftey metrics again
+            # offset angle to get around enemies if we have more support than danger
+        else:
+            angle = direction_empty_space
+            dist = 1
+            return angle, dist
+            
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -359,90 +435,84 @@ class Player:
             queue = friendly_unit_ids
             np_spaces = np.array(map_states)
             for unit in queue:
+                
+                #initializing closest unit types
+                closest_teammate = False
+                closest_enemy = False
+                closest_teammate_dist = 100
+                closest_enemy_dist = 100
+                
+                # Find angle to move away from nearby unit if friendly and move around unit if enemy
+                team_distance = 0
+                enemy_distance = 0
+                
                 current_unit_pos = self.unit_pos_angle[unit]['pos']
 
 
                 [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(current_unit_pos, np_spaces)
 
                 # if a unit is within 20 and there are no attackers continue in principle direction
-                if self.home_point.distance(current_unit_pos) < 25 and distance_empty_space >  10:
-                   continue # Continue moving this unit in principle direction since it is so close to home
+                # if self.home_point.distance(current_unit_pos) < 25 and distance_empty_space >  10:
+                #    continue # Continue moving this unit in principle direction since it is so close to home
 
+                if distance_empty_space > 5:
+                    continue
+                
                 # Find direction and distance to nearest space, need to normalize and test direction
                 
 
                 # Find all nearby units
                 [teammates, enemies] = self.nearest_units_to_unit(current_unit_pos, unit_pos)
-                # Find angle to move away from nearby unit if friendly and move around unit if enemy
-                team_distance = 0
-                enemy_distance = 0
 
-                # Find the total inverse distance from teamates and also the closest teamate // Need to put in function
-                closest_teammate = False
-                closest_teammate_dist = 100
-                for t in teammates:
-                    d = t.distance(current_unit_pos)
-                    # on top of eachother will throw error
-                    if d != 0:
-                        team_distance += 1/d
-                    if d < closest_teammate_dist:
-                        closest_teammate_dist = d
-                        closest_teammate = t
+                # Find the total inverse distance from teamates and also the closest teamate 
+                team_distance, closest_teammate_dist, closest_teammate = self.closest_t(current_unit_pos, teammates, team_distance, closest_teammate_dist, closest_teammate)
 
-                # Find the total inverse distance from enemies and also the closest enemy // Need to put in function
-                closest_enemy = False
-                closest_enemy_dist = 100
-                for e in enemies:
-                    d = e.distance(current_unit_pos)
-                    # on top of eachother will throw error
-                    if d != 0:
-                        enemy_distance += 1/d
-                    if d < closest_enemy_dist:
-                        closest_enemy_dist = d
-                        closest_teammate = e
+                # Find the total inverse distance from enemies and also the closest enemy 
+                enemy_distance, closest_enemy_dist, closest_enemy = self.closest_e(current_unit_pos, enemies, enemy_distance, closest_enemy_dist, closest_enemy)
 
                 self.unit_pos_angle[unit]['angle'] = direction_empty_space
                 self.unit_pos_angle[unit]['distance'] = 1
                 
-                # From here would like to see 4 core behaviors
+                self.unit_pos_angle[unit]['angle'], self.unit_pos_angle[unit]['distance'] = self.behavior(closest_teammate, closest_enemy, unit, current_unit_pos, direction_empty_space, closest_teammate_dist, closest_enemy_dist)
+                # From here would like to see 4 core behaviors, I put this into a function called behavior
+                # but I don't want to delete this code until you look at it
 
                 # 1. no enemies around -> move towards combination of away from teamates and towards empty space
                     # Speed should be 1 here I think basically no matter what
                     # Direction can be as simple as combination of those two angles
-                if not closest_enemy and closest_teammate:
-                    diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
-                    theta_team = atan2(diff_y, diff_x)
+                # if not closest_enemy and closest_teammate:
+                #     diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
+                #     theta_team = atan2(diff_y, diff_x)
 
-                    # Go in opposite direction
-                    if theta_team < 0:
-                        theta_team+=pi
-                    else:
-                        theta_team-=pi
+                #     # Go in opposite direction
+                #     if theta_team < 0:
+                #         theta_team+=pi
+                #     else:
+                #         theta_team-=pi
 
-                    self.unit_pos_angle[unit]['angle'] = theta_team
+                #     self.unit_pos_angle[unit]['angle'] = theta_team
 
-                # 2. nothing around -> move towards empty space or if close to home move in principle direction
-                    # Speed should be 1
-                    # direction given by direction_empty_space
-                elif not closest_enemy and not closest_teammate:
-                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                    self.unit_pos_angle[unit]['distance'] = 1
+                # # 2. nothing around -> move towards empty space or if close to home move in principle direction
+                #     # Speed should be 1
+                #     # direction given by direction_empty_space
+                # elif not closest_enemy and not closest_teammate:
+                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                #     self.unit_pos_angle[unit]['distance'] = 1
                 
-                # 3. only enemies around -> move in combination of opposite from enemies and towards home
-                    # Speed towards home should depend on distance from home and distance from enemies
-                    # As we get closer to enemies with no support move away faster
-                    # As we get further from home move faster aswell
-                elif closest_enemy and not closest_teammate:
-                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                    self.unit_pos_angle[unit]['distance'] = 1
+                # # 3. only enemies around -> move in combination of opposite from enemies and towards home
+                #     # Speed towards home should depend on distance from home and distance from enemies
+                #     # As we get closer to enemies with no support move away faster
+                #     # As we get further from home move faster aswell
+                # elif closest_enemy and not closest_teammate:
+                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                #     self.unit_pos_angle[unit]['distance'] = 1
 
-                # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
-                    # Speed based on saftey metrics again
-                    # offset angle to get around enemies if we have more support than danger
-                else:
-                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                    self.unit_pos_angle[unit]['distance'] = 1
-
+                # # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
+                #     # Speed based on saftey metrics again
+                #     # offset angle to get around enemies if we have more support than danger
+                # else:
+                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                #     self.unit_pos_angle[unit]['distance'] = 1
 
 
                 
