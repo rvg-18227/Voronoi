@@ -16,6 +16,7 @@ from typing import Tuple
 from math import atan2, pi, dist
 import numpy as np
 from scipy.spatial.distance import cdist
+from shapely.geometry import Point
 
 
 class Player:
@@ -69,6 +70,23 @@ class Player:
         else: # Top right yellow
             self.angles = [np.deg2rad(135), np.deg2rad(90), np.deg2rad(162), np.deg2rad(108), np.deg2rad(180)]
 
+
+        # home locations
+        if self.player_idx == 0:
+            self.locx = 0
+            self.locy = 0
+        elif self.player_idx == 1:
+            self.locx = 0
+            self.locy = 100
+        elif self.player_idx == 2:
+            self.locx = 100
+            self.locy = 100
+        elif self.player_idx == 3:
+            self.locx = 100
+            self.locy = 0
+
+        self.home_point = Point(self.locx, self.locy)
+
         # Experimenal variables
         self.day = 0
         self.other_players = [0,1,2,3]
@@ -77,26 +95,21 @@ class Player:
         self.other_players.remove(self.player_idx)
         self.last_n_days_positions = {}
         self.hostility_registry = {}
+        # stores the units position, angle, and direction keyed by the units id
         self.unit_pos_angle = {}
+
+        # stores a lists of unit ids keyed by their initial angle
+        self.angles_taken = {}
+        for angle in self.angles:
+            self.angles_taken[angle] = []
 
         for other_player in self.other_players:
             self.last_n_days_positions[other_player] = []
             self.hostility_registry[other_player] = 1
 
     def find_attackers(self,map_states):
-        if self.player_idx == 0:
-            locx = 0
-            locy = 0
-        elif self.player_idx == 1:
-            locx = 0
-            locy = 75
-        elif self.player_idx == 2:
-            locx = 75
-            locy = 75
-        elif self.player_idx == 3:
-            locx = 75
-            locy = 0
-
+        locx = self.locx
+        locy = self.locy
         attackers = []
         if self.day > 49:
             for i in range(25-1):
@@ -290,17 +303,40 @@ class Player:
 
         # Remove Dead Units
         dead_units = [unit for unit in self.unit_pos_angle if unit not in friendly_unit_ids]
-        for dead_units in dead_units:
-            del self.unit_pos_angle[dead_units]
+        for dead_unit in dead_units:
+            # remove from unit list
+            del self.unit_pos_angle[dead_unit]
+
+            # remove from principle angle index
+            for (angle,list_units) in self.angles_taken.items():
+                if dead_unit in list_units:
+                    list_units.remove(dead_unit)
 
         # Add new units to dictionary and update locations of old ones
         for i in range(len(unit_id[self.player_idx])):
+            # If this is a new unit
             if friendly_unit_ids[i] not in self.unit_pos_angle:
-                self.unit_pos_angle[friendly_unit_ids[i]] = {'angle': self.angles[i % len(self.angles)], 'distance':1}
+                # Decide angle by finding the principle angle with the least number of units
+                minumum_length = 100
+                minumum_key = -1
+                for (angle,list_units) in self.angles_taken.items():
+                    if len(list_units) < minumum_length:
+                        minumum_key = angle
+                        minumum_length = len(list_units)
+
+                        # If there is no unit with a principle angle in this direction we can simple choose this angle
+                        if minumum_length == 0:
+                            break
+
+                # Add the unit to both lists
+                self.angles_taken[minumum_key].append(friendly_unit_ids[i])
+                self.unit_pos_angle[friendly_unit_ids[i]] = {'angle': minumum_key, 'distance':1}
+
+            # Update position
             self.unit_pos_angle[friendly_unit_ids[i]]['pos'] = unit_pos[self.player_idx][i]
 
         ### previous strats
-        attackers = self.find_attackers(map_states)
+        #attackers = self.find_attackers(map_states) broken right now
         offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
         offense_idx = [i['move'] for i in offense]
         ###
@@ -311,32 +347,43 @@ class Player:
             queue = friendly_unit_ids
             np_spaces = np.array(map_states)
             for unit in queue:
+                current_unit_pos = self.unit_pos_angle[unit]['pos']
+
+
+                [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(current_unit_pos, np_spaces)
+
+                # if a unit is within 20 and there are no attackers continue in principle direction
+                if self.home_point.distance(current_unit_pos) < 20 and distance_empty_space >  10:
+                    continue # Continue moving this unit in principle direction since it is so close to home
+
                 # Find direction and distance to nearest space, need to normalize and test direction
-                [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(self.unit_pos_angle[unit]['pos'], np_spaces)
+                
 
                 # Find all nearby units
-                [teammates, enemies] = self.nearest_units_to_unit(self.unit_pos_angle[unit]['pos'], unit_pos)
+                [teammates, enemies] = self.nearest_units_to_unit(current_unit_pos, unit_pos)
 
                 # Find angle to move away from nearby unit if friendly and move around unit if enemy
                 team_distance = 0
                 enemy_distance = 0
 
-                # Find the total inverse distance from teamates and also the closest teamate
-                closest_teammate = None
+                # Find the total inverse distance from teamates and also the closest teamate // Need to put in function
+                closest_teammate = False
                 closest_teammate_dist = 100
                 for t in teammates:
-                    d = t.distance(self.unit_pos_angle[unit]['pos'])
+                    d = t.distance(current_unit_pos)
+                    # on top of eachother will throw error
                     if d != 0:
                         team_distance += 1/d
                     if d < closest_teammate_dist:
                         closest_teammate_dist = d
                         closest_teammate = t
 
-                # Find the total inverse distance from enemies and also the closest enemy
-                closest_enemy = None
+                # Find the total inverse distance from enemies and also the closest enemy // Need to put in function
+                closest_enemy = False
                 closest_enemy_dist = 100
                 for e in enemies:
-                    d = e.distance(self.unit_pos_angle[unit]['pos'])
+                    d = e.distance(current_unit_pos)
+                    # on top of eachother will throw error
                     if d != 0:
                         enemy_distance += 1/d
                     if d < closest_enemy_dist:
@@ -351,19 +398,28 @@ class Player:
                 # 1. no enemies around -> move towards combination of away from teamates and towards empty space
                     # Speed should be 1 here I think basically no matter what
                     # Direction can be as simple as combination of those two angles
+                if not closest_enemy and closest_teammate:
+                    pass
 
                 # 2. nothing around -> move towards empty space or if close to home move in principle direction
                     # Speed should be 1
                     # direction given by direction_empty_space
-
+                elif not closest_enemy and not closest_teammate:
+                    self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                    self.unit_pos_angle[unit]['distance'] = 1
+                
                 # 3. only enemies around -> move in combination of opposite from enemies and towards home
                     # Speed towards home should depend on distance from home and distance from enemies
                     # As we get closer to enemies with no support move away faster
                     # As we get further from home move faster aswell
+                elif closest_enemy and not closest_teammate:
+                    pass
 
                 # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
                     # Speed based on saftey metrics again
                     # offset angle to get around enemies if we have more support than danger
+                else:
+                    pass
 
 
 
