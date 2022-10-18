@@ -239,7 +239,7 @@ class Attacker:
 
     def update_formation(self, direction, n):
         head, direction_back = self.get_head_hover_point()
-        offset = direction_back * 2
+        offset = direction_back * 5
         self.formation = self.Formation(direction, n)
         for i, point in enumerate(self.formation.points):
             self.formation.points[i] = head + (point[0] * direction_back[0], point[1] * direction_back[1]) + offset
@@ -252,20 +252,21 @@ class Attacker:
 
         self.unit_locations = [(unit,i) for i, unit in enumerate(units) if i in attackerIdxs]
 
-        self.update_formation(self.direction, self.number_units)
+        self.update_formation(self.direction, min(self.number_units, 10))
 
     def get_moves(self):
         moves = [(0, 0, 0) for i, pos in enumerate(self.unit_locations)]
         if self.number_units == 0:
             return []
 
+        print(self.formation.points)
         for i, unit in enumerate(self.unit_locations):
             target_point = self.formation.points[i]
             # moves = distance to target point, x, y
             moves[i] = (np.linalg.norm(np.array((unit[0].x, unit[0].y)) - target_point), target_point[0] - unit[0].x, target_point[1] - unit[0].y)
 
-        for i, move in enumerate(moves):
-            if move[0] > 0.1:
+        for i in range(len(moves)):
+            if moves[i][0] > 0.1:
                 break
         else: #if no break
             # move everything forward
