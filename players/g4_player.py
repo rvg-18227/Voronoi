@@ -5,8 +5,6 @@ import traceback
 from abc import ABC, abstractmethod
 from enum import Enum
 from glob import glob
-from itertools import repeat
-from multiprocessing import parent_process
 from os import makedirs, remove
 from random import randint, uniform
 from typing import Callable, Optional
@@ -358,23 +356,28 @@ class Role(ABC):
     def params(self):
         return self._params
 
-    def turn_moves(self, update: StateUpdate):
-        # TODO: This should be a play phase before doing anything else
+    def turn_update(self, update: StateUpdate):
         alive_units = set(update.own_units().keys())
         allocated_set = set(self.__allocated_units)
         dead_units = allocated_set - alive_units
         self.__allocated_units = list(allocated_set - dead_units)
 
-        return self._turn_moves(update, dead_units)
+        self._turn_update(update, dead_units)
+
+    def turn_moves(self, update: StateUpdate):
+        return self._turn_moves(update)
 
     # ===================
     # Role Specialization
     # ===================
 
     @abstractmethod
-    def _turn_moves(
-        self, update: StateUpdate, dead_units: set[str]
-    ) -> dict[str, NDArray[np.float32]]:
+    def _turn_update(self, update: StateUpdate, dead_units: set[str]):
+        """Initial pass state update: Remove dead units, make any internal state adjustments before processing rules."""
+        pass
+
+    @abstractmethod
+    def _turn_moves(self, update: StateUpdate) -> dict[str, NDArray[np.float32]]:
         """Returns the moves this turn for the units allocated to this role."""
         pass
 
@@ -412,7 +415,10 @@ class LatticeDefender(Role):
 
         return jitter_force
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         self.counter += 1
         try:
             envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
@@ -475,11 +481,8 @@ class LatticeDefender(Role):
             }
 
     def deallocation_candidate(self, update, target_point):
-        # TODO: don't need this if dead unit update is its own phase
-        alive_units = set(self.units).intersection(set(update.own_units().keys()))
-
         kdtree = KDTree(
-            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in alive_units]
+            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in self.units]
         )
         _, unit_idx = kdtree.query(target_point)
         return update.unit_idx_to_id(self.params.player_idx, unit_idx)
@@ -517,10 +520,13 @@ class Interceptor(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
         target_enemy_units = set(update.unit_id[self.__target_player])
         # Prune dead targets
         self.__targets = self.__targets.intersection(target_enemy_units)
+
+    def _turn_moves(self, update):
+        # Should never happen due to empty targets Interceptor removal rule
         if len(self.__targets) == 0:
             return {unit: (0.0, 0.0) for unit in self.units}
 
@@ -620,7 +626,10 @@ class FirstScout(Role):
     def __init__(self, logger, params, scout_id):
         super().__init__(logger, params)
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         own_units = update.own_units()
         moves = {}
         for unit_id in self.units:
@@ -655,7 +664,10 @@ class GreedyScout(Role):
             closest_dist = min(closest_dist, np.linalg.norm(p - enemy_pos))
         return closest_dist
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         for uid in self.units:
             if not uid in self.temp_id:
                 self.temp_id[uid] = self.id_counter
@@ -807,7 +819,10 @@ class Attacker(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         # pdb.set_trace()
         # tmp1 = self.params.player_idx
         # tmp2 = self.target_player
@@ -1055,8 +1070,8 @@ def early_scouts(rule_inputs: RuleInputs, uid: str):
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
     total_interceptors = sum(
-        len(interceptors.units)
-        for interceptors in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
+        len(interceptor_role.units)
+        for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
     )
     TARGET_DENSITY = rule_inputs.update.territory_hull().area / 50
     rule_inputs.debug(f"{len(defender_role.units)}/{TARGET_DENSITY} defenders")
@@ -1197,29 +1212,80 @@ def reinforce_defenders(rule_inputs: RuleInputs):
     return False
 
 
+def release_interceptors_on_retreat(rule_inputs: RuleInputs):
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        target_positions = [
+            Point(
+                rule_inputs.update.unit_id_to_pos(
+                    interceptor_role.target_player, target
+                )
+            )
+            for target in targets
+        ]
+        if all(
+            not rule_inputs.update.territory_hull().contains(target_pos)
+            for target_pos in target_positions
+        ):
+            for uid in interceptor_role.units:
+                defender_role.allocate_unit(uid)
+            rule_inputs.role_groups.remove_group(
+                RoleType.INTERCEPTOR, interceptor_role.id
+            )
+            rule_inputs.debug("Removing interceptor: targets retreated!")
+
+
+@reallocation_rules.rule
+def disband_interceptors_target_gone(rule_inputs: RuleInputs):
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        if len(interceptor_role.target_units) == 0:
+            rule_inputs.debug("Removing interceptor: targets dead!")
+            for uid in interceptor_role.units:
+                rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
+            rule_inputs.role_groups.remove_group(
+                RoleType.INTERCEPTOR, interceptor_role.id
+            )
+    return False
+
+
 @reallocation_rules.rule
 def reinforce_interceptors(rule_inputs: RuleInputs):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-    for interceptors in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
-        # TODO: Prune dead in separate phase
-        target_enemy_units = set(rule_inputs.update.unit_id[interceptors.target_player])
-        # Prune dead targets
-        targets = interceptors.target_units.intersection(target_enemy_units)
-        if len(targets) == 0:
-            continue
+    # Sort Interceptor groups by target tile ownership
+    unit_ownership, _ = rule_inputs.update.unit_ownership()
+    interceptors_weighted = []
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        total_target_ownership = sum(
+            len(unit_ownership[interceptor_role.target_player][target_unit])
+            for target_unit in interceptor_role.target_units
+        )
+        interceptors_weighted.append((interceptor_role, total_target_ownership))
 
+    prioritized_interceptors = [
+        interceptor_role
+        for interceptor_role, _ in sorted(
+            interceptors_weighted, key=lambda t: t[1], reverse=True
+        )
+    ]
+
+    for interceptor_role in prioritized_interceptors:
         target_positions = [
-            Point(rule_inputs.update.unit_id_to_pos(interceptors.target_player, target))
-            for target in targets
+            Point(
+                rule_inputs.update.unit_id_to_pos(
+                    interceptor_role.target_player, target
+                )
+            )
+            for target in interceptor_role.target_units
         ]
         nearest_target_position, _ = nearest_points(
             MultiPoint(target_positions), Point(rule_inputs.params.home_base)
         )
         nearest_target_position = point_to_floats(nearest_target_position)
-        current_interceptors = len(interceptors.units)
+        current_interceptors = len(interceptor_role.units)
         if current_interceptors < INTERCEPTOR_STRENGTH:
             rule_inputs.debug(
-                f"Reinforcing {interceptors.id} with {INTERCEPTOR_STRENGTH - current_interceptors} units"
+                f"Reinforcing {interceptor_role.id} with {INTERCEPTOR_STRENGTH - current_interceptors} units"
             )
             for _ in range(INTERCEPTOR_STRENGTH - current_interceptors):
                 if len(defender_role.units) == 0:
@@ -1228,43 +1294,7 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
                     rule_inputs.update, nearest_target_position
                 )
                 defender_role.deallocate_unit(converted_defender)
-                interceptors.allocate_unit(converted_defender)
-    return False
-
-
-def release_interceptors_on_retreat(rule_inputs: RuleInputs):
-    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-
-    for interceptors in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
-        # TODO: Prune dead in separate phase
-        target_enemy_units = set(rule_inputs.update.unit_id[interceptors.target_player])
-        # Prune dead targets
-        targets = interceptors.target_units.intersection(target_enemy_units)
-        if len(targets) == 0:
-            continue
-
-        target_positions = [
-            Point(rule_inputs.update.unit_id_to_pos(interceptors.target_player, target))
-            for target in targets
-        ]
-        if all(
-            not rule_inputs.update.territory_hull().contains(target_pos)
-            for target_pos in target_positions
-        ):
-            for uid in interceptors.units:
-                defender_role.allocate_unit(uid)
-            rule_inputs.role_groups.remove_group(RoleType.INTERCEPTOR, interceptors.id)
-            rule_inputs.debug("Removing interceptor: targets retreated!")
-
-
-@reallocation_rules.rule
-def disband_interceptors_target_gone(rule_inputs: RuleInputs):
-    for interceptors in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
-        if len(interceptors.target_units) == 0:
-            rule_inputs.debug("Removing interceptor: targets dead!")
-            for uid in interceptors.units:
-                rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-            rule_inputs.role_groups.remove_group(RoleType.INTERCEPTOR, interceptors.id)
+                interceptor_role.allocate_unit(converted_defender)
     return False
 
 
@@ -1402,17 +1432,23 @@ class Player:
         if len(idle_units) > 0:
             self.debug(f"{len(idle_units)} idle units!")
 
-        # Phase 1: apply spawn rules
+        # Phase 1: inform roles of turn update, remove dead units
+        # -------------------------------------------------------
+        for role in RoleType:
+            for role_group in self.role_groups.of_type(role):
+                role_group.turn_update(update)
+
+        # Phase 2: apply spawn rules
         # --------------------------
         rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
         for uid in just_spawned:
             spawn_rules.apply_rules(rule_inputs, uid)
 
-        # Phase 2: apply reallocation rules
+        # Phase 3: apply reallocation rules
         # ---------------------------------
         reallocation_rules.apply_rules(rule_inputs)
 
-        # Phase 3: gather moves from roles
+        # Phase 4: gather moves from roles
         # --------------------------------
         moves: list[tuple[float, float]] = []
         role_moves = {}
