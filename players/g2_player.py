@@ -336,6 +336,7 @@ class Player:
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
         self.defender_platoon_ids = []
         self.attacker_platoon_ids = []
+        self.platoon_ids_waiting_for_replenishment_units = set()
 
         #dictionary of entire board broken up into regions
         self.entire_board_regions = get_regions_away_home(20, self.home_coords)
@@ -402,8 +403,8 @@ class Player:
 
     
     def clamp_point_within_map(self, point: Point) -> Point:
-        x = min(99.9, max(0.1, point.x))
-        y = min(99.9, max(0.1, point.y))
+        x = min(99.99, max(0.01, point.x))
+        y = min(99.99, max(0.01, point.y))
         return Point(x, y)
 
     def platoon_unit_moves(self, platoon_id, intercept_pos) -> Dict[float, Tuple[float, float]]:
@@ -434,7 +435,7 @@ class Player:
         right_flank_dest_pos = self.clamp_point_within_map(right_flank_dest_pos)
 
         # The leader will wait for the flanks to get in position before moving out
-        if left_flank_pos.distance(left_flank_dest_pos) > 1.1 or right_flank_pos.distance(right_flank_dest_pos) > 1.1:
+        if left_flank_pos.distance(left_flank_dest_pos) > 1.2 or right_flank_pos.distance(right_flank_dest_pos) > 1.2:
             leader_dest_pos = leader_pos
 
         moves = {}
@@ -450,39 +451,53 @@ class Player:
     
     def platoon_moves(self, unit_ids)  -> Dict[float, Tuple[float, float]]:
         moves = {}
+        home_point = self.get_home_coords()
 
         # Draft units into platoons
         drafted_unit_ids = [uid for platoon in self.platoons.values() for uid in platoon['unit_ids']]
         undrafted_unit_ids = [uid for uid in unit_ids if uid not in drafted_unit_ids]
         for unit_id in undrafted_unit_ids:
             # Replenish platoons that have lost units first
-            not_full_platoons = [p for p in self.platoons.values() if len(p['unit_ids'])<3]
+            not_full_platoons = [(pid, p) for pid, p in self.platoons.items() if len(p['unit_ids'])<3]
             if len(not_full_platoons) >= 1:
-                not_full_platoons[0]['unit_ids'].append(unit_id)
+                not_full_platoons[0][1]['unit_ids'].append(unit_id)
+                self.platoon_ids_waiting_for_replenishment_units.add(not_full_platoons[0][0])
             else:
                 # Create a new platoon if all existing platoons are full
                 newest_platon_id = max(list(self.platoons.keys()))
                 self.platoons[newest_platon_id+1] = {'unit_ids': [unit_id], 'target': None}
+
+        # Remove killed platoons
+        platoon_ids_to_remove = []
+        for pid, platoon in self.platoons.items():
+            if len(platoon['unit_ids']) == 0 and pid != 1:
+                platoon_ids_to_remove.append(pid)
+        for pid in platoon_ids_to_remove:
+            del self.platoons[pid]
+            if pid in self.defender_platoon_ids:
+                self.defender_platoon_ids.remove(pid)
+            if pid in self.attacker_platoon_ids:
+                self.attacker_platoon_ids.remove(pid)
+            if pid in self.platoon_ids_waiting_for_replenishment_units:
+                self.platoon_ids_waiting_for_replenishment_units.remove(pid)
 
         for pid, platoon in self.platoons.items():
             # Remove killed units
             for uid in self.ally_killed_unit_ids:
                 if uid in platoon['unit_ids']:
                     platoon['unit_ids'].remove(uid)
-            
+
             # Remove target when it has been killed, a new target will be assigned
             if platoon['target'] in self.enemy_killed_unit_ids:
                 platoon['target'] = None
 
             # Assign targets for ready platoons
             if not platoon['target'] and len(platoon['unit_ids']) == 3:
-                leader_point = self.ally_units[platoon['unit_ids'][0]]
                 min_dist = math.inf
                 target_id = None
 
                 enemy_unit_ids_in_territory = []
                 enemy_unit_ids_encroaching_on_territory = []
-                home_point = self.get_home_coords()
                 for uid, pos in self.enemy_units.items():
                     dist_to_home = home_point.distance(pos)
                     if dist_to_home <= INNER_RADIUS:
@@ -498,6 +513,7 @@ class Player:
 
                 targetable_units = enemy_unit_ids_in_territory if pid in self.defender_platoon_ids else enemy_unit_ids_encroaching_on_territory 
 
+                leader_point = self.ally_units[platoon['unit_ids'][0]]
                 for uid, pos in targetable_units:
                     dist = leader_point.distance(pos)
                     if dist < min_dist:
@@ -506,9 +522,31 @@ class Player:
                 platoon['target'] = target_id
             
             # Generate moves for units in assigned platoons
-            elif platoon['target'] and len(platoon['unit_ids']) == 3:
+            if platoon['target'] and len(platoon['unit_ids']) == 3:
                 intercept_point = self.intercept_point(platoon['target'], platoon['unit_ids'][0])
                 moves.update(self.platoon_unit_moves(pid, intercept_point))
+
+            # Send assigned platoons with lost units back towards home to meet their replenishments
+            # Also send unasigned but already deployed units to a waiting position
+            elif (pid in self.platoon_ids_waiting_for_replenishment_units) or (not platoon['target'] and len(platoon['unit_ids']) == 3):
+                point_distances = [self.ally_units[uid].distance(home_point) for uid in platoon['unit_ids']]
+                furthest_dist = max(point_distances)
+                if furthest_dist == 0:
+                    break
+                furtherst_point_idx = point_distances.index(furthest_dist)
+                furtherst_point = self.ally_units[platoon['unit_ids'][furtherst_point_idx]]
+                home_to_furthest = LineString([home_point, furtherst_point])
+                meeting_point = home_to_furthest.interpolate(home_to_furthest.length * (0.5 if pid in self.defender_platoon_ids else 0.8))
+                for uid in platoon['unit_ids']:
+                    moves[uid] = self.shapely_point_move(self.ally_units[uid], meeting_point)
+            
+                # Allow platoons awaiting replenishments to resume normal targetting when sufficiently close
+                if pid in self.platoon_ids_waiting_for_replenishment_units and len(platoon['unit_ids']) == 3:
+                    leader_point = self.ally_units[platoon['unit_ids'][0]]
+                    lf_point = self.ally_units[platoon['unit_ids'][1]]
+                    rf_point = self.ally_units[platoon['unit_ids'][0]]
+                    if leader_point.distance(lf_point) < 3 and leader_point.distance(rf_point) < 3:
+                        self.platoon_ids_waiting_for_replenishment_units.remove(pid)
             
         return {int(uid): move for uid, move in moves.items()}
 
