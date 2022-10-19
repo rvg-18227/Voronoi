@@ -227,13 +227,11 @@ class Attacker:
 
         direction_to_start = start_point - hover_point
         normalized_direction_to_start = (direction_to_start / np.linalg.norm(direction_to_start) ) if np.linalg.norm(direction_to_start) != 0 else direction_to_start
-        # if self.day > 300 and self.player_idx == 1:
-        #     print(hover_point, ending_point, start_point, direction_to_start, normalized_direction_to_start)
         return hover_point, ending_point, normalized_direction_to_spawn, normalized_direction_to_start
 
     def get_end_point(self, angle, start_point):
         min_dist = 25
-        max_dist = 142# max, change to be based on how many units 
+        max_dist = 142
         step = 1
         for i in reversed(range(min_dist, max_dist, step)):
             point = start_point + np.array((i*math.cos(angle), i*math.sin(angle)))
@@ -243,7 +241,7 @@ class Attacker:
 
     def get_raycast_to_border(self, angle, start_point):
         min_dist = 25
-        max_dist = 142# max, change to be based on how many units 
+        max_dist = 142
         step = 1
         for i in range(min_dist, max_dist, step):
             point = start_point + np.array((i*math.cos(angle), i*math.sin(angle)))
@@ -282,7 +280,6 @@ class Attacker:
 
         self.end = self.number_units
 
-
         self.update_formation(self.direction, self.number_units)
 
     def get_moves(self):
@@ -303,49 +300,12 @@ class Attacker:
             else:
                 self.attack = 1
 
-
         return moves
 
     def number_in_circle(self, units, center, radius):
         units = set([tuple(np.floor(unit)) for unit in units])
         units.add(tuple(np.floor(center)))
         return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
-    
-
-    # def update(self, map_state, attackerIdxs, units, enemy_units, unit_id):
-    #     self.map_state = map_state
-    #     #rotate the map state to the bottom left
-    #     self.number_units = len(attackerIdxs)
-    #     self.attackerIdxs = attackerIdxs
-    #     self.unit_id = unit_id
-    #     self.real_ids = self.unit_id[self.player_id]
-
-    #     self.unit_locations = [(unit,i) for i, unit in enumerate(units) if i in attackerIdxs]
-
-
-    #     for i, (unit,pos) in enumerate(self.unit_locations):
-    #         real_id = self.real_ids[pos]
-
-    #         if real_id not in self.seen:
-    #             self.lr_counter += 1
-    #             self.seen.append(real_id)
-
-    #             if 1 <= self.lr_counter <= 3:    
-    #                 # self.left_list.append(real_id)
-    #                 self.right_list.append(real_id)
-    #                 # ********** TESTING all going right ********************
-    #             elif 4 <= self.lr_counter <= 6:
-    #                 self.right_list.append(real_id)
-
-    #                 if self.lr_counter == 6:
-    #                     self.lr_counter = 0
-
-
-    #     self.enemy_units = []
-    #     for enemy in enemy_units:
-    #         self.enemy_units.append( Point2D( int(math.floor(enemy.x)), int(math.floor(enemy.y)) ) )
-    #     self.day += 1
-
 
     def transform_angle(self, x: float, y: float) -> float:
         angle = np.arctan2(y, x)
@@ -357,111 +317,6 @@ class Attacker:
             return angle + np.pi
         else:# self.player_idx == 3:
             return angle + np.pi / 2
-
-
-    # def nearest_enemy_on_line(self, unit, angle_x, angle_y):
-    #     min_dist = 1
-    #     max_dist = 5
-    #     step = 1
-
-    #     angle = self.transform_angle(angle_x, angle_y)
-
-    #     for i in range(min_dist, max_dist, step):
-    #         point = np.array((int(math.floor(unit.x)), int(math.floor(unit.y)))) + np.array((i*math.cos(angle), i*math.sin(angle)))
-    #         if point[0] > 100 or point[0] < 0 or point[1] > 100 or point[1] < 0:
-    #             continue
-    #         #if np.array((int(math.floor(point[0])), int(math.floor(point[1])))) in self.enemy_units:
-    #         projected_pt = Point2D(int(math.floor(point[0])), int(math.floor(point[1])))
-    #         # print("Proj Point: ", projected_pt, end="")
-    #         if projected_pt in self.enemy_units:
-    #             return i
-
-    #     # print("Enemy Units: ")
-    #     # for unit in self.enemy_units:
-    #     #     print(unit, end=", ")
-
-    #     return -1
-
-
-    # def get_moves(self):
-    #     moves = [(0, 0, 0) for i, (unit,pos) in enumerate(self.unit_locations)]
-    #     moved = [False for _ in range(self.number_units)]
-    #     if self.number_units == 0:
-    #         return []
-
-
-    #     for i, (unit,pos) in enumerate(self.unit_locations):
-    #         real_id = self.real_ids[pos]
-    #         #triplet_no = (self.seen.index(real_id)) % 3 # Is the unit 1, 2, or 3 in the triplet to determine special movement
-
-    #         if real_id in self.left_list:
-    #             # Even - LEFT attacking troops
-    #             enemy_dist = self.nearest_enemy_on_line(unit, 1, 0)
-
-
-    #             if 0 < enemy_dist <= 3:
-    #                 # initiate wrap around
-    #                 #print("Real ID: {}, Pos: ({}, {}), Enemy Dist: {}".format(real_id, unit.x, unit.y, enemy_dist))
-
-    #                 moves[i] = 1, 1, 1
-                    
-    #                 self.left_mid_list.append(real_id)
-    #                 self.left_list.remove(real_id)
-
-    #             else:
-    #                 moves[i] = 1, 1, 0 
-
-    #         elif real_id in self.left_mid_list:
-    #             moves[i] = 1, 1, 0
-    #             self.left_turn2_list.append(real_id)
-    #             self.left_mid_list.remove(real_id)
-
-    #         elif real_id in self.left_turn2_list:
-    #             moves[i] = 1, 1, -1
-    #             self.left_list.append(real_id)
-    #             self.left_turn2_list.remove(real_id)
-
-            
-    #         # Same for right side
-    #         elif real_id in self.right_list:
-    #             # Even - LEFT attacking troops
-    #             enemy_dist = self.nearest_enemy_on_line(unit, 0, 1)
-
-
-    #             if 0 < enemy_dist <= 3:
-    #                 # initiate wrap around
-    #                 #print("Real ID: {}, Pos: ({}, {}), Enemy Dist: {}".format(real_id, unit.x, unit.y, enemy_dist))
-
-    #                 moves[i] = 1, 1, 1
-                    
-    #                 self.right_mid_list.append(real_id)
-    #                 self.right_list.remove(real_id)
-
-    #             else:
-    #                 moves[i] = 1, 0, 1
-
-    #         elif real_id in self.right_mid_list:
-    #             moves[i] = 1, 0, 1
-    #             self.right_turn2_list.append(real_id)
-    #             self.right_mid_list.remove(real_id)
-
-    #         elif real_id in self.right_turn2_list:
-    #             moves[i] = 1, -1, 1
-    #             self.right_list.append(real_id)
-    #             self.right_turn2_list.remove(real_id)
-
-
-
-    #         elif real_id in self.right_list:
-    #             # Odd - RIGHT attacking troops
-    #             moves[i] = 1, 0, 1 #distance_to_goal, end_direction[0], end_direction[1]  - Pos x only (right)
-
-    #         else:
-    #             moves[i] = 0, 0, 1 # Does not move
-
-
-    #     return moves
-
 
 class Spacer:
     
@@ -477,7 +332,6 @@ class Spacer:
 
     def update(self, map_state, spacerIdxs, units, enemy_units):
         self.map_state = map_state
-        #rotate the map state to the bottom left
         self.number_units = len(spacerIdxs)
         self.spacerIdxs = spacerIdxs
         self.unit_locations = [unit for i, unit in enumerate(units) if i in spacerIdxs]
@@ -487,38 +341,30 @@ class Spacer:
         moves = {}
         if self.number_units == 0:
             return moves
-        #print()
         # Adapted from group 4 Code
-        ENEMY_INFLUENCE = 0.4 # TODO: change influence values for best spacers!
+        ENEMY_INFLUENCE = 0.4
         HOME_INFLUENCE = 15
         ALLY_INFLUENCE = 0.5
 
         for i, unit in enumerate(self.unit_locations):
             unit = np.array(unit)
-            #print('u', unit)
             enemy_force = np.add.reduce([self.repelling_force(unit,np.array(enemy)) for enemy in self.enemy_units])
-            #print('sp',(self.spawn_point))
             home_force = self.repelling_force(unit, np.array(self.home_base))
-            #print('hghgh',enemy_force, home_force)
             ally_forces_list = []
             for ally in self.unit_locations:
                 ally = np.array(ally)
-                #print('ally',ally)
                 if not np.array_equal(ally, unit): 
-                    #print('not ally')
                     ally_forces_list.append(self.repelling_force(unit,ally))
             ally_force = np.add.reduce(ally_forces_list)
             #ally_force = np.add.reduce([self.repelling_force(unit,ally) for ally in self.unit_locations if not unit]) ###TODO: currently only looks at other SPACERS as ally's not all. Need to change this.
-            #print(('ally force:', ally_force))
+
             total_force = self.normalize((enemy_force * ENEMY_INFLUENCE)
                                          + (home_force * HOME_INFLUENCE)
                                          + (ally_force * ALLY_INFLUENCE)
                                          )
-            #print(unit)
-            #print(type(unit))
-            #print(total_force)
+
             moves[i] = self.to_polar(total_force)
-        #print('moves',moves)
+
         return moves
 
     def force_vec(self, p1, p2):
@@ -598,17 +444,6 @@ class Player:
             self.PHASE_TWO_OUTPUT = [UnitType.DEFENSE, UnitType.ATTACK_RIGHT, UnitType.DEFENSE, UnitType.ATTACK_RIGHT, UnitType.SPACER]
             self.PHASE_THREE_OUTPUT = [UnitType.DEFENSE, UnitType.DEFENSE, UnitType.SPACER]
 
-        testing = False
-        if testing:
-            testingType = UnitType.ATTACK_RIGHT
-            self.PHASE_ONE_OUTPUT = [testingType]
-            self.PHASE_TWO_OUTPUT = [testingType]
-            self.PHASE_THREE_OUTPUT = [testingType]
-        #change these based on how much land we have? aka if more ppl are targeting us vs less?
-        # if less land it means our defense is losing so we need more
-        # if more land it means we want to attack more?
-
-
         self.PHASE_ONE_UNITS = min(5, 50//self.spawn_days)
         self.PHASE_TWO_UNITS = int(np.floor((self.number_units_total-5)*0.8))
         self.PHASE_THREE_UNITS = self.number_units_total - self.PHASE_ONE_UNITS - self.PHASE_TWO_UNITS
@@ -648,18 +483,6 @@ class Player:
         spacers, attackersRight, attackersLeft, defenders = self.get_unit_indexes(unit_id[self.player_idx]) 
 
         enemy_ids, enemy_units = self.get_enemy_units(unit_id, unit_pos)
-
-        # print(len(spacers), len(attackersRight), len(attackersLeft), len(defenders))
-
-        # 3 roles
-        # attackers - Identify weak enemy, how to kill a unit? where to attack? when to attack? hover at border until enough units? whats the best formation?
-        # defenders - kmeans number of units around/units in a radius, most important!!!, so be able to use other groups if needed
-        # space gain people - look at group 4's code or come up wiht a new generic strategy
-
-        # 3 phases
-        # in intro phase allocate X spacegain until 5 units?
-        # in main phase allocate X attackers and Y defenders and Z spacegain 2:2:1, maybe change ratio based on if we're being attacked or not
-        # in end phase allocate X attackers and Y defenders in some proportion 
 
         self.map_states = map_states
         self.unit_pos = unit_pos
