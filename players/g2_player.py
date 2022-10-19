@@ -550,17 +550,16 @@ class Player:
 
             # Send assigned platoons with lost units back towards home to meet their replenishments
             # Also send unasigned but already deployed units to a waiting position
-            elif (pid in self.platoon_ids_waiting_for_replenishment_units) or (not platoon['target'] and len(platoon['unit_ids']) == 3):
+            elif (pid in self.platoon_ids_waiting_for_replenishment_units and len(platoon['unit_ids']) >=1) or (not platoon['target'] and len(platoon['unit_ids']) == 3):
                 point_distances = [self.ally_units[uid].distance(home_point) for uid in platoon['unit_ids']]
                 furthest_dist = max(point_distances)
-                if furthest_dist == 0:
-                    break
-                furtherst_point_idx = point_distances.index(furthest_dist)
-                furtherst_point = self.ally_units[platoon['unit_ids'][furtherst_point_idx]]
-                home_to_furthest = LineString([home_point, furtherst_point])
-                meeting_point = home_to_furthest.interpolate(home_to_furthest.length * (0.5 if pid in self.defender_platoon_ids else 0.8))
-                for uid in platoon['unit_ids']:
-                    moves[uid] = self.shapely_point_move(self.ally_units[uid], meeting_point)
+                if furthest_dist != 0:
+                    furtherst_point_idx = point_distances.index(furthest_dist)
+                    furtherst_point = self.ally_units[platoon['unit_ids'][furtherst_point_idx]]
+                    home_to_furthest = LineString([home_point, furtherst_point])
+                    meeting_point = home_to_furthest.interpolate(home_to_furthest.length * (0.5 if pid in self.defender_platoon_ids else 0.8))
+                    for uid in platoon['unit_ids']:
+                        moves[uid] = self.shapely_point_move(self.ally_units[uid], meeting_point)
             
                 # Allow platoons awaiting replenishments to resume normal targetting when sufficiently close
                 if pid in self.platoon_ids_waiting_for_replenishment_units and len(platoon['unit_ids']) == 3:
@@ -569,7 +568,7 @@ class Player:
                     rf_point = self.ally_units[platoon['unit_ids'][0]]
                     if leader_point.distance(lf_point) < 3 and leader_point.distance(rf_point) < 3:
                         self.platoon_ids_waiting_for_replenishment_units.remove(pid)
-            
+        
         return {int(uid): move for uid, move in moves.items()}
 
     def scout_moves(self, unit_ids, map_states) -> Dict[float, Tuple[float, float]]:
