@@ -445,8 +445,8 @@ class Player:
         # Flanks should aim for points past the leader's destination, to the left and right
         leader_pos_to_flank_center = LineString([leader_pos, scaled_chaser_to_intersect.interpolate(3.5)])
         if leader_dest_pos != intercept_pos:
-            left_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'left').boundary[1]
-            right_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'right').boundary[0]
+            left_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'left').boundary.geoms[1]
+            right_flank_dest_pos = leader_pos_to_flank_center.parallel_offset(1, 'right').boundary.geoms[0]
         else:
             left_flank_dest_pos = leader_dest_pos
             right_flank_dest_pos = leader_dest_pos
