@@ -330,10 +330,12 @@ class Player:
         self.player_idx = player_idx
         self.days = 1
         self.ally_units: Dict[str, Point] = {}
+        self.ally_unit_tuples: Dict[str, Tuple[float, float]] = {}
         self.ally_units_yesterday: Dict[str, Point] = {}
         self.ally_killed_unit_ids = []
         self.historical_ally_unit_ids = set() 
         self.enemy_units: Dict[str, Point] = {}
+        self.enemy_unit_tuples: Dict[str, Tuple[float, float]] = {}
         self.enemy_units_yesterday: Dict[str, Point] = {}
         self.enemy_killed_unit_ids = []
         self.home_coords = self.get_home_coords()
@@ -362,6 +364,7 @@ class Player:
 
         #dictionary of entire board broken up into regions
         self.entire_board_regions = get_regions_away_home(20, self.home_coords)
+        self.entire_board_region_tuples = {idx: region.bounds for idx, region in self.entire_board_regions.items()}
         #dict of scouts and their current region id occupied
         self.scout = dict.fromkeys(region_id for region_id in self.entire_board_regions)
 
@@ -834,6 +837,9 @@ class Player:
                 self.ally_units.update({uid: pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
             else:
                 self.enemy_units.update({f"{idx}-{uid}": pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
+        
+        self.ally_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.ally_units.items()}
+        self.ally_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.enemy_units.items()}
 
         # Detect killed units
         self.ally_killed_unit_ids = [id for id in list(self.ally_units_yesterday.keys()) if id not in list(self.ally_units.keys())]
@@ -980,8 +986,10 @@ class Player:
         for index in range(number_regions):
             if index in unclaimed_regions:
                 current_poly = self.entire_board_regions[index]
-                for unit in list(self.ally_units.values()) + list(self.enemy_units.values()):
-                    if current_poly.contains(unit):
+                current_poly_bounds = self.entire_board_region_tuples[index]
+                for ux, uy in list(self.ally_unit_tuples.values()) + list(self.enemy_unit_tuples.values()):
+                    minx, miny, maxx, maxy = current_poly_bounds
+                    if (ux <= maxx and ux >= minx) and (uy <= maxy and uy >= miny):
                         unit_per_region[index] += 1
             else:
                 unit_per_region[index] = math.inf
