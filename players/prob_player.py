@@ -8,6 +8,8 @@ import sympy
 from sympy import Point,Polygon
 import shapely.geometry
 import matplotlib.path as mpltPath
+import scipy.spatial.distance 
+import time ##to see whats the slowest part of my code
 """Player module for Group 8 probabilistic model - Voronoi."""
 
 class Player:
@@ -49,9 +51,11 @@ class Player:
         self.parts_angle = []
         self.cur_unit = 1
         self.current_day = 0
+        self.total_points  = total_days//spawn_days
+        self.time = [0,0,0,0]
         self.n = 6 ##how many direction do we want the points to look at 
 
-    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [Tuple[float, float]]:
+    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
                 Args:
@@ -82,16 +86,35 @@ class Player:
             if i == (self.player_idx-1):
                 continue
             self.enemy_position+=  list(map(np.array,unit_pos[i])) ## add all the other player's position into a list
-        
+        move = None
         for i in range(0,360,360//self.n):
             self.parts_angle.append(math.radians(i)) ##angle are always in randians!!!!!!
-        for point in points:
-            direction = self.get_direction(point)
-            distance = 1
-            moves.append((distance,direction))
+        if self.currrent_day < 40:
+            #gonna just spreaddddddddd at the beggining ~
+            index = 0
+            for i in points:
+                index += 1
+                distance = 1
+                angle = self.spiral_spread(index)
+            moves.append(distance,angle)
+        else:
+            #check for safety of each point 
+            #dist_player_enemy = scipy.spatial.distance(point,self.enemy_position) # distance between each of our own unit and the enemy unit
+            #dist_player_player = scipy.spatial.distance .pdist(point,'euclidean')
+            for point in points:
+                direction = self.get_direction(point)
+                distance = 1
+                moves.append((distance,direction))
         return moves
+    def look_up_dist (self, m,i,j):
+        return m * i + j - ((i + 2) * (i + 1)) // 2
+    def spiral_spread(self,index):
+        angle_jump = len(self.points)/self.total_points*10
+        angle_start = 45  # 45
+        angle = ((index) * (angle_jump) + angle_start) % 90
+        angle  = angle - (math.pi/2 * self.player_idx) ## make it so it fits all the quadrants
+        return angle
     def get_direction(self,point:list[float]):
-        
         direction_score = []
         for i in range(len(self.parts_angle)-1):
             distance = 2
@@ -101,9 +124,6 @@ class Player:
             ## find all the points that are encircled by the angle
             #p1 = self.get_point(point,angle1,distance=5)
             #p2 = self.get_point(point,angle2,distance=5)
-            
-                
-            
             #heuristic we are considering
             #edge within 5 blocks
             edge_score = self.find_edge_score_new(point,angle1,angle2,distance) 
@@ -124,10 +144,12 @@ class Player:
         norm_direction = [float(i)/sum(direction_score) for i in direction_score]
         index = self.rng.choice(range(len(norm_direction)), p = norm_direction)
         within = self.rng.random()* math.radians(360/self.n) #choose within the area
-        direction  = self.parts_angle[index]
+        direction  = self.parts_angle[index] + within
         print(direction * 180/math.pi)
+        print(self.time)
         return direction
     def checkboundary(self,point:list[float])->list[float]:
+        tic = time.perf_timer()
         x,y = point
         new_x = x
         new_y = y
@@ -139,6 +161,8 @@ class Player:
             new_x = 0
         if y <= 0:
             new_y = 0
+        toc = time.perf_timer()
+        self.time[0]+= (toc-tic)
         return [new_x,new_y]
 
     def get_point(self,point:list[float],angle:float,distance:int)-> list[float]:
@@ -150,13 +174,15 @@ class Player:
         return [x_val,y_val]
     def find_edge_score_new(self,point:list[float],angle1,angle2,distance) -> float:
         #find the value by doing x + distance see if it exceed 100,x - distance see if >0, same for y
+        tic = time.perf_timer()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1_x_dif = max(p1[0]-100,0-p1[0],0)
         p1_y_dif = max(p1[1]-100,0-p1[1],0)
         p2_x_dif = max(p1[0]-100,0-p1[0],0)
         p2_y_dif = max(p1[1]-100,0-p1[1],0)
-        
+        toc = time.perf_timer()
+        self.time[1]+= (toc-tic)
         return (p1_x_dif + p1_y_dif + p2_x_dif + p2_y_dif)/(sum(np.absolute(p1))+sum(np.absolute(p2)))
 
 
@@ -181,7 +207,7 @@ class Player:
     def find_enemy_ally_score(self,point:list[float],angle1,angle2,distance) -> int:
         # the number of enemy enclosed / the current number of enemies
        
-        
+        tic = time.perf_timer()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1 = self.checkboundary(p1)
@@ -197,6 +223,8 @@ class Player:
             contain_base = path.contains_points([np.array(self.spawn_point)])
             if contain_base:
                 base_point = -10
+        toc = time.perf_timer()
+        self.time[2]+= (toc-tic)
         return num_enemy_enclosed/(self.cur_unit*3),num_ally_enclosed/self.cur_unit,base_point #normalize
     def transform_move(
             self,
@@ -205,6 +233,7 @@ class Player:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
     def find_open_space_score(self,point:list[float],angle1,angle2,distance)-> float:
+        tic = time.perf_timer()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1 = self.checkboundary(p1)
@@ -226,7 +255,8 @@ class Player:
         len = max(1,np_map.shape[0])
         width = max(1,np_map.shape[1])
         possible_area = len*width
-
+        toc = time.perf_timer()
+        self.time[3]+= (toc-tic)
         return 1- (occupied_cell/possible_area)
 
 
