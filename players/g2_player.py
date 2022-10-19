@@ -370,7 +370,7 @@ class Player:
         self.platoon_ids_waiting_for_replenishment_units = set()
 
         #dictionary of entire board broken up into regions
-        self.entire_board_regions = get_regions_away_home(20, self.home_coords)
+        self.entire_board_regions = get_regions_away_home(5, self.home_coords)
         self.entire_board_region_centroids = {id: region.centroid for id, region in self.entire_board_regions.items()}
         self.entire_board_region_tuples = {idx: region.bounds for idx, region in self.entire_board_regions.items()}
         #dict of scouts and their current region id occupied
@@ -420,17 +420,34 @@ class Player:
         unit_id_list = []
         angle_list = []
         for unit_id in unit_ids:
+            unit_id = int(unit_id)
             if unit_id == 1:
                 unit_id_list.append(unit_id)
                 angle_increment = 45
                 angle_list.append(angle_increment)
-            elif unit_id % 2 == 0:
+            elif unit_id == 2:
                 unit_id_list.append(unit_id)
-                angle_increment = unit_id*angle_jump % 90
+                angle_increment = 80
+                angle_list.append(angle_increment)
+            elif unit_id == 3:
+                unit_id_list.append(unit_id)
+                angle_increment = 10
+                angle_list.append(angle_increment)
+            elif unit_id == 4:
+                unit_id_list.append(unit_id)
+                angle_increment = 62
+                angle_list.append(angle_increment)
+            elif unit_id == 5:
+                unit_id_list.append(unit_id)
+                angle_increment = 27
+                angle_list.append(angle_increment)
+            elif int(unit_id) % 2 == 0:
+                unit_id_list.append(unit_id)
+                angle_increment = (unit_id -5 )*angle_jump % 90
                 angle_list.append(angle_increment)
             else:
                 unit_id_list.append(unit_id)
-                angle_increment = (90 - unit_id*angle_jump) % 90
+                angle_increment = (90 - (unit_id -5) *angle_jump) % 90
                 angle_list.append(angle_increment)
 
         return self.fixed_formation_moves(unit_id_list, angle_list)
@@ -599,7 +616,6 @@ class Player:
         moves = {}
         unit_forces = self.get_forces(unit_ids, map_states)
 
-        #print(self.scout)
         current_scout_ids = [scout_id for scout_id in self.scout.values()]
         free_unit_ids = [uid for uid in unit_ids if uid not in current_scout_ids]
 
@@ -619,7 +635,9 @@ class Player:
                 if int(min_home) == 0:
                     break
         if min_home != math.inf:
-            least_pop_region_id = unit_forces[min_unit_id][3][0][0]
+            print("calculating")
+            least_pop_region_id = self.least_popular_region_force(map_states)
+            least_pop_region_id = least_pop_region_id[0][0]
             if least_pop_region_id is not None:
                     #print(least_pop_region_id)
                 self.scout[least_pop_region_id] = min_unit_id
@@ -1003,6 +1021,7 @@ class Player:
         number_regions = len(self.entire_board_regions)
         unit_per_region = np.zeros(number_regions)
         unclaimed_regions = [region_id for region_id in self.scout if self.scout[region_id] is None]
+        print("LESAT POP")
         if not unclaimed_regions:
             '''
             for index in range(number_regions):
@@ -1081,5 +1100,4 @@ class Player:
             forces[unit].append([self.home_coord_tuple, self.home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
             forces[unit].append(self.closest_friend_force(unit))
-            forces[unit].append(self.least_popular_region_force(map_states))
         return forces
