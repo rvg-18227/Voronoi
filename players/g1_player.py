@@ -306,7 +306,6 @@ class CreateGraph:
         units_cls = {}
         for pl in range(4):
             for spt, uid_ in zip(unit_pos[pl], unit_id[pl]):
-                uid_ = int(uid_)
                 # Quantize unit pos to cell. We assume cell origin at center.
                 x, y = spt.coords[0]
                 pos_int = (int(x) + self.home_offset, int(y) + self.home_offset)
@@ -592,6 +591,16 @@ class Player:
         self.draft_cmdo_start = False
         self.num_commandos = 3
 
+    def incursions_to_enemies(self, incursions, unit_cls):
+        in_poly_list = [[] for _ in range(len(incursions))]
+        for unit in unit_cls.values():
+            if unit.player != self.player_idx:
+                for i in range(len(incursions)):
+                    if incursions[i].contains(shapely.geometry.Point(unit.pos)):
+                        in_poly_list[i].append(unit)
+                        break
+        return in_poly_list
+
     def get_incursions_polys(self, units_cls: dict[int, Unit]):
         # todo - get list of friendly units and get their polygons. No need for poly_idx_to_pt
         friendly_units = [x for x in units_cls.values() if x.player == self.player_idx]
@@ -613,7 +622,7 @@ class Player:
         incursions_ = convexhull.difference(superpolygon)
 
         if incursions_.is_empty:
-            return []
+            return [], []
 
         if isinstance(incursions_, shapely.geometry.MultiPolygon):
             incursions = list(incursions_.geoms)
@@ -638,6 +647,7 @@ class Player:
             for edge_ in edge_incursion_begin.geoms:
                 if not map_poly.exterior.contains(edge_):
                     valid_e = edge_
+                    break
 
             # edge_incursion_begin = edge_incursion_begin.geoms[0]  # There should be only 1 linestr in the multiplinestr
             if valid_e is not None and valid_e.length / incursion_.length <= 0.45:  # arbitrary number - consider anything that is at least square
@@ -647,7 +657,7 @@ class Player:
         # if len(edge_incursion_boundaries) > 0 and self.current_day > 193:
         #     plot_debug_incur(superpolygon, viable_incursions, edge_incursion_boundaries, self.current_day)
 
-        return viable_incursions
+        return viable_incursions, edge_incursion_boundaries
 
     def get_groups_and_outliers(self, all_points, eps=3, min_samples=2, per_player=False):
         # DBSCAN - create dicts of groups and outliers
@@ -727,12 +737,6 @@ class Player:
         # all_groups_and_outliers = self.get_groups_and_outliers(all_points, eps=3, min_samples=2, per_player=False)
         # if self.current_day % 20 == 0:
         #     plot_dbscan(player_groups_and_outliers, self.current_day)
-        # # INCURSIONS - Identify regions where enemies are encroaching into our territory.
-        # incursions = self.get_incursions_polys(units_cls)
-        # # print(incursions)
-        # # if len(incursions) > 0:
-        # #     all_polys = [x.poly for x in units_cls.values()]
-        # #     plot_incursions(all_polys, incursions)
 
         # Get polygon of Voronoi regions around each pt (discrete)
         map_size = self.max_dim
@@ -748,6 +752,26 @@ class Player:
         # if self.current_day > 78:
         #     plot_units_and_edges(edges, edge_player_id, units_cls, self.current_day)
 
+        # INCURSIONS - Identify regions where enemies are encroaching into our territory.
+        incursions, edge_incursion_boundaries = self.get_incursions_polys(units_cls)
+        units_in_incursions = self.incursions_to_enemies(incursions, units_cls)
+
+        ideal_incur_units = []  # one unit per incursion
+        for units_in_inc, edge_incur in zip(units_in_incursions, edge_incursion_boundaries):
+            dist = 0
+            unit_max = None
+            for unit in units_in_inc:
+                d = shapely.geometry.Point(unit.pos).distance(edge_incur)
+                if d > dist:
+                    dist = d
+                    unit_max = unit
+            ideal_incur_units.append(unit_max)
+
+        # print(incursions)
+        # if len(incursions) > 0 and self.current_day % 20 == 0:
+        #     all_polys = [x.poly for x in units_cls.values()]
+        #     plot_incursions(all_polys, incursions, units_in_incursions, self.current_day)
+
         # Analyze map
         # d1 = [] -> strat_border_patrol()
         # d2 = [] -> strat_border_patrol()
@@ -756,7 +780,6 @@ class Player:
         # strat_move_to_edge_center
         # strat_move_to_mean_enemy_neighbors
         # a = [x.role for x in units_cls.values() if x.player == self.player_idx]
-
         avail_units = {x for x in units_cls.values() if x.player == self.player_idx}
 
         # # cautious heros
@@ -782,7 +805,8 @@ class Player:
         if not self.draft_cmdo_start:
             self.draft_cmdo_start = True
             self.units_to_be_drafted = []
-        if self.current_day > 50 and len(self.commando_squads) < self.num_commandos and self.draft_cmdo_start:
+        # if self.current_day > 50 and len(self.commando_squads) < self.num_commandos and self.draft_cmdo_start:
+        if self.current_day > 50 and len(self.commando_squads) < len(ideal_incur_units) and self.draft_cmdo_start:
             if len(self.units_to_be_drafted) < 3:
                 if self.current_day % self.spawn_days == 0:
                     latest_unit_id = sorted([x.uid for x in avail_units])[-1]
@@ -855,13 +879,20 @@ class Player:
 
         all_enemies = [x for x in units_cls.values() if x.player != self.player_idx]
 
-        for csq in self.commando_squads:
+        # for csq in self.commando_squads:
+        #     csq.update_target(units_cls)
+        #     all_enemies.sort(key=lambda x: dist_to_target(csq.pin, x.pos))
+        #
+        #     tar_unit = all_enemies[0]
+        #     all_enemies.remove(all_enemies[0])
+        #
+        #     print(f"target selection: {csq}, {tar_unit.uid}")
+        #     csq.set_target_unit(tar_unit)
+        #     csq.update_target(units_cls)
+        #     _ = csq.set_move_cmds()
+        for csq, ideal_incur_u in zip(self.commando_squads, ideal_incur_units):
             csq.update_target(units_cls)
-            all_enemies.sort(key=lambda x: dist_to_target(csq.pin, x.pos))
-
-            tar_unit = all_enemies[0]
-            all_enemies.remove(all_enemies[0])
-
+            tar_unit = ideal_incur_u
             print(f"target selection: {csq}, {tar_unit.uid}")
             csq.set_target_unit(tar_unit)
             csq.update_target(units_cls)
@@ -879,7 +910,7 @@ class Player:
         # accumulate all moves in correct order, and return
         moves = []
         for uid in unit_id[self.player_idx]:
-            unit = units_cls[self.cg.get_unique_uid(self.player_idx, int(uid))]
+            unit = units_cls[self.cg.get_unique_uid(self.player_idx, uid)]
             moves.append(unit.move_cmd)
 
         return moves
