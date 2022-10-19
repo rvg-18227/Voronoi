@@ -11,7 +11,6 @@ import shapely.validation
 import scipy
 from sklearn.cluster import DBSCAN
 
-
 warnings.filterwarnings("ignore", category=shapely.errors.ShapelyDeprecationWarning)
 
 
