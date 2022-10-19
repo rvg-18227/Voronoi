@@ -646,15 +646,16 @@ class Player:
 
         chaser_pos = self.ally_units[chaser_unit_id]
         chaser_vec = LineString([chaser_pos, (chaser_pos.x+1, chaser_pos.y)])
+        scaled_chaser_vec = scale(chaser_vec, xfact=100, yfact=100, origin=chaser_pos)
 
+        chaser_to_target_ang = round(math.atan2(chaser_pos.y-chaser_pos.y, target_pos.x-target_pos.x) * (180/math.pi))
         # Search for best intercept point by testing a variety of chaser angles    
         intersect_pos = target_pos
         if target_pos != target_prev_pos:
             best_dist = math.inf
-            for angle in range(360):
-                rotated_chaser_vec = rotate(chaser_vec, angle, origin=chaser_pos)
-                scaled_chaser_vec = scale(rotated_chaser_vec, xfact=100, yfact=100, origin=chaser_pos)
-                new_intersect_pos = scaled_chaser_vec.intersection(scaled_target_vec)
+            for angle in range(chaser_to_target_ang-45, chaser_to_target_ang+45, 2):
+                rotated_chaser_vec = rotate(scaled_chaser_vec, angle, origin=chaser_pos)
+                new_intersect_pos = rotated_chaser_vec.intersection(scaled_target_vec)
                 chaser_to_intersect_dist = chaser_pos.distance(new_intersect_pos)
                 target_to_intersect_dist = target_pos.distance(new_intersect_pos)
 
