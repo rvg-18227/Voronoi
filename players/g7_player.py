@@ -3,6 +3,7 @@ from cmath import acos
 from copy import deepcopy
 from ctypes.wintypes import POINT
 from doctest import DocFileSuite
+import math
 import os
 import pickle
 from re import L
@@ -12,9 +13,10 @@ import numpy as np
 import sympy
 import logging
 from typing import Tuple
-from math import pi, dist
+from math import atan2, pi, dist
 import numpy as np
 from scipy.spatial.distance import cdist
+from shapely.geometry import Point
 
 
 class Player:
@@ -60,13 +62,30 @@ class Player:
         self.min_dim = min_dim
         self.max_dim = max_dim
         if self.player_idx == 0: # Top left orange
-            self.angles = [np.deg2rad(0), np.deg2rad(18), np.deg2rad(46), np.deg2rad(72), np.deg2rad(90)]
+            self.angles = [np.deg2rad(46), np.deg2rad(0), np.deg2rad(72), np.deg2rad(18), np.deg2rad(90)]
         elif self.player_idx == 1: # Bottom left pink
-            self.angles = [np.deg2rad(270),np.deg2rad(288), np.deg2rad(315), np.deg2rad(342), np.deg2rad(360)] 
+            self.angles = [np.deg2rad(315), np.deg2rad(270), np.deg2rad(342), np.deg2rad(288), np.deg2rad(360)] 
         elif self.player_idx == 2: # Bottom right blue
-            self.angles = [np.deg2rad(180), np.deg2rad(198), np.deg2rad(226), np.deg2rad(252), np.deg2rad(270)] 
+            self.angles = [np.deg2rad(226), np.deg2rad(180), np.deg2rad(252), np.deg2rad(198), np.deg2rad(270)] 
         else: # Top right yellow
-            self.angles = [np.deg2rad(90), np.deg2rad(108), np.deg2rad(135), np.deg2rad(162), np.deg2rad(180)]
+            self.angles = [np.deg2rad(135), np.deg2rad(90), np.deg2rad(162), np.deg2rad(108), np.deg2rad(180)]
+
+
+        # home locations
+        if self.player_idx == 0:
+            self.locx = 0
+            self.locy = 0
+        elif self.player_idx == 1:
+            self.locx = 0
+            self.locy = 100
+        elif self.player_idx == 2:
+            self.locx = 100
+            self.locy = 100
+        elif self.player_idx == 3:
+            self.locx = 100
+            self.locy = 0
+
+        self.home_point = Point(self.locx, self.locy)
 
         # Experimenal variables
         self.day = 0
@@ -76,19 +95,93 @@ class Player:
         self.other_players.remove(self.player_idx)
         self.last_n_days_positions = {}
         self.hostility_registry = {}
-        self.units_angle = {}
+        # stores the units position, angle, and direction keyed by the units id
+        self.unit_pos_angle = {}
+
+        # stores a lists of unit ids keyed by their initial angle
+        self.angles_taken = {}
+        for angle in self.angles:
+            self.angles_taken[angle] = []
 
         for other_player in self.other_players:
             self.last_n_days_positions[other_player] = []
             self.hostility_registry[other_player] = 1
 
-    # Find the nearest unit to a given space
-    def nearest_unit_to_space(self, team_unit_ids, team_unit_pos, space):
-        pass
+    def find_attackers(self,map_states):
+        if self.player_idx == 0:
+            locx = 0
+            locy = 0
+        elif self.player_idx == 1:
+            locx = 0
+            locy = 75
+        elif self.player_idx == 2:
+            locx = 75
+            locy = 75
+        elif self.player_idx == 3:
+            locx = 75
+            locy = 0
+        attackers = []
+        if self.day > 49:
+            for i in range(25-1):
+                for j in range(25-1):
+                    if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0 and map_states[i + locx][j + locy] not in attackers:
+                        # Send nearest units in logic way to cut off supply as defensive measure
+                        # nearest_units = self.nearest_unit_to_space(friendly_unit_ids, unit_pos[self.player_idx], (i + locx, j + locy))
+                        attackers.append(map_states[i + locx][j + locy])
+        return attackers
 
-    # Gives a map of troop density is lowest
-    def density_map(self):
-        pass
+    # Find the nearest unit to a given space
+    def nearest_units_to_unit(self, unit_position, unit_position_list, min_d=3):
+        neighbor_dict = {'friendly': [], 'enemy':[]}
+        # Iterate through all units to check for 
+        for player in [0,1,2,3]:
+            for unit in unit_position_list[player]:
+                d = unit.distance(unit_position)
+                # Assuming distance = 0 is the same unit
+                if d <= min_d and d != 0.0:
+                    if player == self.player_idx:
+                        neighbor_dict['friendly'].append(unit)
+                    else:
+                        neighbor_dict['enemy'].append(unit)
+
+        return [neighbor_dict['friendly'], neighbor_dict['enemy']]
+        
+
+    def nearest_enemy_space(self, unit_position, spaces):
+        pos = (int(unit_position.x), int(unit_position.y))
+        
+        lowest_dir = None
+        lowest_distance = 100
+
+        directions = [
+            [0, -1], 
+            [1, -1], 
+            [1, 0],   
+            [1, 1],    
+            [0, 1],    
+            [-1, 1],  
+            [-1, 0], 
+            [-1, -1], 
+        ]
+        target_space = 232
+        # Iterate in each direction and find the closest enemy space
+        for dir in directions:
+            # Try every step length between 1 and the current lowest distance
+            for i in range(1, lowest_distance):
+                mod_x = pos[0]+i*dir[0]
+                mod_y = pos[1]+i*dir[1]
+
+                if mod_x > 99 or mod_x < 0: # If the x is off the map stop trying this direction
+                    break
+                elif mod_y > 99 or mod_y < 0: # If the y is off the map stop trying this direction
+                    break
+                
+                if spaces[mod_x][mod_y] != (self.player_idx+1): # If the space is not our space it is the closest so save it and the direction
+                    lowest_dir = dir
+                    lowest_distance = i
+                    break
+
+        return(np.arctan2(lowest_dir[1], lowest_dir[0]), lowest_distance)
 
 
     def basic_aggressiveness(self, prev_position, current_position) -> float:
@@ -196,7 +289,83 @@ class Player:
             # print('player, :', player, 'mid_angle', mid_angle*180/pi, '(my_unit_id, ene1_id, ene2_id): (', unit_id[self.player_idx][my_unit_idx], unit_id[player][ene_unit_1_idx], unit_id[player][ene_unit_2_idx], ')')
         
         return strategies
+    
+    def closest_t(self, current_unit_pos, teammates, team_distance, closest_teammate_dist, closest_teammate):
+        for t in teammates:
+            if t == current_unit_pos:
+                d = 0
+            else:
+                d = t.distance(current_unit_pos)
+            # on top of eachother will throw error
+            if d != 0:
+                team_distance += 1/d
+            if d < closest_teammate_dist:
+                closest_teammate_dist = d
+                closest_teammate = t
+        return team_distance, closest_teammate_dist, closest_teammate
+    
+    def closest_e(self, current_unit_pos, enemies, enemy_distance, closest_enemy_dist, closest_enemy):
+        for e in enemies:
+            if e == current_unit_pos:
+                d = 0
+            else:
+                d = e.distance(current_unit_pos)
+            # on top of eachother will throw error
+            if d != 0:
+                enemy_distance += 1/d
+            if d < closest_enemy_dist:
+                closest_enemy_dist = d
+                closest_enemy = e
+        return enemy_distance, closest_enemy_dist, closest_enemy
+        
+    def behavior(self, closest_teammate, closest_enemy, unit, current_unit_pos, direction_empty_space, closest_teammate_dist, closest_enemy_dist):
+        dist = 0
+        angle = 0
+        # From here would like to see 4 core behaviors
 
+        # 1. no enemies around -> move towards combination of away from teamates and towards empty space
+            # Speed should be 1 here I think basically no matter what
+            # Direction can be as simple as combination of those two angles
+        if not closest_enemy and closest_teammate:
+            diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
+            theta_team = atan2(diff_y, diff_x)
+
+            # Go in opposite direction
+            if theta_team < 0:
+                theta_team+=pi
+            else:
+                theta_team-=pi
+
+            return theta_team, 1
+
+        # 2. nothing around -> move towards empty space or if close to home move in principle direction
+            # Speed should be 1
+            # direction given by direction_empty_space
+        elif not closest_enemy and not closest_teammate:
+            angle = direction_empty_space
+            dist = 1
+            return angle, dist
+        
+        # 3. only enemies around -> move in combination of opposite from enemies and towards home
+            # Speed towards home should depend on distance from home and distance from enemies
+            # As we get closer to enemies with no support move away faster
+            # As we get further from home move faster aswell
+        elif closest_enemy and not closest_teammate:
+            angle = atan2(self.home_point.x - current_unit_pos.x, self.home_point.y - current_unit_pos.y)
+            if current_unit_pos.distance(self.home_point) < closest_enemy_dist and closest_teammate_dist > closest_enemy_dist:
+                dist = .5
+            else: 
+                dist = 1
+            return angle, dist
+
+        # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
+            # Speed based on saftey metrics again
+            # offset angle to get around enemies if we have more support than danger
+        else:
+            angle = direction_empty_space
+            dist = 1
+            return angle, dist
+            
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> [tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -215,102 +384,93 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
-        total_units = len(unit_id[self.player_idx])
-        friendly_unit_ids = unit_id[self.player_idx]
         moves = []
-        locx = 0
-        locy = 0
 
-        dead_units = [unit for unit in self.units_angle if unit not in friendly_unit_ids]
-        for dead_units in dead_units:
-            del self.units_angle[dead_units]
+        total_friendly_units = len(unit_id[self.player_idx])
+        friendly_unit_ids = unit_id[self.player_idx] 
 
-    
-        offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
-        offense_idx = [i['move'] for i in offense]
+        # Remove Dead Units
+        dead_units = [unit for unit in self.unit_pos_angle if unit not in friendly_unit_ids]
+        for dead_unit in dead_units:
+            # remove from unit list
+            del self.unit_pos_angle[dead_unit]
 
-        if self.player_idx == 0:
-            locx = 0
-            locy = 0
-        elif self.player_idx == 1:
-            locx = 0
-            locy = 75
-        elif self.player_idx == 2:
-            locx = 75
-            locy = 75
-        elif self.player_idx == 3:
-            locx = 75
-            locy = 0
+            # remove from principle angle index
+            for (angle,list_units) in self.angles_taken.items():
+                if dead_unit in list_units:
+                    list_units.remove(dead_unit)
 
-        attackers = []
-        if self.day > 49:
-            for i in range(25-1):
-                for j in range(25-1):
-                    if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0 and map_states[i + locx][j + locy] not in attackers:
-                        # Send nearest units in logic way to cut off supply as defensive measure
-                        # nearest_units = self.nearest_unit_to_space(friendly_unit_ids, unit_pos[self.player_idx], (i + locx, j + locy))
-                        attackers.append(map_states[i + locx][j + locy])
+        # Add new units to dictionary and update locations of old ones
+        for i in range(len(unit_id[self.player_idx])):
+            # If this is a new unit
+            if friendly_unit_ids[i] not in self.unit_pos_angle:
+                # Decide angle by finding the principle angle with the least number of units
+                minumum_length = 100
+                minumum_key = -1
+                for (angle,list_units) in self.angles_taken.items():
+                    if len(list_units) < minumum_length:
+                        minumum_key = angle
+                        minumum_length = len(list_units)
 
-        # Use attackers to dynamically move units?
-        s = 0
-        for i in range(total_units):
-            # Prior to day 50? set up formation
-            # if self.day < 100:
-            if friendly_unit_ids[i] in self.units_angle:
-                if friendly_unit_ids[i] in offense_idx:
-                    moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-                else:
-                    moves.append((1, self.units_angle[friendly_unit_ids[i]]))
-            else:
-                if friendly_unit_ids[i] in offense_idx:
-                    moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-                else:
-                    self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
-                    moves.append((1, self.angles[i % len(self.angles)]))
-            # After day 50 switch to dynamic model
-            # else:
-            #     if len(attackers) != 0:
-            #         for i in range(25-1):
-            #             for j in range(25-1):
-            #                 if map_states[i + locx][j + locy] != self.player_idx+1 and map_states[i + locx][j + locy] > 0:
-            #                     for u in range(total_units):
-            #                         while s != 5:
-            #                             x = unit_pos[self.player_idx][u].x
-            #                             y = unit_pos[self.player_idx][u].y
-            #                             if dist((x,y),(i + locx,j + locy)) < 15:
-            #                                 angle = np.arctan2((j + locy)-y,(i + locx) -x)
-            #                                 moves.append((1, angle))
-            #                                 s += 1
-            #                             else:
-            #                                 if friendly_unit_ids[u] in offense_idx:
-            #                                     moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[u] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-            #                                 else:
-            #                                     if friendly_unit_ids[u] in self.units_angle:
-            #                                         moves.append((1, self.units_angle[friendly_unit_ids[u]]) )
-            #                                     else:
-            #                                         self.units_angle[friendly_unit_ids[u]] = self.angles[u % len(self.angles)]
-            #                                         moves.append((1, self.angles[u % len(self.angles)]))
-            #                         if friendly_unit_ids[u] in offense_idx:
-            #                             moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[u] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-            #                         else:
-            #                             if friendly_unit_ids[u] in self.units_angle:
-            #                                 moves.append((1, self.units_angle[friendly_unit_ids[u]]) )
-            #                             else:
-            #                                 self.units_angle[friendly_unit_ids[u]] = self.angles[u % len(self.angles)]
-            #                                 moves.append((1, self.angles[u % len(self.angles)]))
-            #     else:
-            #         if friendly_unit_ids[i] in self.units_angle:
-            #             if friendly_unit_ids[i] in offense_idx:
-            #                 moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-            #             else:
-            #                 moves.append((1, self.units_angle[friendly_unit_ids[i]]))
-            #         else:
-            #             if friendly_unit_ids[i] in offense_idx:
-            #                 moves.append((1, offense[0]['mid_angle']) if (friendly_unit_ids[i] == offense[0]['move']) else ((1, offense[1]['mid_angle'])))
-            #             else:
-            #                 self.units_angle[friendly_unit_ids[i]] = self.angles[i % len(self.angles)]
-            #                 moves.append((1, self.angles[i % len(self.angles)]))
-                    
+                        # If there is no unit with a principle angle in this direction we can simple choose this angle
+                        if minumum_length == 0:
+                            break
+
+                # Add the unit to both lists
+                self.angles_taken[minumum_key].append(friendly_unit_ids[i])
+                self.unit_pos_angle[friendly_unit_ids[i]] = {'angle': minumum_key, 'distance':1}
+
+            # Update position
+            self.unit_pos_angle[friendly_unit_ids[i]]['pos'] = unit_pos[self.player_idx][i]
+
+        ### previous strats
+        # attackers = self.find_attackers(map_states)
+        # offense = self.moveTowardAggressive(current_scores, unit_pos, unit_id)
+        # offense_idx = [i['move'] for i in offense]
+        ###
+
+        # If the day is greater than 50 formation building is over enter dynamic template    
+        if self.day > 50:
+            queue = friendly_unit_ids
+            np_spaces = np.array(map_states)
+            for unit in queue:
+                
+                #initializing closest unit types
+                closest_teammate = False
+                closest_enemy = False
+                closest_teammate_dist = 100
+                closest_enemy_dist = 100
+                
+                # Find angle to move away from nearby unit if friendly and move around unit if enemy
+                team_distance = 0
+                enemy_distance = 0
+                
+                current_unit_pos = self.unit_pos_angle[unit]['pos']
+
+                # Find direction and distance to nearest space, need to normalize and test direction
+                [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(current_unit_pos, np_spaces)
+
+                #    continue # Continue moving this unit in principle direction since there are no enemies nearby
+                if distance_empty_space > 10:
+                    continue
+                
+                # Find all nearby units
+                [teammates, enemies] = self.nearest_units_to_unit(current_unit_pos, unit_pos)
+
+                # Find the total inverse distance from teamates and also the closest teamate 
+                team_distance, closest_teammate_dist, closest_teammate = self.closest_t(current_unit_pos, teammates, team_distance, closest_teammate_dist, closest_teammate)
+
+                # Find the total inverse distance from enemies and also the closest enemy 
+                enemy_distance, closest_enemy_dist, closest_enemy = self.closest_e(current_unit_pos, enemies, enemy_distance, closest_enemy_dist, closest_enemy)
+
+                self.unit_pos_angle[unit]['angle'] = direction_empty_space
+                self.unit_pos_angle[unit]['distance'] = 1
+                
+                self.unit_pos_angle[unit]['angle'], self.unit_pos_angle[unit]['distance'] = self.behavior(closest_teammate, closest_enemy, unit, current_unit_pos, direction_empty_space, closest_teammate_dist, closest_enemy_dist)
+                
+        for i in range(total_friendly_units):
+            moves.append((self.unit_pos_angle[friendly_unit_ids[i]]['distance'], self.unit_pos_angle[friendly_unit_ids[i]]['angle']))
+
 
         self.day +=1
         return moves
