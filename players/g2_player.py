@@ -19,23 +19,31 @@ import heapq
 #HYPER PARAMETERS
 DANGER_ZONE_RADIUS = 20
 
-DETECTION_RADIUS = 20
+DETECTION_RADIUS = 15
 DELTA_RADIUS = 2
 
 #SCISSOR STARTING OUTER RADIUS
-OUTER_RADIUS = 57
-INNER_RADIUS = 53
+OUTER_RADIUS = 50
+INNER_RADIUS = OUTER_RADIUS-3
 
 OUTER_SPEED = 1
 INNER_SPEED = 1
 
 #ANGLES FOR SCISSOR ZONE
-SCISSOR_ZONE_COUNT = 5
+SCISSOR_ZONE_COUNT = 3
 REGION_INCREMENT = 0.5
 
 #priority of regions
-PRIORITY_ID_OUTER = [9,7,5,6,8]
-PRIORITY_ID_INNER = [4,2,0,1,3]
+if SCISSOR_ZONE_COUNT == 5:
+    PRIORITY_ID_OUTER = [4,2,0,1,3]
+    PRIORITY_ID_INNER = [9,7,5,6,8]
+elif SCISSOR_ZONE_COUNT == 6:
+    PRIORITY_ID_OUTER = [4,2,0,1,3,5]
+    PRIORITY_ID_INNER = [11,9,7,8,10,12]
+elif SCISSOR_ZONE_COUNT == 3:
+    #priority of regions for 3 zones
+    PRIORITY_ID_OUTER = [2,0,1]
+    PRIORITY_ID_INNER = [7,5,6]
 
 #fixed formation count
 FIXED_FORMATION_COUNT = 3
@@ -52,7 +60,7 @@ class ScissorRegion:
 
         #0 means go to bound[0]
         #1 means go to bound[1]
-        self.direction = (player_idx+1)%2
+        self.direction = (id)%2
         self.target_point = self.bounds[self.direction]
         self.id = id
         self.player_idx = player_idx
@@ -60,7 +68,7 @@ class ScissorRegion:
         self.radius = radius
 
         self.polygon = Polygon([bounds[0], bounds[1], delta_bounds[1], delta_bounds[0]])
-        self.detection_polygon = Polygon([get_home_coords(self.player_idx), detection_bounds[1], detection_bounds[0]])
+        self.detection_polygon = Polygon([get_corner_coords(self.player_idx), detection_bounds[1], detection_bounds[0]])
 
         self.connected_scissor_region : ScissorRegion = None
         self.speed = speed
@@ -69,56 +77,69 @@ class ScissorRegion:
         self.targets = {}
 
     #call everyturn
-    def update_targets(self, units):
+    def update_targets(self, units, unit_pos):
+
+        self.target_point = self.bounds[self.direction]
 
         #assume units are sorted here
         #units in u_id are in the region
         #units is a list of [u_id], where the it is sorted by distance to self.target_point
         n = len(units)
 
-        target = self.bounds[0]
+        sorting_list = []
+
+        target = Point(self.target_point[0], self.target_point[1]) 
+
+        for u_id in units:
+            sorting_list.append((unit_pos[u_id].distance(target),u_id))
+
+        sorting_list.sort()
+        sorted_units =  [x[1] for x in sorting_list]
+
+        target = self.target_point
         opposite = self.bounds[1]
 
         if self.direction == 1:
-            target = self.bounds[1]
             opposite = self.bounds[0]
 
-        target_x = np.linspace(target[0], opposite[0], n+1)
-        target_y = np.linspace(target[1], opposite[1], n+1)
+        density = max((self.radius-OUTER_RADIUS)//10, 2)
+
+        target_x = np.linspace(target[0], opposite[0], n+2)
+        target_y = np.linspace(target[1], opposite[1], n+2)
 
         result = {}
 
         for i in range(len(units)):
-            result[units[i]] = (target_x[i], target_y[i])
+            result[sorted_units[i]] = (target_x[i], target_y[i])
 
         self.targets = result
+        return result
 
 
     def update_polygons(self):
         self.polygon = Polygon([self.bounds[0], self.bounds[1], self.delta_bounds[1], self.delta_bounds[0]])
-        self.detection_polygon = Polygon([get_home_coords(self.player_idx), self.detection_bounds[1], self.detection_bounds[0]])
+        self.detection_polygon = Polygon([get_corner_coords(self.player_idx), self.detection_bounds[1], self.detection_bounds[0]])
 
     def find_cp(self, bounds):
         return ((bounds[0][0]+bounds[1][0])/2 , (bounds[0][1]+bounds[1][1])/2)
 
     def changeDirection(self):
+        #print("DIRECTION CHANGED")
         if self.direction == 0:
             self.direction = 1
         else:
             self.direction = 0
 
-        if self.connected_scissor_region is not None:
-            self.connected_scissor_region.changeDirectionHelper(self.direction)
-        
-        self.target_point = self.bounds[self.direction]
+        #if self.connected_scissor_region is not None:
+        #    self.connected_scissor_region.changeDirectionHelper(self.direction)
 
-    def changeDirectionHelper(self, sister_direction):
+    """def changeDirectionHelper(self, sister_direction):
         if sister_direction == 0:
             self.direction = 1
         else:
             self.direction = 0
 
-        self.target_point = self.bounds[self.direction]
+        self.target_point = self.bounds[self.direction]"""
 
     def changeBounds(self, radius_increment):
 
@@ -127,8 +148,22 @@ class ScissorRegion:
 
         self.radius += radius_increment
 
-        #print(increment_l)
-        #print(increment_r)
+        self.bounds = increment_bounds(self.bounds, increment_l, increment_r)
+        self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
+        self.detection_bounds = increment_bounds(self.detection_bounds, increment_l, increment_r)
+
+        self.center_point: Tuple[float, float] = self.find_cp((self.find_cp(self.bounds), self.find_cp(self.delta_bounds)))
+        self.update_polygons()
+
+        if self.connected_scissor_region is not None:
+            self.connected_scissor_region.changeBoundsHelper(radius_increment)
+                
+    def changeBoundsHelper(self, radius_increment):
+
+        increment_l = find_increment(radius_increment, self.angles[0])
+        increment_r = find_increment(radius_increment, self.angles[1])
+
+        self.radius += radius_increment
 
         self.bounds = increment_bounds(self.bounds, increment_l, increment_r)
         self.delta_bounds = increment_bounds(self.delta_bounds, increment_l, increment_r)
@@ -156,23 +191,21 @@ def find_increment(new_radius, a):
 def increment_bounds(bound, incrementl, incrementr):
     return ((bound[0][0]+incrementl[0], bound[0][1]+incrementl[1]),(bound[1][0]+incrementr[0], bound[1][1]+incrementr[1]))
 
-def get_home_coords(team_idx):
+def get_corner_coords(team_idx):
     if team_idx == 0:
-        return Point(0.5, 0.5)
+        return Point(0, 0)
     elif team_idx == 1:
-        return Point(0.5, 99.5)
+        return Point(0, 100)
     elif team_idx == 2:
-        return Point(99.5, 99.5)
+        return Point(100, 100)
     elif team_idx == 3:
-        return Point(99.5, 0.5)
+        return Point(100, 0)
 
 def create_bounds(radius_from_origin, team_idx):
 
     scizzor_angle = np.linspace(0, 90, SCISSOR_ZONE_COUNT+1)
 
-    home_base = get_home_coords(team_idx)
-    home = (home_base.x, home_base.y)
-
+    home = get_corner_coords(team_idx)
     #change angles to Radians
     #make them agnostic to player idx
     angles = [rad_ang*(math.pi / 180) - (math.pi/2 * team_idx) for rad_ang in scizzor_angle]
@@ -180,7 +213,7 @@ def create_bounds(radius_from_origin, team_idx):
     bounds = []
 
     for a in angles:
-        bounds.append((radius_from_origin*math.cos(a)+home[0],radius_from_origin*math.sin(a)+home[1]))
+        bounds.append((radius_from_origin*math.cos(a)+home.x,radius_from_origin*math.sin(a)+home.y))
 
     return bounds, angles
 
@@ -225,16 +258,6 @@ def points_to_numpy(units):
             result = np.vstack([result, [u.x, u.y, i]])
 
     return result[1:,:]
-
-def get_corner(idx):
-    if idx == 0:
-        return (0,0)
-    elif idx == 1:
-        return (0,100)
-    elif idx == 2:
-        return (100, 100)
-    elif idx == 3:
-        return (100, 0)
 
 def get_board_regions(region_number):
     region_size = 100/region_number
@@ -315,22 +338,21 @@ class Player:
         self.enemy_killed_unit_ids = []
         self.home_coords = self.get_home_coords()
 
-        self.sent_radius = OUTER_RADIUS
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID_OUTER, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
 
-        # print(self.regions)
         for idx in range(SCISSOR_ZONE_COUNT):
-            #self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
+            self.regions[idx].connected_scissor_region = self.regions[idx+SCISSOR_ZONE_COUNT]
             self.regions[idx+SCISSOR_ZONE_COUNT].connected_scissor_region = self.regions[idx]
-
 
         #key: u_id, val: region
         #u_id is otw to region
         self.unit_otw_region = {}
+        self.unit_commited_region = {}
 
         #number of units otw to region
-        self.regions_uid_otw = defaultdict(lambda : 0)
+        self.regions_uid_otw = defaultdict(lambda : set())
+        self.regions_uid_commited = defaultdict(lambda: set())
 
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
@@ -363,7 +385,7 @@ class Player:
         return (dist, angle)
     
     def point_move_within_scissor(self, p1, p2, max_dist=1):
-        dist = min(max_dist, math.dist(p1,p2)-0.00001)
+        dist = min(max_dist, math.dist(p1,p2)-0.01)
         angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
 
@@ -398,9 +420,6 @@ class Player:
                 angle_list.append(angle_increment)
 
         return self.fixed_formation_moves(unit_id_list, angle_list)
-
-
-
     
     def clamp_point_within_map(self, point: Point) -> Point:
         x = min(99.99, max(0.01, point.x))
@@ -638,10 +657,6 @@ class Player:
         target = Point(r.target_point[0], r.target_point[1]) 
 
         for u_id in unit_id:
-            if self.ally_units[u_id].distance(target) < 0.1:
-                r.changeDirection()
-
-        for u_id in unit_id:
             sorting_list.append((self.ally_units[u_id].distance(target),u_id))
 
         sorting_list.sort()
@@ -651,16 +666,64 @@ class Player:
 
         moves = {}
         enemy_count = self.enemy_count_in_region()
-        #print(enemy_count)
 
         region_contains_id, uid_in_region = self.regions_contain_id(unit_ids)
 
-        #update targetting for all regions
-        if len(uid_in_region) > 0:
-            for r in self.regions:
-                if len(region_contains_id[r]) > 0:
-                    unit_in_r = self.sort_by_distance(region_contains_id[r], r)
-                    r.update_targets(unit_in_r)
+        #move units in regions
+        #scissor motion
+        #if unit is in a point
+
+        #check if which regions we need to change direction
+        for r in region_contains_id:
+            target = Point(r.target_point[0], r.target_point[1]) 
+
+            for u_id in region_contains_id[r]:
+                if self.ally_units[u_id].distance(target) <= 0.1:
+                    r.changeDirection()
+                    break
+                
+
+        #check which regions we need to increase bounds, and handle movement within region
+        for region in self.regions:
+
+            #bound increments only dependent on outer region
+            if region.id in PRIORITY_ID_OUTER:
+                
+                #units in region
+                unit_count_in_region = 0
+                if region in region_contains_id:
+                    unit_count_in_region = len(region_contains_id[region])
+
+                #units in inner region
+                unit_count_in_inner_region = 0
+                if region.connected_scissor_region in region_contains_id:
+                    unit_count_in_inner_region = len(region_contains_id[region.connected_scissor_region])
+
+                #total units in chunk
+                ally_count = unit_count_in_region+unit_count_in_inner_region
+
+                ally_net_players_inc = ally_count + len(self.regions_uid_otw[region]) - enemy_count[region]
+                ally_net_players_dec = (ally_count)*11 - enemy_count[region]
+
+                if ally_net_players_inc >= 3 and region.radius < 70:
+
+                    #move region up
+                    region.changeBounds(REGION_INCREMENT)
+                    #print("REGION {} INCREMENTING!".format(region.id))
+
+                elif ally_net_players_dec < 0:
+
+                    #move region back
+                    region.changeBounds(-REGION_INCREMENT)
+
+
+        #need to apply moves after figuring out new region direction and bounds
+        for region in region_contains_id:
+
+            units = region_contains_id[region]
+
+            #update targetting for each unit
+            region.update_targets(list(units), self.ally_units)
 
         #Move to quadrant with (in priority, highest first):
         #no units > danger score > closest
@@ -669,72 +732,32 @@ class Player:
         #create priority list
         for r in self.regions:
             
-            units_commited = len(region_contains_id[r])+self.regions_uid_otw[r]
+            val = len(region_contains_id[r]) if r in region_contains_id else 0
+            units_commited = val+len(self.regions_uid_otw[r])
             
             score = -float("inf")
-            if len(region_contains_id[r]) > 0:
+            if val > 0:
                 score = -enemy_count[r] / len(region_contains_id[r])
 
             element = (units_commited, score, r)
 
             heapq.heappush(pqueue, element)
 
-        #change_direction_region = []
-
-        #print(uid_in_region)
-        #print(dict(region_contains_id))
-
+        #units not in a region yet
         for u_id, pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
             curr = (pt.x, pt.y)
 
             #region moved, and move has been computed already
-            if u_id in moves:
-                continue
-
-            #scissor motion
-            #if unit is in a point
             if u_id in uid_in_region:
 
-                region = uid_in_region[u_id]
+                #target point
+                target = uid_in_region[u_id].targets[u_id]
 
-                #only expand when
-                #experimental expansion strategy
+                moves[u_id] = self.point_move_within_scissor(curr, target, 1)
 
-                #outer_ids
-                if region.id in PRIORITY_ID_OUTER:
-                    if len(region_contains_id[region]) >= enemy_count[region] + ((region.radius-OUTER_RADIUS)//10) + 1:
-
-                        #move region up by 0.5
-                        region.changeBounds(REGION_INCREMENT)
-
-                        for u in region_contains_id[region]:
-                            target = region.target_point
-                            
-                            moves[u] = self.point_move_within_scissor(curr, target)
-
-                else:
-
-                    #if u_id first enters a region
-                    if u_id in self.unit_otw_region:
-
-                        #remove pathing to region
-                        self.unit_otw_region.pop(u_id, None)
-
-                        #remove from count of region otw of r
-                        self.regions_uid_otw[region] -= 1
-
-                    #target point
-                    target = region.targets[u_id]
-
-                    #if math.dist(target, region.target_point) <= 1:
-                    #    change_direction_region.append(region)
-
-                    moves[u_id] = self.point_move_within_scissor(curr, target, region.speed)
-
-            #if predefined from previous turn
-            #move to point in region
-            elif u_id in self.unit_otw_region:
-                moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_point)
+            #if a unit is already commited to a region
+            elif u_id in self.unit_commited_region:
+                moves[u_id] = self.point_move(curr, self.unit_commited_region[u_id].center_point)
 
             else:
                 #find the quadrant in need the most
@@ -743,36 +766,40 @@ class Player:
 
                 #send our u_id to a region
                 self.unit_otw_region[u_id] = dire_region
+                self.unit_commited_region[u_id] = dire_region
                 moves[u_id] = self.point_move(curr, self.unit_otw_region[u_id].center_point)
 
                 #increment number of units otw to a region
-                self.regions_uid_otw[dire_region] += 1
+                self.regions_uid_otw[dire_region].add(u_id)
+                self.regions_uid_commited[dire_region].add(u_id)
 
                 #add back to the queue
                 element_new = (element[0]+1, element[1], dire_region)
 
                 heapq.heappush(pqueue, element_new)
 
-        #for r in change_direction_region:
-        #    r.changeDirection()
-
         #print(moves)
         return sentinel_transform_moves(moves)
 
     def regions_contain_id(self, unit_ids):
-        team_set = defaultdict(lambda: set())
-        uid_in_region = {}
-        for u_id, u_pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
-            for r in self.regions:
-                if r.polygon.contains(u_pt):
 
-                    if u_id in self.unit_otw_region:
-                        if r == self.unit_otw_region[u_id]:
-                            team_set[r].add(u_id)
-                            uid_in_region[u_id] = r
-                    else:
-                        team_set[r].add(u_id)
-                        uid_in_region[u_id] = r
+        team_set = {}
+        uid_in_region = {}
+
+        for u_id, u_pt in [(u_id, pt) for u_id, pt in self.ally_units.items() if u_id in unit_ids]:
+            if u_id in self.unit_commited_region:
+
+                r = self.unit_commited_region[u_id]
+
+                if r.polygon.contains(u_pt):
+                    if r not in team_set:
+                        team_set[r] = set()
+                    team_set[r].add(u_id)
+
+                    uid_in_region[u_id] = r
+
+                    self.unit_otw_region.pop(u_id, None)
+                    self.regions_uid_otw[r].discard(u_id)
 
         return team_set, uid_in_region
 
@@ -840,6 +867,7 @@ class Player:
             [chunk[3] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 4] + \
             [chunk[4] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 5] + \
             [chunk[5] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 6]
+
         platoon_unit_ids = \
             [chunk[6] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 7] + \
             [chunk[7] for chunk in assignable_ally_unit_id_chunks if len(chunk) >= 8] + \
