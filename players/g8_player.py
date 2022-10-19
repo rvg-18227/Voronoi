@@ -165,8 +165,7 @@ class Player:
                         self.num_enemy_near_base +=1 
                         if self.num_enemy_near_base<0: ## enough units are going to fight off the enemy 
                             self.is_base_safe = True
-            else:
-                base_score = 0
+            
 
             ##attacking enemy base
             enemy_base_score = self.enemy_base_score(point,angle1,angle2,10)
