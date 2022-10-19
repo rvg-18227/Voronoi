@@ -1,5 +1,6 @@
 import os
 import pickle
+from turtle import distance
 import numpy as np
 import logging
 from typing import List, Tuple
@@ -44,7 +45,7 @@ class Player:
         #     # Dump the objects
         #     with open(precomp_path, 'wb') as f:
         #         pickle.dump([self.obj0, self.obj1, self.obj2], f)
-        self.spawn_point = spawn_point
+        self.spawn_point = np.array(spawn_point)
         self.rng = rng
         self.logger = logger
         self.player_idx = player_idx
@@ -53,9 +54,14 @@ class Player:
         self.current_day = 0
         self.total_points  = total_days//spawn_days
         self.time = [0,0,0,0]
-        self.n = 6 ##how many direction do we want the points to look at
+        self.n = 6 ##how many direction do we want the points to look at 
+        self.base_dict = {0:[0.5,0.5],1:(0.5, 0.5),2:(99.5, 99.5),3:(99.5, 0.5)}
+        self.is_base_safe = True
+        self.total_days = total_days
+        self.enemy_id = [0,1,2,3]
+        self.enemy_id.remove(self.player_idx)
 
-    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
+    def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> list[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
                 Args:
@@ -87,25 +93,45 @@ class Player:
                 continue
             self.enemy_position+=  list(map(np.array,unit_pos[i])) ## add all the other player's position into a list
         move = None
+        self.check_is_base_safe()
         for i in range(0,360,360//self.n):
             self.parts_angle.append(math.radians(i)) ##angle are always in randians!!!!!!
-        if self.currrent_day < 40:
+        if self.current_day < 40:
             #gonna just spreaddddddddd at the beggining ~
             index = 0
             for i in points:
                 index += 1
                 distance = 1
                 angle = self.spiral_spread(index)
-            moves.append(distance,angle)
+            moves.append((distance,angle))
         else:
             #check for safety of each point
             #dist_player_enemy = scipy.spatial.distance(point,self.enemy_position) # distance between each of our own unit and the enemy unit
             #dist_player_player = scipy.spatial.distance .pdist(point,'euclidean')
-            for point in points:
+            for i in range(len(points)-1,-1,-1):
+                point = points[i]
                 direction = self.get_direction(point)
+                
                 distance = 1
                 moves.append((distance,direction))
         return moves
+    def check_is_base_safe(self)-> int:
+        home_base = [self.spawn_point]
+        n3 = np.append(home_base,self.enemy_position,axis =0)
+        r3 = scipy.spatial.distance.pdist(n3,'euclidean')
+        mr2 = scipy.spatial.distance.squareform(r3)
+
+        home_enemy_dist =mr2[0]
+        enemy_near_home = np.count_nonzero(home_enemy_dist<=3)## count the number of enemies within 3 blocks of our home base
+        k = min(len(self.enemy_position),enemy_near_home) #find the number of units within 3 blocks of us
+
+        result = np.partition(mr2, k,axis = 1)[0,:k]
+        result.sort()
+        self.num_enemy_near_base = enemy_near_home * 1.5
+        
+
+
+
     def look_up_dist (self, m,i,j):
         return m * i + j - ((i + 2) * (i + 1)) // 2
     def spiral_spread(self,index):
@@ -117,25 +143,33 @@ class Player:
     def get_direction(self,point:list[float]):
         direction_score = []
         for i in range(len(self.parts_angle)-1):
+            enemy_mult = -0.5
             distance = 2
             angle1 = self.parts_angle[i]
             angle2 = self.parts_angle[i+1]
             point = np.array(point)
-            ## find all the points that are encircled by the angle
-            #p1 = self.get_point(point,angle1,distance=5)
-            #p2 = self.get_point(point,angle2,distance=5)
-            #heuristic we are considering
-            #edge within 5 blocks
-            edge_score = self.find_edge_score_new(point,angle1,angle2,distance)
-            # puts the point back onto the map ( basically a triangle)
-            #enemy within 5 blocks
+
+
+            edge_score = self.find_edge_score_new(point,angle1,angle2,distance) 
             enemy_score,ally_score,base_score = self.find_enemy_ally_score(point,angle1,angle2,distance)
-            #ally within 5 blocks
-            #ally_score = self.find_ally_score(point,angle1,angle2,distance)
-            #Free open space within 10 blocks( using other player's coordinate)
-            open_space_score = self.find_open_space_score(point,angle1,angle2,distance)
-            #edge_score*-1+
-            total_score = (edge_score*-1+  open_space_score*1.5  + (enemy_score*-0.5  + ally_score) + base_score)/4
+
+
+        #defense mechanisim 
+            if not self.is_base_safe:
+                if base_score!=0:
+                    if math.dist(point,self.spawn_point)<=3:
+                        base_score = 20
+                        enemy_mult = 1.5
+                        self.num_enemy_near_base +=1 
+                        if self.num_enemy_near_base<0: ## enough units are going to fight off the enemy 
+                            self.is_base_safe = True
+            else:
+                base_score = 0
+
+            ##attacking enemy base
+            enemy_base_score = self.enemy_base_score(point,angle1,angle2,10)
+
+            total_score = (  edge_score*-1 + (enemy_score*enemy_mult  + ally_score) + base_score + enemy_base_score)/4
             direction_score.append(total_score)
         smallest = min(direction_score)
         if smallest > 0:
@@ -146,10 +180,10 @@ class Player:
         within = self.rng.random()* math.radians(360/self.n) #choose within the area
         direction  = self.parts_angle[index] + within
         print(direction * 180/math.pi)
-        print(self.time)
+        #print(self.time)
         return direction
     def checkboundary(self,point:list[float])->list[float]:
-        tic = time.perf_timer()
+        #tic = time.time()
         x,y = point
         new_x = x
         new_y = y
@@ -161,8 +195,8 @@ class Player:
             new_x = 0
         if y <= 0:
             new_y = 0
-        toc = time.perf_timer()
-        self.time[0]+= (toc-tic)
+        #toc = time.time()
+        #self.time[0]+= (toc-tic)
         return [new_x,new_y]
 
     def get_point(self,point:list[float],angle:float,distance:int)-> list[float]:
@@ -170,44 +204,38 @@ class Player:
         x,y = point
         x_val = x + math.cos(angle)*distance
         y_val = y + math.sin(angle)*distance
-
         return [x_val,y_val]
     def find_edge_score_new(self,point:list[float],angle1,angle2,distance) -> float:
         #find the value by doing x + distance see if it exceed 100,x - distance see if >0, same for y
-        tic = time.perf_timer()
+       #tic = time.time()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1_x_dif = max(p1[0]-100,0-p1[0],0)
         p1_y_dif = max(p1[1]-100,0-p1[1],0)
         p2_x_dif = max(p1[0]-100,0-p1[0],0)
         p2_y_dif = max(p1[1]-100,0-p1[1],0)
-        toc = time.perf_timer()
-        self.time[1]+= (toc-tic)
+        #toc = time.time()
+        #self.time[1]+= (toc-tic)
         return (p1_x_dif + p1_y_dif + p2_x_dif + p2_y_dif)/(sum(np.absolute(p1))+sum(np.absolute(p2)))
-
-
-    def find_edge_score(self,point:list[float],angle1,angle2,distance) -> float:
-        ##the area exceeding the boundary/ the area we are looking
+    
+    def enemy_base_score(self,point:list[float],angle1,angle2,distance) -> float:
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
-
-        w1, w2, w3, w4 = map(Point,[[0,0],[0,100],[100,0],[100,100]])
-        t1,t2,t3 =  map(Point,[point,p1,p2])
-        world = sympy.Polygon(w1, w2, w3, w4)
-        triangle = sympy.Polygon(t1,t2,t3)
-        intersecected_points = triangle.intersection(world)
-        if len(intersecected_points)<3:
-            return 0
-        overlap = shapely.geometry.Polygon(np.array(intersecected_points)).area
-        triangle_area = shapely.geometry.Polygon([point,p1,p2]).area
-        score = overlap/triangle_area *100 # out of 100 % normalize
-        return score
-
+        p1 = self.checkboundary(p1)
+        p2 = self.checkboundary(p2)
+        polygon = [p1,p2,point]
+        path = mpltPath.Path(polygon)
+        for idx in self.enemy_id:
+            enemy_base_unit = self.base_dict[idx] ### bahahaah we are cominggggg
+            contain_base = path.contains_points([enemy_base_unit])
+            if contain_base:
+                return 10
+        return 0
 
     def find_enemy_ally_score(self,point:list[float],angle1,angle2,distance) -> int:
         # the number of enemy enclosed / the current number of enemies
-
-        tic = time.perf_timer()
+       
+        #tic = time.time()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
         p1 = self.checkboundary(p1)
@@ -219,12 +247,14 @@ class Player:
         ally_insde = path.contains_points(self.points)
         num_ally_enclosed = np.count_nonzero(ally_insde)
         base_point  = 0
-        if(self.current_day <= 40):
-            contain_base = path.contains_points([np.array(self.spawn_point)])
-            if contain_base:
+        contain_base = path.contains_points([self.spawn_point])
+        if contain_base:
+            if((self.total_days - self.current_day) <= 10):
                 base_point = -10
-        toc = time.perf_timer()
-        self.time[2]+= (toc-tic)
+            else:
+                base_point = -1
+        #toc = time.time()
+        #self.time[2]+= (toc-tic)
         return num_enemy_enclosed/(self.cur_unit*3),num_ally_enclosed/self.cur_unit,base_point #normalize
     def transform_move(
             self,
@@ -232,61 +262,6 @@ class Player:
     ) -> Tuple[float, float]:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
-    def find_open_space_score(self,point:list[float],angle1,angle2,distance)-> float:
-        tic = time.perf_timer()
-        p1 = self.get_point(point,angle1,distance)
-        p2 = self.get_point(point,angle2,distance)
-        p1 = self.checkboundary(p1)
-        p2 = self.checkboundary(p2)
-        np_map = np.array(self.map_states)
-        high_x = max(p1[0],p2[0],point[0],0)
-        high_y = max(p1[1],p2[1],point[1],0)
-        low_x = min(p1[0],p2[0],point[0],100)
-        low_y = min(p1[1],p2[1],point[1],100)
-        y_range = list(range(math.floor(low_y),math.ceil(high_y)))
-        x_range = list(range(math.floor(low_x),math.ceil(high_x)))
-        np_map = np_map[:,y_range]
-        np_map = np_map[x_range,:]
-        my_space = np.full(np_map.shape,self.player_idx+1)
-        conflic_space = np.full(np_map.shape,-1.0)
-        count1  = np.count_nonzero(np.equal(my_space,np_map))
-        count2  =np.count_nonzero( np.equal(conflic_space,np_map))
-        occupied_cell = count2 + count1
-        len = max(1,np_map.shape[0])
-        width = max(1,np_map.shape[1])
-        possible_area = len*width
-        toc = time.perf_timer()
-        self.time[3]+= (toc-tic)
-        return 1- (occupied_cell/possible_area)
+    
 
-
-
-    def safety_heuristic(self,point:list[float],rad)->list[float]:
-        ##point and how far we want to look
-        num_enemy_near = 0
-        num_ally_near = 0
-        for enemy in self.enemy_position:
-            enemy_x = enemy[0]
-            enemy_y = enemy[1]
-            if  self.isInside(point[0], point[1], rad, enemy_x, enemy_y): num_enemy_near+=1
-        for ally in self.points:
-            ally_x = ally[0]
-            ally_y = ally[1]
-            if  self.isInside(point[0], point[1], rad, ally_x, ally_y): num_ally_near+=1
-        return num_enemy_near,num_ally_near
-
-
-
-
-    def isInside(self,circle_x, circle_y, rad, x, y):
-
-        # Compare radius of circle
-        # with distance of its center
-        # from given point
-        if ((x - circle_x) * (x - circle_x) +
-            (y - circle_y) * (y - circle_y) <= rad * rad):
-            return True
-        else:
-            return False
-
-
+ 
