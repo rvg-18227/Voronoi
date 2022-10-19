@@ -49,6 +49,7 @@ class Player:
         self.spawn_days = spawn_days
         self.total_days = total_days
         self.num_days = 0
+        self.naive_index = np.random.choice(2)
 
         if self.player_idx == 0:
             self.homebase = np.array([0.5, 0.5])
@@ -94,7 +95,7 @@ class Player:
     
 
     def naive_strategy(self):
-        angle = self.initial_angles[1]
+        angle = self.initial_angles[self.naive_index]
         distance = 1
         return distance, angle
         
