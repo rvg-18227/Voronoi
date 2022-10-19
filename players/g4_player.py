@@ -58,7 +58,7 @@ def get_nearest_unit(
 
 # Pool initialization must be below the declaration for get_nearest_unit
 # Pool initialization is global to re-use the same process pool
-THREADED = True
+THREADED = False
 if THREADED:
     pool = multiprocessing.Pool(multiprocessing.cpu_count())
 
@@ -632,7 +632,7 @@ class FirstScout(Role):
         for unit_id in self.units:
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
-            total_force = normalize((home_force * 10))
+            total_force = normalize((home_force * 100))
             # self._logger.debug("force", total_force)
             moves[unit_id] = to_polar(total_force)
             # self._debug(moves)
@@ -650,6 +650,7 @@ class GreedyScout(Role):
         self.first_turn = True
 
         # unit_id -> scout_id
+        self.angles = {}
         self.temp_id = {}
         self.id_counter = 0
 
@@ -669,82 +670,76 @@ class GreedyScout(Role):
             if not uid in self.temp_id:
                 self.temp_id[uid] = self.id_counter
                 self.id_counter += 1
+                self.angles[uid] = -1
 
         HOME_INFLUENCE = 30
         own_units = update.own_units()
         moves = {}
         unit_to_owned, _ = update.unit_ownership()
+        presets = [15,75,30,60,45]
         for unit_id in self.units:
-            # self._debug("text")
-            # self._debug(f"uid {unit_id}")
-            # self._debug(f"owns {self.ownership}")
-            # self._debug(f"owns 2 {self.ownership[self.params.player_idx]}")
             owns = 0
             if unit_id in unit_to_owned[self.params.player_idx]:
                 owns = len(unit_to_owned[self.params.player_idx][unit_id])
             if not unit_id in self.owned:
                 self.owned[unit_id] = owns
+                owned = owns
             else:
                 owned = self.owned[unit_id]
-                if owned > owns:
-                    self.temp_id[unit_id] += 1
+            #defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+            # if owns < 10:
+            #     self.deallocate_unit(unit_id)
+            #     defender_role.allocate_unit(unit_id)
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
             closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
 
             if closest_enemy_d < 2:  # RUN AWAY TO HOME
-
                 force = to_polar(normalize((home_force * HOME_INFLUENCE)))
-                move = (force[0], force[1] + np.pi)
+                move = (1, force[1] + np.pi)
                 moves[unit_id] = move
             elif closest_enemy_d < 5:  # STAY PUT
                 moves[unit_id] = (0, 0)
             else:
-                ux, uy = unit_pos
-                if self.params.player_idx == 0:
-                    wall_normals = [
-                        (ux, self.params.min_dim),
-                        (self.params.min_dim, uy),
-                    ]
-                elif self.params.player_idx == 1:
-                    wall_normals = [
-                        (ux, self.params.max_dim),
-                        (self.params.min_dim, uy),
-                    ]
-                elif self.params.player_idx == 2:
-                    wall_normals = [
-                        (ux, self.params.max_dim),
-                        (self.params.max_dim, uy),
-                    ]
-                elif self.params.player_idx == 3:
-                    wall_normals = [
-                        (ux, self.params.min_dim),
-                        (self.params.max_dim, uy),
-                    ]
+                if owned > owns:
+                    self.angles[unit_id] = -1
+                if self.angles[unit_id] == -1:
+                    if self.params.player_idx == 0:
+                        offset = 0
+                    elif self.params.player_idx == 1:
+                        offset = 270
+                    elif self.params.player_idx == 2:
+                        offset = 180
+                    elif self.params.player_idx == 3:
+                        offset = 90
+                    if self.temp_id[unit_id] < 5 and owned <= owns:
+                        angle = np.radians(presets[self.temp_id[unit_id]]+offset)
+                    else:
+                        angle = np.radians(np.random.randint(90) + offset) 
+                        
+                    self.angles[unit_id] = (1, angle)
+                    moves[unit_id] = (1,angle)
                 else:
-                    pass
-
-                horizontal_influence = np.random.randint(40) - 10
-                if self.temp_id[unit_id] % 2 == 0:
-                    horizontal_force = repelling_force(unit_pos, wall_normals[0])
-                else:
-                    horizontal_force = repelling_force(unit_pos, wall_normals[1])
-
-                if self.temp_id[unit_id] % 4 <= 1:
-                    horizontal_influence = np.random.randint(30) - 10
-
-                total_force = normalize(
-                    (home_force * HOME_INFLUENCE)
-                    + (horizontal_force * horizontal_influence)
-                )
-                # self._logger.debug("force", total_force)
-                moves[unit_id] = to_polar(total_force)
-                # self._debug(moves)
-
+                    d, a = self.angles[unit_id]
+                    moves[unit_id] = (d,a)
+                
+                
         return moves
 
     def deallocation_candidate(self, update, target_point):
-        pass
+        closest_dist = 500
+        closest_uid = 0
+        own_units = update.own_units()
+        for uid in self.units:
+            unit_pos = own_units[uid]
+            dist = np.linalg.norm(target_point - unit_pos)
+            if dist < closest_dist:
+                closest_uid = uid
+                closest_dist = dist
+        return closest_uid
+        
+
+
 
 
 def check_border(my_player_idx, target_player_idx, vertical, horizontal):
@@ -1068,7 +1063,7 @@ spawn_rules = SpawnRules()
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
-    if rule_inputs.update.turn < 20:
+    if rule_inputs.update.turn > 0:
         rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
         return True
     return False
@@ -1371,6 +1366,7 @@ class Player:
             self.role_groups.add_group(
                 RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
             )
+            
         self.role_groups.add_group(
             RoleType.SCOUT, GreedyScout(self.logger, self.params)
         )
