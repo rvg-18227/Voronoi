@@ -51,7 +51,7 @@ class Player:
         self.player_idx = player_idx
         self.parts_angle = []
         self.cur_unit = 1
-        self.current_day = 0
+        self.current_day = -1
         self.total_points  = total_days//spawn_days
         self.time = [0,0,0,0]
         self.n = 6 ##how many direction do we want the points to look at 
@@ -100,10 +100,15 @@ class Player:
         if self.current_day < 40:
             #gonna just spreaddddddddd at the beggining ~
             index = 0
+            angle_start = 45
+            angle_jump = len(points)/self.total_points*10
+            print("in spread")
             for i in points:
                 index += 1
                 distance = 1
-                angle = self.spiral_spread(index)
+                angle = (((index) * (angle_jump) + angle_start)) % 90
+                angle = angle*(math.pi / 180)
+                angle = angle - (math.pi/2 * self.player_idx)
                 moves.append((distance,angle))
         else:
             #check for safety of each point
@@ -124,6 +129,7 @@ class Player:
 
         home_enemy_dist =mr2[0]
         enemy_near_home = np.count_nonzero(home_enemy_dist<=3)## count the number of enemies within 3 blocks of our home base
+        #----------------------------------------------LOOK HERE FOR ENEMY UNIT LOCATION--------------------------------------------------------------------------------------------------------------------------
         k = min(len(self.enemy_position),enemy_near_home) #find the number of units within 3 blocks of us
 
         result = np.partition(mr2, k,axis = 1)[0,:k]
@@ -135,12 +141,7 @@ class Player:
 
     def look_up_dist (self, m,i,j):
         return m * i + j - ((i + 2) * (i + 1)) // 2
-    def spiral_spread(self,index):
-        angle_jump = len(self.points)/self.total_points*10
-        angle_start = 45  # 45
-        angle = ((index) * (angle_jump) + angle_start) % 90
-        angle  = angle - (math.pi/2 * self.player_idx) ## make it so it fits all the quadrants
-        return angle
+
     def get_direction(self,point:list[float]):
         direction_score = []
         for i in range(len(self.parts_angle)-1):

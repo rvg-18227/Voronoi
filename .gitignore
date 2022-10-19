@@ -13,3 +13,5 @@ render/
 # IDE files
 .idea/
 .vscode/
+players/g4_player.py
+run_and_render.sh
