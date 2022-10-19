@@ -2,13 +2,13 @@ import os
 import pickle
 import numpy as np
 import logging
-from typing import Tuple
+from typing import List, Tuple
 import math
 import sympy
 from sympy import Point,Polygon
 import shapely.geometry
 import matplotlib.path as mpltPath
-import scipy.spatial.distance 
+import scipy.spatial.distance
 import time ##to see whats the slowest part of my code
 """Player module for Group 8 probabilistic model - Voronoi."""
 
@@ -53,7 +53,7 @@ class Player:
         self.current_day = 0
         self.total_points  = total_days//spawn_days
         self.time = [0,0,0,0]
-        self.n = 6 ##how many direction do we want the points to look at 
+        self.n = 6 ##how many direction do we want the points to look at
 
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -98,7 +98,7 @@ class Player:
                 angle = self.spiral_spread(index)
             moves.append(distance,angle)
         else:
-            #check for safety of each point 
+            #check for safety of each point
             #dist_player_enemy = scipy.spatial.distance(point,self.enemy_position) # distance between each of our own unit and the enemy unit
             #dist_player_player = scipy.spatial.distance .pdist(point,'euclidean')
             for point in points:
@@ -126,7 +126,7 @@ class Player:
             #p2 = self.get_point(point,angle2,distance=5)
             #heuristic we are considering
             #edge within 5 blocks
-            edge_score = self.find_edge_score_new(point,angle1,angle2,distance) 
+            edge_score = self.find_edge_score_new(point,angle1,angle2,distance)
             # puts the point back onto the map ( basically a triangle)
             #enemy within 5 blocks
             enemy_score,ally_score,base_score = self.find_enemy_ally_score(point,angle1,angle2,distance)
@@ -170,7 +170,7 @@ class Player:
         x,y = point
         x_val = x + math.cos(angle)*distance
         y_val = y + math.sin(angle)*distance
-        
+
         return [x_val,y_val]
     def find_edge_score_new(self,point:list[float],angle1,angle2,distance) -> float:
         #find the value by doing x + distance see if it exceed 100,x - distance see if >0, same for y
@@ -187,7 +187,7 @@ class Player:
 
 
     def find_edge_score(self,point:list[float],angle1,angle2,distance) -> float:
-        ##the area exceeding the boundary/ the area we are looking 
+        ##the area exceeding the boundary/ the area we are looking
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
 
@@ -202,11 +202,11 @@ class Player:
         triangle_area = shapely.geometry.Polygon([point,p1,p2]).area
         score = overlap/triangle_area *100 # out of 100 % normalize
         return score
-    
+
 
     def find_enemy_ally_score(self,point:list[float],angle1,angle2,distance) -> int:
         # the number of enemy enclosed / the current number of enemies
-       
+
         tic = time.perf_timer()
         p1 = self.get_point(point,angle1,distance)
         p2 = self.get_point(point,angle2,distance)
@@ -262,7 +262,7 @@ class Player:
 
 
     def safety_heuristic(self,point:list[float],rad)->list[float]:
-        ##point and how far we want to look 
+        ##point and how far we want to look
         num_enemy_near = 0
         num_ally_near = 0
         for enemy in self.enemy_position:
@@ -274,12 +274,12 @@ class Player:
             ally_y = ally[1]
             if  self.isInside(point[0], point[1], rad, ally_x, ally_y): num_ally_near+=1
         return num_enemy_near,num_ally_near
-    
+
 
 
 
     def isInside(self,circle_x, circle_y, rad, x, y):
-        
+
         # Compare radius of circle
         # with distance of its center
         # from given point
@@ -288,5 +288,5 @@ class Player:
             return True
         else:
             return False
- 
- 
+
+
