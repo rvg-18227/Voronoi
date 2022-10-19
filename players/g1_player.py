@@ -11,6 +11,10 @@ import shapely.validation
 import scipy
 from sklearn.cluster import DBSCAN
 
+# from tests import plot_funcs
+# from tests.plot_funcs import plot_units_and_edges, plot_poly_list, plot_incursions, plot_line_list, plot_debug_incur, \
+#     plot_dbscan
+
 warnings.filterwarnings("ignore", category=shapely.errors.ShapelyDeprecationWarning)
 
 
@@ -805,8 +809,8 @@ class Player:
         if not self.draft_cmdo_start:
             self.draft_cmdo_start = True
             self.units_to_be_drafted = []
-        # if self.current_day > 50 and len(self.commando_squads) < self.num_commandos and self.draft_cmdo_start:
-        if self.current_day > 50 and len(self.commando_squads) < len(ideal_incur_units) and self.draft_cmdo_start:
+        if self.current_day > 50 and len(self.commando_squads) < self.num_commandos and self.draft_cmdo_start:
+            # if self.current_day > 50 and len(self.commando_squads) < len(ideal_incur_units) and self.draft_cmdo_start:
             if len(self.units_to_be_drafted) < 3:
                 if self.current_day % self.spawn_days == 0:
                     latest_unit_id = sorted([x.uid for x in avail_units])[-1]
@@ -877,26 +881,30 @@ class Player:
         #         ene_units_border.add(ene)
         # ene_units_border = list(ene_units_border)
 
-        all_enemies = [x for x in units_cls.values() if x.player != self.player_idx]
-
-        # for csq in self.commando_squads:
-        #     csq.update_target(units_cls)
-        #     all_enemies.sort(key=lambda x: dist_to_target(csq.pin, x.pos))
-        #
-        #     tar_unit = all_enemies[0]
-        #     all_enemies.remove(all_enemies[0])
-        #
-        #     print(f"target selection: {csq}, {tar_unit.uid}")
-        #     csq.set_target_unit(tar_unit)
-        #     csq.update_target(units_cls)
-        #     _ = csq.set_move_cmds()
-        for csq, ideal_incur_u in zip(self.commando_squads, ideal_incur_units):
+        last_c = 0
+        for idx, (csq, ideal_incur_u) in enumerate(zip(self.commando_squads, ideal_incur_units)):
             csq.update_target(units_cls)
             tar_unit = ideal_incur_u
             print(f"target selection: {csq}, {tar_unit.uid}")
             csq.set_target_unit(tar_unit)
             csq.update_target(units_cls)
             _ = csq.set_move_cmds()
+            last_c = idx
+
+        if last_c < len(self.commando_squads):
+            all_enemies = [x for x in units_cls.values() if x.player != self.player_idx]
+            for idx in range(last_c + 1, len(self.commando_squads)):
+                csq = self.commando_squads[idx]
+                csq.update_target(units_cls)
+                all_enemies.sort(key=lambda x: dist_to_target(csq.pin, x.pos))
+
+                tar_unit = all_enemies[0]
+                all_enemies.remove(all_enemies[0])
+
+                print(f"target selection: {csq}, {tar_unit.uid}")
+                csq.set_target_unit(tar_unit)
+                csq.update_target(units_cls)
+                _ = csq.set_move_cmds()
 
         for idx, csq in enumerate(self.commando_squads):
             try:
