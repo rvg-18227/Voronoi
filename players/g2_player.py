@@ -395,12 +395,12 @@ class Player:
 
     def point_move(self, p1, p2):
         dist = min(1, math.dist(p1,p2))
-        angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
     
     def point_move_within_scissor(self, p1, p2, max_dist=1):
         dist = min(max_dist, math.dist(p1,p2)-0.01)
-        angle = sympy.atan2(p2[1] - p1[1], p2[0] - p1[0])
+        angle = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
         return (dist, angle)
 
     def shapely_point_move(self, p1, p2):
@@ -656,7 +656,7 @@ class Player:
                     angle = 0
                 else:
                     move_dist = 1
-                    angle = sympy.atan2(region_center_point[1] - current_scout_pos.y,
+                    angle = math.atan2(region_center_point[1] - current_scout_pos.y,
                                         region_center_point[0] - current_scout_pos.x)
 
                 moves[self.scout[region]] = (move_dist, angle)
