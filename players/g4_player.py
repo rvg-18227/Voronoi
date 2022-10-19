@@ -60,9 +60,9 @@ def get_nearest_unit(
 
 # Pool initialization must be below the declaration for get_nearest_unit
 # Pool initialization is global to re-use the same process pool
-#THREADED = True
-#if THREADED:
-    #pool = multiprocessing.Pool(multiprocessing.cpu_count())
+THREADED = True
+if THREADED:
+    pool = multiprocessing.Pool(multiprocessing.cpu_count())
 
 
 class StateUpdate:
