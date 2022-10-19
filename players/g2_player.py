@@ -1018,7 +1018,6 @@ class Player:
 
         for index in range(number_regions):
             if index in unclaimed_regions:
-                current_poly = self.entire_board_regions[index]
                 current_poly_bounds = self.entire_board_region_tuples[index]
                 for ux, uy in list(self.ally_unit_tuples.values()) + list(self.enemy_unit_tuples.values()):
                     minx, miny, maxx, maxy = current_poly_bounds
