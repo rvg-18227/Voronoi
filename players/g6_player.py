@@ -2,7 +2,6 @@ from distutils.spawn import spawn
 import os
 import pickle
 from turtle import width
-#from time import clock_settime
 import numpy as np
 import sympy
 import logging
@@ -370,7 +369,6 @@ class Spacer:
     def force_vec(self, p1, p2):
         v = p1 - p2
         mag = np.linalg.norm(v)
-        #print(v,'over',mag)
         unit = v / mag
         return unit, mag
 
@@ -490,12 +488,13 @@ class Player:
 
         moves = [self.transform_move(0, 0, 0)] * len(unit_pos[self.player_idx])
 
+        # rightIdx = (self.player_idx + 1) % 4
+        # leftIdx = (self.player_idx - 1) % 4
+        # if self.current_turn == self.total_days//3:
+        #     self.go_left = len(unit_pos[rightIdx]) > len(unit_pos[leftIdx])
+
         self.spacer.update(self.map_states, spacers, unit_pos[self.player_idx], enemy_units)
-        #print(spacers)
-        #print('self.spacer.number_units',self.spacer.number_units)
-        spacerMoves = self.spacer.get_moves()
-        #print('spacerMoves',spacerMoves)
-        
+        spacerMoves = self.spacer.get_moves()        
         for spacermoveidx, real_idx in enumerate(spacers):
             moves[real_idx] = spacerMoves[spacermoveidx]
 
@@ -504,13 +503,6 @@ class Player:
         for attacking_move_idx, real_idx in enumerate(attackersRight):
             dist, x, y = attackingMoves[attacking_move_idx]
             moves[real_idx] = (dist if dist <= 1 else 1, np.arctan2(y, x))
-
-        # rightIdx = (self.player_idx + 1) % 4
-        # leftIdx = (self.player_idx - 1) % 4
-        # if self.current_turn == self.total_days//3:
-        #     self.go_left = len(unit_pos[rightIdx]) > len(unit_pos[leftIdx])
-
-
 
         self.attackLeft.update(self.map_states, attackersLeft, unit_pos[self.player_idx], enemy_units)
         attackingMoves = self.attackLeft.get_moves()
@@ -576,11 +568,12 @@ class Player:
                 numberDaysThisPhase = int(self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1)
                 unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
             if unitToAdd == UnitType.ATTACK_RIGHT:
-                if self.attackRight.number_units > 56:
-                    unitToAdd = UnitType.DEFENSE if self.attackLeft.number_units > 56 else UnitType.ATTACK_LEFT
+                n_units_cap = 50
+                if self.attackRight.number_units > n_units_cap:
+                    unitToAdd = UnitType.DEFENSE if self.attackLeft.number_units > n_units_cap else UnitType.ATTACK_LEFT
                 elif self.go_left:
-                    unitToAdd = UnitType.ATTACK_RIGHT if self.attackLeft.number_units > 56 else UnitType.ATTACK_LEFT
-                    unitToAdd = UnitType.DEFENSE if self.attackRight.number_units > 56 else UnitType.ATTACK_RIGHT
+                    unitToAdd = UnitType.ATTACK_RIGHT if self.attackLeft.number_units > n_units_cap else UnitType.ATTACK_LEFT
+                    unitToAdd = UnitType.DEFENSE if self.attackRight.number_units > n_units_cap else UnitType.ATTACK_RIGHT
 
             self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
 
