@@ -191,19 +191,26 @@ class Defense:
 class Attacker:
 
     class Formation:
-        def __init__(self, direction, n_units):
+        def __init__(self, direction, n_units, player_idx):
             self.name = direction
+            self.player_idx = player_idx
             triangleThresh = 8
             if direction == "RIGHT":
                 self.head = (0, 0)
                 self.points = [(2, 2), (1, 1), (0, 0)]
                 for i in range(1, n_units - len(self.points) + 1):
-                    self.points.append((self.head[0] + i, self.head[1] - (i if i <= triangleThresh else triangleThresh)))
+                    if self.player_idx == 0 or self.player_idx == 2:
+                        self.points.append((self.head[0] - i, self.head[1] + (i if i <= triangleThresh else triangleThresh)))
+                    else:
+                        self.points.append((self.head[0] + i, self.head[1] - (i if i <= triangleThresh else triangleThresh)))
             elif direction == "LEFT":
                 self.head = (0, 0)
                 self.points = [(2, 2), (1, 1), (0, 0)]
                 for i in range(1, n_units - len(self.points) + 1):
-                    self.points.append((self.head[0] - (i if i <= triangleThresh else triangleThresh), self.head[1] + i))
+                    if self.player_idx == 0 or self.player_idx == 2:
+                        self.points.append((self.head[0] + i, self.head[1] - (i if i <= triangleThresh else triangleThresh)))
+                    else:
+                        self.points.append((self.head[0] - (i if i <= triangleThresh else triangleThresh), self.head[1] + i))
 
 
     def __init__(self, player_idx, spawn_point, total_days, direction):
@@ -213,7 +220,7 @@ class Attacker:
         self.total_days = total_days
 
         self.direction = direction
-        self.formation = self.Formation(direction, 30)
+        self.formation = self.Formation(direction, 30, player_idx)
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
 
@@ -264,7 +271,7 @@ class Attacker:
     def update_formation(self, direction, n):
         head, end, direction_to_center, direction_to_start = self.get_head_hover_point()
         offset = direction_to_start * 5
-        self.formation = self.Formation(direction, n)
+        self.formation = self.Formation(direction, n, self.player_idx)
 
         for i, point in enumerate(self.formation.points):
             if self.attack == 1:
@@ -591,9 +598,10 @@ class Player:
         self.total_days = total_days
         self.spawn_days = spawn_days
         self.spawn_point = spawn_point
+        self.number_units_total = total_days//spawn_days
 
         self.current_turn = 0
-        if self.spawn_days == 10 or self.spawn_days == 20 or self.total_days <= 100:
+        if self.spawn_days == 10 or self.spawn_days == 20 or self.total_days <= 100 or self.number_units_total <= 50:
             self.PHASE_ONE_OUTPUT = [UnitType.SPACER]
             self.PHASE_TWO_OUTPUT = [UnitType.DEFENSE, UnitType.DEFENSE, UnitType.SPACER]
             self.PHASE_THREE_OUTPUT = [UnitType.DEFENSE, UnitType.DEFENSE, UnitType.SPACER]
@@ -604,7 +612,7 @@ class Player:
 
         testing = False
         if testing:
-            testingType = UnitType.ATTACK_RIGHT if self.player_idx == 0 or self.player_idx == 2 else UnitType.DEFENSE
+            testingType = UnitType.ATTACK_RIGHT
             self.PHASE_ONE_OUTPUT = [testingType]
             self.PHASE_TWO_OUTPUT = [testingType]
             self.PHASE_THREE_OUTPUT = [testingType]
@@ -613,7 +621,6 @@ class Player:
         # if more land it means we want to attack more?
 
 
-        self.number_units_total = total_days//spawn_days
         self.PHASE_ONE_UNITS = min(5, 50//self.spawn_days)
         self.PHASE_TWO_UNITS = int(np.floor((self.number_units_total-5)*0.8))
         self.PHASE_THREE_UNITS = self.number_units_total - self.PHASE_ONE_UNITS - self.PHASE_TWO_UNITS
