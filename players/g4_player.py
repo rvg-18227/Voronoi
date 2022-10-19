@@ -55,6 +55,12 @@ class StrategyParameters:
     def __init__(self, params: GameParameters):
         self.min_defenders = 20 if params.spawn_days < 5 else 10
         self.interceptor_strength = 5 if params.spawn_days < 5 else 3
+        if params.spawn_days < 2:
+            self.defender_area = 100
+        elif params.spawn_days < 5:
+            self.defender_area = 200
+        else:
+            self.defender_area = 500
 
 
 def get_nearest_unit(
@@ -93,6 +99,7 @@ class StateUpdate:
     ]
     cached_clusters: Optional[dict[int, dict[int, list[str]]]]
     cached_territory_hull: Optional[Polygon]
+    cached_territory_poly: Optional[Polygon]
 
     def __init__(
         self,
@@ -120,6 +127,7 @@ class StateUpdate:
         self.cached_ownership = None
         self.cached_clusters = None
         self.cached_territory_hull = None
+        self.cached_territory_poly = None
 
     # =============================
     # Role Update Utility Functions
@@ -260,6 +268,24 @@ class StateUpdate:
         )
         return self.cached_territory_hull
 
+    def territory_poly(self):
+        if self.cached_territory_poly is not None:
+            return self.cached_territory_poly
+
+        spawn_x, spawn_y = self.params.spawn_point
+        total_territory = box(
+            np.floor(spawn_x), np.floor(spawn_y), np.ceil(spawn_x), np.ceil(spawn_y)
+        )
+        for x in range(self.params.max_dim):
+            for y in range(self.params.max_dim):
+                if self.map_states[x][y] == self.params.player_idx + 1:
+                    tile_poly = box(x, y, x + 1, y + 1)
+                    tile_poly = tile_poly.union(tile_poly.buffer(0.01))
+                    total_territory = total_territory.union(tile_poly)
+
+        self.cached_territory_poly = total_territory
+        return self.cached_territory_poly
+
 
 # =======================
 # Force Utility Functions
@@ -282,6 +308,10 @@ def force_vec(p1, p2):
 def to_polar(p):
     x, y = p
     return np.sqrt(x**2 + y**2), np.arctan2(y, x)
+
+
+def to_cartesian(r, theta):
+    return r * np.cos(theta), r * np.sin(theta)
 
 
 def normalize(v):
@@ -602,6 +632,7 @@ class Interceptor(Role):
                 attack_repulsion_force * AVOID_INFLUENCE
                 + ATTACK_INFLUENCE * attack_force
                 + noise_influence * self.noise[unit_id]
+                # + 100 * self.retreat_force(update, unit_pos)
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -638,29 +669,41 @@ class Interceptor(Role):
         attack_vec *= -1
         return attack_vec[0]
 
-    def deallocation_candidate(self, update, target_point):
-        pass
+    def retreat_force(self, update, unit_pos):
+        territory_boundary = update.territory_poly().exterior
+        longest_ray_length = 0
+        longest_ray_theta = 0
+        total_rays = 36
+        under_threshold = 0
+        pos_point = Point(unit_pos)
+        # Ray casting
+        for theta in np.linspace(0, 2 * np.pi, 36):
+            dx = 50 * np.cos(theta)
+            dy = 50 * np.sin(theta)
+            ux, uy = unit_pos
+            ray = LineString([(ux, uy), (ux + dx, uy + dy)])
+            strike = ray.intersection(territory_boundary)
+            if strike.is_empty:
+                longest_ray_length = 40
+                longest_ray_theta = theta
+            else:
+                ray_length = pos_point.distance(strike)
+                if ray_length > longest_ray_length:
+                    longest_ray_length = ray_length
+                    longest_ray_theta = theta
 
+                if ray_length < 5:
+                    under_threshold += 1
 
-class FirstScout(Role):
-    def __init__(self, logger, params, scout_id):
-        super().__init__(logger, params)
-
-    def _turn_update(self, update, dead_units):
-        pass
-
-    def _turn_moves(self, update):
-        own_units = update.own_units()
-        moves = {}
-        for unit_id in self.units:
-            unit_pos = own_units[unit_id]
-            home_force = repelling_force(unit_pos, self.params.home_base)
-            total_force = normalize((home_force * 100))
-            # self._logger.debug("force", total_force)
-            moves[unit_id] = to_polar(total_force)
-            # self._debug(moves)
-
-        return moves
+        if (under_threshold / total_rays) > 0.8:
+            self.debug("========")
+            self.debug("Retreat!")
+            self.debug("========")
+            # Retreat direction of longest ray
+            return np.array(to_cartesian(1, longest_ray_theta))
+            # return force_vec(self.params.home_base, unit_pos)[0]
+        else:
+            return np.array([0, 0])
 
     def deallocation_candidate(self, update, target_point):
         pass
@@ -709,13 +752,15 @@ class GreedyScout(Role):
                 owned = owns
             else:
                 owned = self.owned[unit_id]
-            # defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-            # if owns < 10:
-            #     self.deallocate_unit(unit_id)
-            #     defender_role.allocate_unit(unit_id)
+
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
             closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
+
+            # retreat_force = self.retreat_force(update, unit_pos)
+            # if np.linalg.norm(retreat_force) > 0:
+            #     moves[unit_id] = to_polar(normalize(retreat_force))
+            #     continue
 
             if closest_enemy_d < 2:  # RUN AWAY TO HOME
                 force = to_polar(normalize((home_force * HOME_INFLUENCE)))
@@ -747,6 +792,41 @@ class GreedyScout(Role):
                     moves[unit_id] = (d, a)
 
         return moves
+
+    def retreat_force(self, update, unit_pos):
+        territory_boundary = update.territory_poly().exterior
+        longest_ray_length = 0
+        longest_ray_theta = 0
+        total_rays = 16
+        under_threshold = 0
+        pos_point = Point(unit_pos)
+        # Ray casting
+        for theta in np.linspace(0, 2 * np.pi, total_rays):
+
+            dx = 50 * np.cos(theta)
+            dy = 50 * np.sin(theta)
+            ux, uy = unit_pos
+            ray = LineString([(ux, uy), (ux + dx, uy + dy)])
+            strike = ray.intersection(territory_boundary)
+            if strike.is_empty:
+                longest_ray_length = 40
+                longest_ray_theta = theta
+            else:
+                ray_length = pos_point.distance(strike)
+                if ray_length > longest_ray_length:
+                    longest_ray_length = ray_length
+                    longest_ray_theta = theta
+
+                if ray_length < 5:
+                    under_threshold += 1
+
+        if (under_threshold / total_rays) > 0.7:
+            self.debug("Retreat!")
+            # Retreat direction of longest ray
+            return np.array(to_cartesian(1, longest_ray_theta))
+            # return force_vec(self.params.home_base, unit_pos)[0]
+        else:
+            return np.array([0, 0])
 
     def deallocation_candidate(self, update, target_point):
         closest_dist = 500
@@ -1201,9 +1281,12 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
         len(interceptor_role.units)
         for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
     )
-    TARGET_DENSITY = rule_inputs.update.territory_hull().area / 500
-    rule_inputs.debug(f"{len(defender_role.units)}/{TARGET_DENSITY} defenders")
-    if len(defender_role.units) + total_interceptors < TARGET_DENSITY:
+    target_density = (
+        rule_inputs.update.territory_hull().area
+        / rule_inputs.strategy_params.defender_area
+    )
+    rule_inputs.debug(f"{len(defender_role.units)}/{target_density} defenders")
+    if len(defender_role.units) + total_interceptors < target_density:
         defender_role.allocate_unit(uid)
         return True
     return False
@@ -1246,9 +1329,26 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
 reallocation_rules = ReallocationRules()
 
 
-@reallocation_rules.rule
-def reassign_defenders_on_sufficient_density(rule_inputs: RuleInputs):
-    return False
+# @reallocation_rules.rule
+def reassign_scouts(rule_inputs: RuleInputs):
+    if rule_inputs.update.turn < 30:
+        return False
+
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+    scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+    unit_ownership, _ = rule_inputs.update.unit_ownership()
+    did_something = False
+    for uid in scout_role.units:
+        unit_pos = rule_inputs.update.unit_id_to_pos(rule_inputs.params.player_idx, uid)
+        if (
+            np.linalg.norm(unit_pos - rule_inputs.params.home_base) > 40
+            and len(unit_ownership[rule_inputs.params.player_idx][uid]) < 30
+        ):
+            rule_inputs.debug("Reassigned scout")
+            did_something = True
+            scout_role.deallocate_unit(uid)
+            defender_role.allocate_unit(uid)
+    return did_something
 
 
 @reallocation_rules.rule
@@ -1331,10 +1431,6 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
 
 
 @reallocation_rules.rule
-def reinforce_defenders(rule_inputs: RuleInputs):
-    return False
-
-
 def release_interceptors_on_retreat(rule_inputs: RuleInputs):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
 
@@ -1643,126 +1739,3 @@ class Player:
 
         self.turn += 1
         return moves
-
-
-def visualize_risk(risks, enemy_units_locations, own_units, turn):
-    DISPLAY_EVERY_N_ROUNDS = 30
-    HEAT_MAP = False
-
-    if HEAT_MAP and turn % DISPLAY_EVERY_N_ROUNDS == 0:
-
-        c = []
-        for r in risks:
-            c.append(r[1])
-        plt.rcParams["figure.autolayout"] = True
-        x = np.array(enemy_units_locations)[:, 0]
-        y = np.array(enemy_units_locations)[:, 1]
-        c = np.array(c)
-
-        df = pd.DataFrame({"x": x, "y": y, "c": c})
-
-        fig, ax = plt.subplots()  # 1,1, figsize=(20,6))
-        cmap = plt.cm.hot
-        norm = colors.Normalize(vmin=0.0, vmax=100.0)
-        mp = ax.scatter(df.x, df.y, color=cmap(norm(df.c.values)))
-        ax.set_xticks(df.x)
-
-        fig.subplots_adjust(right=0.9)
-        sub_ax = plt.axes([0.8, 0.4, 0.1, 0.4])
-
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        plt.colorbar(sm, cax=sub_ax)
-        ax.invert_yaxis()
-
-        for p in range(1):
-            for num, pos in own_units:
-                ax.scatter(pos[0], pos[1], color="blue")
-
-        np.meshgrid(list(range(100)), list(range(100)))
-        plt.title(f"Day {turn}")
-        plt.tight_layout()
-        plt.savefig(f"risk_{turn}.png")
-
-
-unit_colors = {}
-
-
-def visualize_ownership(turn: int, update: StateUpdate):
-    plt.clf()
-    ax = plt.gca()
-
-    cmap = colors.ListedColormap([dispute_color] + tile_color)
-    bounds = [-1, 1, 2, 3, 4, 5]
-    norm = colors.BoundaryNorm(bounds, cmap.N)
-    X, Y = np.meshgrid(list(range(100)), list(range(100)))
-    plt.pcolormesh(
-        X + 0.5,
-        Y + 0.5,
-        np.transpose(update.map_states),
-        cmap=cmap,
-        norm=norm,
-    )
-
-    # Units
-    for p in range(4):
-        for x, y in update.unit_pos[p]:
-            plt.plot(
-                x,
-                y,
-                color=player_color[p],
-                marker="o",
-                markersize=4,
-                markeredgecolor="black",
-            )
-
-    # Ownership
-    unit_to_owned, _ = update.unit_ownership()
-    lines = {}
-    line_colors = {}
-    for player in range(4):
-        lines[player] = []
-        line_colors[player] = []
-        for unit_id, owned in unit_to_owned[player].items():
-            if not (player, unit_id) in unit_colors:
-                unit_colors[(player, unit_id)] = (
-                    randint(0, 255),
-                    randint(0, 255),
-                    randint(0, 255),
-                )
-            unit_idx = update.unit_id[player].index(unit_id)
-            unit_x, unit_y = update.unit_pos[player][unit_idx]
-            for tile_x, tile_y in owned:
-                lines[player].append(
-                    [
-                        (int(unit_x) + 0.5, int(unit_y) + 0.5),
-                        (tile_x + 0.5, tile_y + 0.5),
-                    ]
-                )
-                line_colors[player].append(unit_colors[(player, unit_id)])
-    for player in range(4):
-        plt.gca().add_collection(
-            LineCollection(
-                lines[player], linewidth=1, alpha=0.2, colors=line_colors[player]
-            )
-        )
-
-    plt.xticks(np.arange(0, 100, 10))
-    plt.yticks(np.arange(0, 100, 10))
-    plt.grid(color="black", alpha=0.1)
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.xaxis.set_ticks_position("none")
-    ax.yaxis.set_ticks_position("none")
-
-    ax.set_aspect(1)
-    ax.set_xlim([0, 100])
-    ax.set_ylim([0, 100])
-    ax.invert_yaxis()
-    plt.title(f"Day {turn}")
-    plt.savefig(f"debug/{turn}.png", dpi=300)
-
-
-makedirs("debug", exist_ok=True)
-existing = glob("debug/*.png")
-for f in existing:
-    remove(f)
