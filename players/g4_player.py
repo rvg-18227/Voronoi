@@ -81,6 +81,10 @@ if THREADED:
     pool = multiprocessing.Pool(multiprocessing.cpu_count())
 
 
+def in_bounds(params: GameParameters, x: int, y: int):
+    return x >= 0 and y >= 0 and x < params.max_dim and y < params.max_dim
+
+
 class StateUpdate:
     """Represents all of the data that changes between turns."""
 
@@ -249,23 +253,7 @@ class StateUpdate:
         if self.cached_territory_hull is not None:
             return self.cached_territory_hull
 
-        territory_points = [
-            (tile_x + 0.5, tile_y + 0.5)
-            for tile_x in range(self.params.max_dim)
-            for tile_y in range(self.params.max_dim)
-            if self.map_states[tile_x][tile_y] == self.params.player_idx + 1
-        ]
-        if len(territory_points) < 3:
-            spawn_x, spawn_y = self.params.spawn_point
-            return box(
-                np.floor(spawn_x), np.floor(spawn_y), np.ceil(spawn_x), np.ceil(spawn_y)
-            )
-        territory_points = MultiPoint(territory_points)
-        hull_poly = territory_points.convex_hull
-        envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
-        self.cached_territory_hull = hull_poly.union(hull_poly.buffer(1)).intersection(
-            envelope
-        )
+        self.cached_territory_hull = self.territory_poly().convex_hull
         return self.cached_territory_hull
 
     def territory_poly(self):
@@ -296,12 +284,18 @@ class StateUpdate:
             continue_x = x + dx
             continue_y = y + dy
             # Try to turn right
-            if own_territory[try_right_x][try_right_y]:
+            if (
+                in_bounds(self.params, try_right_x, try_right_y)
+                and own_territory[try_right_x][try_right_y]
+            ):
                 direction = try_right_dir
                 x = try_right_x
                 y = try_right_y
             # Continue in same direction
-            elif own_territory[continue_x][continue_y]:
+            elif (
+                in_bounds(self.params, continue_x, continue_y)
+                and own_territory[continue_x][continue_y]
+            ):
                 x = continue_x
                 y = continue_y
                 continue
@@ -382,6 +376,41 @@ def ease_out(x):
 
 def near(a, b):
     return np.abs(a - b) < 0.01
+
+
+def retreat_force(
+    update: StateUpdate, unit_pos: NDArray[np.float32], retreat_threshold: float
+):
+    territory_boundary = update.territory_poly().exterior
+    longest_ray_length = 0
+    longest_ray_theta = 0
+    total_rays = 36
+    short_rays = 0
+    pos_point = Point(unit_pos)
+    # Ray casting
+    for theta in np.linspace(0, 2 * np.pi, 36):
+        dx = 50 * np.cos(theta)
+        dy = 50 * np.sin(theta)
+        ux, uy = unit_pos
+        ray = LineString([(ux, uy), (ux + dx, uy + dy)])
+        strike = ray.intersection(territory_boundary)
+        if strike.is_empty:
+            longest_ray_length = 50
+            longest_ray_theta = theta
+        else:
+            ray_length = pos_point.distance(strike)
+            if ray_length > longest_ray_length:
+                longest_ray_length = ray_length
+                longest_ray_theta = theta
+
+            if ray_length < 20:
+                short_rays += 1
+
+    if (short_rays / total_rays) > retreat_threshold:
+        # Retreat direction of longest ray
+        return np.array(to_cartesian(1, longest_ray_theta))
+    else:
+        return np.array([0, 0])
 
 
 # =================
@@ -667,7 +696,7 @@ class Interceptor(Role):
                 attack_repulsion_force * AVOID_INFLUENCE
                 + ATTACK_INFLUENCE * attack_force
                 + noise_influence * self.noise[unit_id]
-                # + 100 * self.retreat_force(update, unit_pos)
+                + 100 * retreat_force(update, unit_pos, 0.8)
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -703,42 +732,6 @@ class Interceptor(Role):
         attack_vec = attack_vec
         attack_vec *= -1
         return attack_vec[0]
-
-    def retreat_force(self, update, unit_pos):
-        territory_boundary = update.territory_poly().exterior
-        longest_ray_length = 0
-        longest_ray_theta = 0
-        total_rays = 36
-        under_threshold = 0
-        pos_point = Point(unit_pos)
-        # Ray casting
-        for theta in np.linspace(0, 2 * np.pi, 36):
-            dx = 50 * np.cos(theta)
-            dy = 50 * np.sin(theta)
-            ux, uy = unit_pos
-            ray = LineString([(ux, uy), (ux + dx, uy + dy)])
-            strike = ray.intersection(territory_boundary)
-            if strike.is_empty:
-                longest_ray_length = 40
-                longest_ray_theta = theta
-            else:
-                ray_length = pos_point.distance(strike)
-                if ray_length > longest_ray_length:
-                    longest_ray_length = ray_length
-                    longest_ray_theta = theta
-
-                if ray_length < 5:
-                    under_threshold += 1
-
-        if (under_threshold / total_rays) > 0.8:
-            self.debug("========")
-            self.debug("Retreat!")
-            self.debug("========")
-            # Retreat direction of longest ray
-            return np.array(to_cartesian(1, longest_ray_theta))
-            # return force_vec(self.params.home_base, unit_pos)[0]
-        else:
-            return np.array([0, 0])
 
     def deallocation_candidate(self, update, target_point):
         pass
@@ -792,9 +785,9 @@ class GreedyScout(Role):
             home_force = repelling_force(unit_pos, self.params.home_base)
             closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
 
-            retreat_force = self.retreat_force(update, unit_pos)
-            if np.linalg.norm(retreat_force) > 0:
-                moves[unit_id] = to_polar(normalize(retreat_force))
+            retreat = retreat_force(update, unit_pos, 0.8)
+            if np.linalg.norm(retreat) > 0:
+                moves[unit_id] = to_polar(normalize(retreat))
                 continue
 
             if closest_enemy_d < 2:  # RUN AWAY TO HOME
@@ -827,41 +820,6 @@ class GreedyScout(Role):
                     moves[unit_id] = (d, a)
 
         return moves
-
-    def retreat_force(self, update, unit_pos):
-        territory_boundary = update.territory_poly().exterior
-        longest_ray_length = 0
-        longest_ray_theta = 0
-        total_rays = 36
-        under_threshold = 0
-        pos_point = Point(unit_pos)
-        # Ray casting
-        for theta in np.linspace(0, 2 * np.pi, total_rays):
-
-            dx = 50 * np.cos(theta)
-            dy = 50 * np.sin(theta)
-            ux, uy = unit_pos
-            ray = LineString([(ux, uy), (ux + dx, uy + dy)])
-            strike = ray.intersection(territory_boundary)
-            if strike.is_empty:
-                longest_ray_length = 40
-                longest_ray_theta = theta
-            else:
-                ray_length = pos_point.distance(strike)
-                if ray_length > longest_ray_length:
-                    longest_ray_length = ray_length
-                    longest_ray_theta = theta
-
-                if ray_length < 20:
-                    under_threshold += 1
-
-        if (under_threshold / total_rays) > 0.7:
-            self.debug("Retreat!")
-            # Retreat direction of longest ray
-            return np.array(to_cartesian(1, longest_ray_theta))
-            # return force_vec(self.params.home_base, unit_pos)[0]
-        else:
-            return np.array([0, 0])
 
     def deallocation_candidate(self, update, target_point):
         closest_dist = 500
@@ -1292,14 +1250,6 @@ class ReallocationRules:
 # Higher up means higher precedence
 spawn_rules = SpawnRules()
 
-# ATTACKER TESTING
-# @spawn_rules.rule
-# def all_attackers(rule_inputs: RuleInputs, uid: str):
-#     global attack_roll
-#     rule_inputs.role_groups.of_type(RoleType.ATTACKER)[attack_roll % 3].allocate_unit(uid)
-#     attack_roll += 1
-#     return True
-
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
@@ -1327,18 +1277,13 @@ def populate_defenders(rule_inputs: RuleInputs, uid: str):
     return False
 
 
-# @spawn_rules.rule
-def all_defense(rule_inputs: RuleInputs, uid: str):
-    rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-    return True
-
-
-# @spawn_rules.rule
-def all_scouts(rule_inputs: RuleInputs, uid: str):
-    # rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
-    # rule_inputs.debug("Scout")
-    rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-    return True
+@spawn_rules.rule
+def low_spawn_no_attackers(rule_inputs: RuleInputs, uid: str):
+    if rule_inputs.params.spawn_days > 5:
+        scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+        scout_role.allocate_unit(uid)
+        return True
+    return False
 
 
 @spawn_rules.rule
@@ -1364,7 +1309,7 @@ def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
 reallocation_rules = ReallocationRules()
 
 
-# @reallocation_rules.rule
+@reallocation_rules.rule
 def reassign_scouts(rule_inputs: RuleInputs):
     if rule_inputs.update.turn < 30:
         return False
@@ -1374,10 +1319,12 @@ def reassign_scouts(rule_inputs: RuleInputs):
     unit_ownership, _ = rule_inputs.update.unit_ownership()
     did_something = False
     for uid in scout_role.units:
-        unit_pos = rule_inputs.update.unit_id_to_pos(rule_inputs.params.player_idx, uid)
+        unit_pos = Point(
+            rule_inputs.update.unit_id_to_pos(rule_inputs.params.player_idx, uid)
+        )
         if (
-            np.linalg.norm(unit_pos - rule_inputs.params.home_base) > 40
-            and len(unit_ownership[rule_inputs.params.player_idx][uid]) < 30
+            unit_pos.distance(rule_inputs.update.territory_poly().exterior) < 10
+            and len(unit_ownership[rule_inputs.params.player_idx][uid]) < 20
         ):
             rule_inputs.debug("Reassigned scout")
             did_something = True
