@@ -272,18 +272,53 @@ class StateUpdate:
         if self.cached_territory_poly is not None:
             return self.cached_territory_poly
 
-        spawn_x, spawn_y = self.params.spawn_point
-        total_territory = box(
-            np.floor(spawn_x), np.floor(spawn_y), np.ceil(spawn_x), np.ceil(spawn_y)
-        )
-        for x in range(self.params.max_dim):
-            for y in range(self.params.max_dim):
-                if self.map_states[x][y] == self.params.player_idx + 1:
-                    tile_poly = box(x, y, x + 1, y + 1)
-                    tile_poly = tile_poly.union(tile_poly.buffer(0.01))
-                    total_territory = total_territory.union(tile_poly)
+        move = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        vertex_off = [(0, 0), (0, 1), (1, 1), (1, 0)]
+        direction = 0
+        spawn_x, spawn_y = map(int, self.params.spawn_point)
+        vertices = []
+        x, y = spawn_x, spawn_y
+        own_territory = [
+            [cell == self.params.player_idx + 1 for cell in col]
+            for col in self.map_states
+        ]
 
-        self.cached_territory_poly = total_territory
+        while len(vertices) < 4 or (x, y) != (spawn_x, spawn_y):
+            vx, vy = vertex_off[direction]
+            vertices.append((x + vx, y + vy))
+
+            try_right_dir = (direction - 1) % 4
+            dx, dy = move[try_right_dir]
+            try_right_x = x + dx
+            try_right_y = y + dy
+
+            dx, dy = move[direction]
+            continue_x = x + dx
+            continue_y = y + dy
+            # Try to turn right
+            if own_territory[try_right_x][try_right_y]:
+                direction = try_right_dir
+                x = try_right_x
+                y = try_right_y
+            # Continue in same direction
+            elif own_territory[continue_x][continue_y]:
+                x = continue_x
+                y = continue_y
+                continue
+            # Turn left
+            else:
+                direction = (direction + 1) % 4
+
+        # plt.clf()
+        # plt.plot(*list(zip(*vertices)))
+
+        # plt.gca().set_aspect(1)
+        # plt.gca().set_xlim([0, 100])
+        # plt.gca().set_ylim([0, 100])
+        # plt.gca().invert_yaxis()
+        # plt.savefig(f"debug/{self.turn}.png")
+
+        self.cached_territory_poly = Polygon(vertices)
         return self.cached_territory_poly
 
 
@@ -757,10 +792,10 @@ class GreedyScout(Role):
             home_force = repelling_force(unit_pos, self.params.home_base)
             closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
 
-            # retreat_force = self.retreat_force(update, unit_pos)
-            # if np.linalg.norm(retreat_force) > 0:
-            #     moves[unit_id] = to_polar(normalize(retreat_force))
-            #     continue
+            retreat_force = self.retreat_force(update, unit_pos)
+            if np.linalg.norm(retreat_force) > 0:
+                moves[unit_id] = to_polar(normalize(retreat_force))
+                continue
 
             if closest_enemy_d < 2:  # RUN AWAY TO HOME
                 force = to_polar(normalize((home_force * HOME_INFLUENCE)))
@@ -797,7 +832,7 @@ class GreedyScout(Role):
         territory_boundary = update.territory_poly().exterior
         longest_ray_length = 0
         longest_ray_theta = 0
-        total_rays = 16
+        total_rays = 36
         under_threshold = 0
         pos_point = Point(unit_pos)
         # Ray casting
@@ -817,7 +852,7 @@ class GreedyScout(Role):
                     longest_ray_length = ray_length
                     longest_ray_theta = theta
 
-                if ray_length < 5:
+                if ray_length < 20:
                     under_threshold += 1
 
         if (under_threshold / total_rays) > 0.7:
