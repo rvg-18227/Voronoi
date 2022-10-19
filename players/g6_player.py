@@ -473,6 +473,7 @@ class Spacer:
         self.player_idx = player_idx
         self.day = 0
         self.scanner_radius = 50
+        self.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
 
     def update(self, map_state, spacerIdxs, units, enemy_units):
         self.map_state = map_state
@@ -497,7 +498,7 @@ class Spacer:
             #print('u', unit)
             enemy_force = np.add.reduce([self.repelling_force(unit,np.array(enemy)) for enemy in self.enemy_units])
             #print('sp',(self.spawn_point))
-            home_force = self.repelling_force(unit, np.array(self.spawn_point))
+            home_force = self.repelling_force(unit, np.array(self.home_base))
             #print('hghgh',enemy_force, home_force)
             ally_forces_list = []
             for ally in self.unit_locations:
