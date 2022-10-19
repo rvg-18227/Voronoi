@@ -42,10 +42,10 @@ class GameParameters:
     total_days: int
     spawn_days: int
     player_idx: int
-    spawn_point: tuple[float, float]
+    spawn_point: NDArray[np.float32]
     min_dim: int
     max_dim: int
-    home_base: tuple[float, float]
+    home_base: NDArray[np.float32]
 
 
 class StrategyParameters:
@@ -54,13 +54,18 @@ class StrategyParameters:
 
     def __init__(self, params: GameParameters):
         self.min_defenders = 20 if params.spawn_days < 5 else 10
-        self.interceptor_strength = 5 if params.spawn_days < 5 else 3
+        self.interceptor_strength = 3
         if params.spawn_days < 2:
             self.defender_area = 100
         elif params.spawn_days < 5:
             self.defender_area = 200
         else:
             self.defender_area = 500
+
+        if params.spawn_days < 5:
+            self.scout_ownership = 10
+        else:
+            self.scout_ownership = 20
 
 
 def get_nearest_unit(
@@ -228,7 +233,7 @@ class StateUpdate:
         enemies = self.enemies()
         enemy_units = self.enemy_units()
         dbscans = {
-            enemy: DBSCAN(eps=3, min_samples=1).fit(
+            enemy: DBSCAN(eps=5, min_samples=1).fit(
                 [unit_pos for _, unit_pos in enemy_units[enemy]]
             )
             for enemy in enemies
@@ -253,7 +258,11 @@ class StateUpdate:
         if self.cached_territory_hull is not None:
             return self.cached_territory_hull
 
-        self.cached_territory_hull = self.territory_poly().convex_hull
+        hull_poly = self.territory_poly().convex_hull
+        envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
+        self.cached_territory_hull = hull_poly.union(hull_poly.buffer(1)).intersection(
+            envelope
+        )
         return self.cached_territory_hull
 
     def territory_poly(self):
@@ -302,15 +311,6 @@ class StateUpdate:
             # Turn left
             else:
                 direction = (direction + 1) % 4
-
-        # plt.clf()
-        # plt.plot(*list(zip(*vertices)))
-
-        # plt.gca().set_aspect(1)
-        # plt.gca().set_xlim([0, 100])
-        # plt.gca().set_ylim([0, 100])
-        # plt.gca().invert_yaxis()
-        # plt.savefig(f"debug/{self.turn}.png")
 
         self.cached_territory_poly = Polygon(vertices)
         return self.cached_territory_poly
@@ -696,7 +696,7 @@ class Interceptor(Role):
                 attack_repulsion_force * AVOID_INFLUENCE
                 + ATTACK_INFLUENCE * attack_force
                 + noise_influence * self.noise[unit_id]
-                + 100 * retreat_force(update, unit_pos, 0.8)
+                # + 100 * retreat_force(update, unit_pos, 0.8)
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -1319,14 +1319,22 @@ def reassign_scouts(rule_inputs: RuleInputs):
     unit_ownership, _ = rule_inputs.update.unit_ownership()
     did_something = False
     for uid in scout_role.units:
-        unit_pos = Point(
+        pos_point = Point(
             rule_inputs.update.unit_id_to_pos(rule_inputs.params.player_idx, uid)
         )
+        territory = rule_inputs.update.territory_poly()
+        _, nearest_border = nearest_points(pos_point, territory.exterior)
         if (
-            unit_pos.distance(rule_inputs.update.territory_poly().exterior) < 10
-            and len(unit_ownership[rule_inputs.params.player_idx][uid]) < 20
+            pos_point.distance(territory.exterior) < 10
+            and not (
+                near(nearest_border.x, 0)
+                or near(nearest_border.x, rule_inputs.params.max_dim)
+                or near(nearest_border.y, 0)
+                or near(nearest_border.y, rule_inputs.params.max_dim)
+            )
+            and len(unit_ownership[rule_inputs.params.player_idx][uid])
+            < rule_inputs.strategy_params.scout_ownership
         ):
-            rule_inputs.debug("Reassigned scout")
             did_something = True
             scout_role.deallocate_unit(uid)
             defender_role.allocate_unit(uid)
@@ -1335,26 +1343,6 @@ def reassign_scouts(rule_inputs: RuleInputs):
 
 @reallocation_rules.rule
 def form_interceptors_on_threat(rule_inputs: RuleInputs):
-    # Visualize Clusters
-    # if rule_inputs.params.player_idx == 0 and rule_inputs.update.turn % 10 == 0:
-    #     player_unit_id_to_pos = {
-    #         (player, uid): pos
-    #         for player in range(4)
-    #         for uid, pos in zip(
-    #             rule_inputs.update.unit_id[player], rule_inputs.update.unit_pos[player]
-    #         )
-    #     }
-    #     plt.clf()
-    #     clusters = rule_inputs.update.enemy_clusters()
-    #     for enemy, enemy_clusters in clusters.items():
-    #         for cluster, cluster_units in enemy_clusters.items():
-    #             cluster_positions = [
-    #                 player_unit_id_to_pos[(enemy, unit_id)] for unit_id in cluster_units
-    #             ]
-    #             xs = [x for x, _ in cluster_positions]
-    #             ys = [y for _, y in cluster_positions]
-    #             plt.plot(xs, ys, marker="o")
-    #     plt.savefig(f"debug/{rule_inputs.update.turn}.png")
     per_enemy_clusters = rule_inputs.update.enemy_clusters()
     all_clusters = [
         (
@@ -1507,6 +1495,49 @@ def reinforce_interceptors(rule_inputs: RuleInputs):
     return did_reallocations
 
 
+@reallocation_rules.rule
+def deploy_excess_defenders(rule_inputs: RuleInputs):
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+    target_density = (
+        rule_inputs.update.territory_hull().area
+        / rule_inputs.strategy_params.defender_area
+    )
+    did_reallocations = False
+    excess_defenders = len(defender_role.units) - (1.5 * target_density)
+    if excess_defenders > 0:
+        if rule_inputs.params.spawn_days <= 5:
+            scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+            attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
+            for _ in range(int(excess_defenders)):
+                converted_defender = defender_role.deallocation_candidate(
+                    rule_inputs.update, rule_inputs.params.spawn_point
+                )
+                defender_role.deallocate_unit(converted_defender)
+
+                total_scouts = len(scout_role.units)
+                total_attackers = sum(
+                    len(attackers.units) for attackers in attacker_roles
+                )
+                if total_scouts >= total_attackers:
+                    global attack_roll
+                    attacker_roles[attack_roll % 3].allocate_unit(converted_defender)
+                    attack_roll += 1
+                else:
+                    scout_role.allocate_unit(converted_defender)
+                did_reallocations = True
+        else:
+            scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+            for _ in range(int(excess_defenders)):
+                converted_defender = defender_role.deallocation_candidate(
+                    rule_inputs.update, rule_inputs.params.spawn_point
+                )
+                defender_role.deallocate_unit(converted_defender)
+                scout_role.allocate_unit(converted_defender)
+                did_reallocations = True
+
+    return did_reallocations
+
+
 # ======
 # Player
 # ======
@@ -1554,10 +1585,12 @@ class Player:
         self.params.total_days = total_days
         self.params.spawn_days = spawn_days
         self.params.player_idx = player_idx
-        self.params.spawn_point = (float(spawn_point.x), float(spawn_point.y))
+        self.params.spawn_point = point_to_floats(spawn_point)
         self.params.min_dim = min_dim
         self.params.max_dim = max_dim
-        self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
+        self.params.home_base = np.array(
+            [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
+        )
 
         self.strategy_params = StrategyParameters(self.params)
 
