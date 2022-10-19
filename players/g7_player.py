@@ -429,7 +429,6 @@ class Player:
         offense_idx = [i['move'] for i in offense]
         ###
 
-        #### 10/17 Travis
         # If the day is greater than 50 formation building is over enter dynamic template    
         if self.day > 50:
             queue = friendly_unit_ids
@@ -448,19 +447,13 @@ class Player:
                 
                 current_unit_pos = self.unit_pos_angle[unit]['pos']
 
-
+                # Find direction and distance to nearest space, need to normalize and test direction
                 [direction_empty_space, distance_empty_space] = self.nearest_enemy_space(current_unit_pos, np_spaces)
 
-                # if a unit is within 20 and there are no attackers continue in principle direction
-                # if self.home_point.distance(current_unit_pos) < 25 and distance_empty_space >  10:
-                #    continue # Continue moving this unit in principle direction since it is so close to home
-
-                if distance_empty_space > 5:
+                #    continue # Continue moving this unit in principle direction since there are no enemies nearby
+                if distance_empty_space > 10:
                     continue
                 
-                # Find direction and distance to nearest space, need to normalize and test direction
-                
-
                 # Find all nearby units
                 [teammates, enemies] = self.nearest_units_to_unit(current_unit_pos, unit_pos)
 
@@ -474,47 +467,6 @@ class Player:
                 self.unit_pos_angle[unit]['distance'] = 1
                 
                 self.unit_pos_angle[unit]['angle'], self.unit_pos_angle[unit]['distance'] = self.behavior(closest_teammate, closest_enemy, unit, current_unit_pos, direction_empty_space, closest_teammate_dist, closest_enemy_dist)
-                # From here would like to see 4 core behaviors, I put this into a function called behavior
-                # but I don't want to delete this code until you look at it
-
-                # 1. no enemies around -> move towards combination of away from teamates and towards empty space
-                    # Speed should be 1 here I think basically no matter what
-                    # Direction can be as simple as combination of those two angles
-                # if not closest_enemy and closest_teammate:
-                #     diff_x, diff_y = closest_teammate.x-current_unit_pos.x, closest_teammate.y-current_unit_pos.y
-                #     theta_team = atan2(diff_y, diff_x)
-
-                #     # Go in opposite direction
-                #     if theta_team < 0:
-                #         theta_team+=pi
-                #     else:
-                #         theta_team-=pi
-
-                #     self.unit_pos_angle[unit]['angle'] = theta_team
-
-                # # 2. nothing around -> move towards empty space or if close to home move in principle direction
-                #     # Speed should be 1
-                #     # direction given by direction_empty_space
-                # elif not closest_enemy and not closest_teammate:
-                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                #     self.unit_pos_angle[unit]['distance'] = 1
-                
-                # # 3. only enemies around -> move in combination of opposite from enemies and towards home
-                #     # Speed towards home should depend on distance from home and distance from enemies
-                #     # As we get closer to enemies with no support move away faster
-                #     # As we get further from home move faster aswell
-                # elif closest_enemy and not closest_teammate:
-                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                #     self.unit_pos_angle[unit]['distance'] = 1
-
-                # # 4. enemies and teamates around -> use computed distances from team and enemies to pincer or stay still
-                #     # Speed based on saftey metrics again
-                #     # offset angle to get around enemies if we have more support than danger
-                # else:
-                #     self.unit_pos_angle[unit]['angle'] = direction_empty_space
-                #     self.unit_pos_angle[unit]['distance'] = 1
-
-
                 
         for i in range(total_friendly_units):
             moves.append((self.unit_pos_angle[friendly_unit_ids[i]]['distance'], self.unit_pos_angle[friendly_unit_ids[i]]['angle']))
