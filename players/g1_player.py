@@ -809,7 +809,9 @@ class Player:
         if not self.draft_cmdo_start:
             self.draft_cmdo_start = True
             self.units_to_be_drafted = []
-        if self.current_day > 50 and len(self.commando_squads) < self.num_commandos and self.draft_cmdo_start:
+
+        total_com = max(self.num_commandos, len(ideal_incur_units))
+        if self.current_day > 50 and len(self.commando_squads) < total_com and self.draft_cmdo_start:
             # if self.current_day > 50 and len(self.commando_squads) < len(ideal_incur_units) and self.draft_cmdo_start:
             if len(self.units_to_be_drafted) < 3:
                 if self.current_day % self.spawn_days == 0:
