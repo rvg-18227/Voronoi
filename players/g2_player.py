@@ -24,7 +24,7 @@ DETECTION_RADIUS = 15
 DELTA_RADIUS = 2
 
 #SCISSOR STARTING OUTER RADIUS
-OUTER_RADIUS = 50
+OUTER_RADIUS = 55
 INNER_RADIUS = OUTER_RADIUS-3
 
 OUTER_SPEED = 1
@@ -750,7 +750,7 @@ class Player:
                 ally_net_players_inc = ally_count + len(self.regions_uid_otw[region]) - enemy_count[region]
                 ally_net_players_dec = (ally_count)*11 - enemy_count[region]
 
-                if ally_net_players_inc >= 3 and region.radius < 70:
+                if (ally_net_players_inc >= 3 and unit_count_in_region >= 2) and region.radius < 70:
 
                     #move region up
                     region.changeBounds(REGION_INCREMENT)
@@ -898,7 +898,7 @@ class Player:
         assignable_ally_unit_ids = sorted(list(self.historical_ally_unit_ids), key=int)
 
         # if game length < 50, special plan
-        if self.game_length <= 50:
+        if self.game_length <= 50 or self.game_length/self.spawn_days < 25:
             print(assignable_ally_unit_ids)
             moves.update(self.short_game_moves(assignable_ally_unit_ids))
             return list(moves.values())
