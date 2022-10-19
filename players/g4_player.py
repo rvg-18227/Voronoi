@@ -27,7 +27,7 @@ from typing_extensions import TypeAlias
 
 from constants import dispute_color, player_color, tile_color
 
-THREADED = True
+THREADED = False
 
 # ==================
 # Game State Classes
@@ -193,7 +193,11 @@ class StateUpdate:
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
 
-        player_kdtrees = {player: KDTree(self.unit_pos[player]) for player in range(4)}
+        player_kdtrees = {
+            player: KDTree(self.unit_pos[player])
+            for player in range(4)
+            if len(self.unit_pos[player]) > 0
+        }
         work: list[tuple[tuple[int, int], int, KDTree, dict[int, str]]] = []
         for tile_x in range(self.params.max_dim):
             for tile_y in range(self.params.max_dim):
