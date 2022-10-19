@@ -856,7 +856,7 @@ class Player:
                 self.enemy_units.update({f"{idx}-{uid}": pos for uid, pos in zip(unit_id[idx], unit_pos[idx])})
         
         self.ally_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.ally_units.items()}
-        self.ally_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.enemy_units.items()}
+        self.enemy_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.enemy_units.items()}
 
         # Detect killed units
         self.ally_killed_unit_ids = [id for id in list(self.ally_units_yesterday.keys()) if id not in list(self.ally_units.keys())]
