@@ -357,6 +357,9 @@ class Player:
         self.regions_uid_otw = defaultdict(lambda : set())
         self.regions_uid_commited = defaultdict(lambda: set())
 
+        #memoize the previous enemies
+        self.enemy_in_region = {}
+
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
         self.defender_platoon_ids = []
@@ -918,11 +921,23 @@ class Player:
     #what is the enemy_count team_count for a given point
     def enemy_count_in_region(self):
         count = defaultdict(lambda: 0)
-        for u in self.enemy_units.values():
-            for region in self.regions:
-                if region.detection_polygon.contains(u):
+        enemy_in_region = {}
+        for u, pt in self.enemy_units.items():
+
+            if u in self.enemy_in_region:
+                region = self.enemy_in_region[u]
+                if region.detection_polygon.contains(pt):
                     count[region] += 1
+                    enemy_in_region[u] = region
                     continue
+            else:
+                for region in self.regions:
+                    if region.detection_polygon.contains(pt):
+                        count[region] += 1
+                        self.enemy_in_region[u] = region
+                        break
+        
+        self.enemy_in_region = enemy_in_region
         return count
 
     #for a given unit, given by u
