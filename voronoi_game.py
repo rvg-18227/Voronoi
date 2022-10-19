@@ -88,6 +88,10 @@ class VoronoiGame:
         self.players = []
         self.player_names = []
 
+        self.player_time = [self.last_day for i in range(constants.no_of_players)]
+        self.player_timeout = [False for i in range(constants.no_of_players)]
+        self.player_timeout_day = [0 for i in range(constants.no_of_players)]
+
         self.map_states = [[[[0 for z in range(constants.max_map_dim)] for k in range(constants.max_map_dim)] for j in
                             range(constants.day_states)] for i in range(self.last_day)]
 
@@ -127,19 +131,8 @@ class VoronoiGame:
         print("\nPlayers - {}".format(result["player_names"]))
         print("Day Score - {}".format(result["player_score"]))
         print("Total Score - {}".format(result["player_total_score"]))
-        print("{} Units - {}".format(result["player_names"][0], result["unit_id"][0]))
-        print("{} Unit Positions - {}".format(result["player_names"][0],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][0]]))
-        print("{} Units - {}".format(result["player_names"][1], result["unit_id"][1]))
-        print("{} Unit Positions - {}".format(result["player_names"][1],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][1]]))
-        print("{} Units - {}".format(result["player_names"][2], result["unit_id"][2]))
-        print("{} Unit Positions - {}".format(result["player_names"][2],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][2]]))
-        print("{} Units - {}".format(result["player_names"][3], result["unit_id"][3]))
-        print("{} Unit Positions - {}".format(result["player_names"][3],
-                                              [(float(i.x), float(i.y)) for i in result["unit_pos"][3]]))
-        print("\nTime Elapsed - {:.3f}s".format(self.end_time-self.start_time))
+        print("Timeout - {}".format(result["player_timeout_day"]))
+        print("\nTime Elapsed - {}s".format(self.end_time-self.start_time))
 
         if args.dump_state:
             with open("game.pkl", "wb+") as f:
@@ -270,13 +263,25 @@ class VoronoiGame:
 
         returned_action = None
         for i in range(constants.no_of_players):
-            if len(self.unit_id[day][0][i]) > 0:
-                returned_action = self.players[i].play(
-                    unit_id=self.unit_id[day][0],
-                    unit_pos=self.unit_pos[day][0],
-                    map_states=self.map_states[day][0],
-                    current_scores=self.player_score[day][0],
-                    total_scores=self.player_total_score[day])
+            if len(self.unit_id[day][0][i]) > 0 and not self.player_timeout[i]:
+                player_start = time.time()
+                try:
+                    returned_action = self.players[i].play(
+                        unit_id=self.unit_id[day][0],
+                        unit_pos=self.unit_pos[day][0],
+                        map_states=self.map_states[day][0],
+                        current_scores=self.player_score[day][0],
+                        total_scores=self.player_total_score[day])
+                except Exception:
+                    returned_action = None
+
+                player_time_taken = time.time() - player_start
+
+                self.player_time[i] -= player_time_taken
+                if self.player_time[i] <= 0:
+                    self.player_timeout[i] = True
+                    self.player_timeout_day[i] = day+1
+                    returned_action = None
 
             if self.check_action(returned_action, day, i):
                 returned_action = [(float(dist), float(angle)) for dist, angle in returned_action]
@@ -387,6 +392,7 @@ class VoronoiGame:
         return_dict["player_names"] = self.player_names
         return_dict["player_score"] = self.player_score[day][state]
         return_dict["player_total_score"] = self.player_total_score[day]
+        return_dict["player_timeout_day"] = self.player_timeout_day
         return_dict["unit_id"] = self.unit_id[day][state]
         return_dict["unit_pos"] = self.unit_pos[day][state]
         return return_dict
