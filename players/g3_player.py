@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from functools import reduce
 import logging
@@ -8,6 +10,8 @@ import time
 import numpy as np
 import ot
 from shapely.geometry import Point
+
+
 
 
 # -----------------------------------------------------------------------------
@@ -26,11 +30,6 @@ SCOUT_HOMEBASE_SCALE = 10.0
 SCOUT_BORDER_SCALE = 5.0
 SCOUT_ENEMY_BASE_SCALE = 50.0
 
-COOL_DOWN = 5
-CB_DURATION = 5 # days dedicated to border consolidation in each cycle
-CB_START = 35    # the day to start the first cycle of border consolidation
-
-
 # -----------------------------------------------------------------------------
 #   Custom Types
 # -----------------------------------------------------------------------------
@@ -38,7 +37,8 @@ CB_START = 35    # the day to start the first cycle of border consolidation
 Tid = str
 Uid = int
 Upos = Tuple[float, float]
-Move = Tuple[Uid, Upos]
+Move = Tuple[float, float] # (distance, angle)
+Umove = Tuple[Uid, Move]
 
 
 # -----------------------------------------------------------------------------
@@ -51,6 +51,7 @@ class Player(ABC):
     enemy_bases: np.ndarray
     our_units: np.ndarray
     enemy_units: np.ndarray
+    resource_pool: ResourcePool
 
     @abstractmethod
     def play(self):
@@ -63,7 +64,11 @@ class Role(ABC):
         pass
 
     @abstractmethod
-    def move(self) -> List[Move]:
+    def move(self) -> List[Umove]:
+        pass
+
+    @abstractmethod 
+    def release(self):
         pass
 
 
@@ -80,6 +85,11 @@ class RoleTemplate(Role):
     def _debug(self, *args):
         self._logger.debug(
             f"[ {self._name} ] " + " ".join(str(a) for a in args))
+    
+    def _get_unit_indices(self, target_ids: List[Uid]) -> List[int]:
+        """Return the indices of unit_ids."""
+        player_unit_ids = self.player.our_unit_ids
+        return np.where(np.in1d(player_unit_ids, target_ids))[0]
 
     @property
     def name(self):
@@ -88,47 +98,186 @@ class RoleTemplate(Role):
     @property
     def player(self):
         return self._player
+        
+    @property
+    def resource_pool(self):
+        return self.player.resource_pool
 
 
 # -----------------------------------------------------------------------------
 #   Soldier Allocation, Deallocation, Coordination Framework
 # -----------------------------------------------------------------------------
+class State:
+    def __init__(self, unit_id: List[str], unit_pos: List[float], map_states: List[List[int]]):
+        self.unit_id = unit_id
+        self.unit_pos = unit_pos
+        self.map_states = map_states
+
+        self.unit_id_set = set(self.unit_id)
+    
+    def update(self, unit_id: List[str], unit_pos: List[float], map_states: List[List[int]]):
+        self.unit_id = unit_id
+        self.unit_pos = unit_pos
+        self.map_states = map_states
+        self.unit_id_set = set(self.unit_id)
+    
+    def update_using_state(self, state: State):
+        self.update(state.unit_id, state.unit_pos, state.map_states)
+    
+    def new_deaths(self, prev_state: State) -> set:
+        return prev_state.unit_id_set - self.unit_id_set
+    
+    def new_units(self, prev_state: State) -> set:
+        return self.unit_id_set - prev_state.unit_id_set
 
 class ResourcePool:
     def __init__(self, player: Player):
         self.player = player
         self.unit_to_team_dict = {}
         self.team_to_unit_dict = {}
-    
-    # team_id = 'team''number' i.e. specialforce1
+        
+        # self.prev_state = State(player.unit_id, player.float_unit_pos, player.map_states)
+        # self.cur_state = State(player.unit_id, player.float_unit_pos, player.map_states)
+        self.prev_state = State([], [], [])
+        self.cur_state = State([], [], [])
 
+        self.casualties = set()
+        # self.free = set(player.unit_id)
+        self.free = set()
+
+        self.delta_dict = {}
+        self.update_state()
+
+    def _debug(self, *args):
+        self.player.debug("[ Resource Pool ] ", args)
+    
     def get_team_ids(self, team_id: Tid) -> List[Uid]:
-        pass
+        # team_id = 'team''number' i.e. specialforce1
+        if team_id not in self.team_to_unit_dict:
+            return False
+            
+        return self.team_to_unit_dict[team_id].tolist()
 
     def get_team(self, unit_id: Uid) -> Tid:
-        pass
+        if unit_id not in self.unit_to_team_dict:
+            return False
+            
+        return self.unit_to_team_dict[unit_id]
 
     def is_dead(self, unit_id: Uid) -> bool:
-        pass
+        return unit_id in self.casualties
 
     def get_team_casualties(self, team_id: Tid) -> List[Uid]:
-        pass
+        if team_id != "free" and team_id not in self.team_to_unit_dict:
+            self._debug("get_team_casualties:", f"Team {team_id} not found")
+            return []
+        
+        if team_id not in self.delta_dict:
+            return []
+
+        return self.delta_dict[team_id].tolist()
+
+        ### change to be for this round specifically
 
     def get_free_units(self) -> List[Uid]:
-        pass
+        return list(self.free)
 
     def claim_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
         """Returns list of units unable to be claimed."""
+        claim_set = set(units)
+        successful_claims = claim_set.intersection(self.free)
+        failed_claims = claim_set.difference(successful_claims)
+
+        if team_id not in self.team_to_unit_dict:
+            self.team_to_unit_dict[team_id] = np.array([])
+        
+        self.team_to_unit_dict[team_id] = np.concatenate((self.team_to_unit_dict[team_id], np.array(list(successful_claims))))
+
+        for uid in successful_claims:
+            self.unit_to_team_dict[uid] = team_id
+
+        self.free.difference_update(claim_set)
+
+        return list(failed_claims)
     
-    def release_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
+    def atomically_claim_units(self, team_id: Tid, units: List[Uid]) -> List[Uid]:
+        """Either claims all units or does not claim anything."""
+        claim_set = set(units)
+        failed_claims = claim_set.difference(self.free)
+
+        if len(failed_claims) > 0:
+            return False
+        
+        if len(self.claim_units(team_id, units)) > 0:
+            raise(f'atomic claim resulted in failed claims')
+
+        return True
+    
+    def release_units(self, team_id: Tid, units) -> List[Uid]:
         """"Returns list of units who weren't successfully fired. They were not on the team in the first place"""
+        if team_id not in self.team_to_unit_dict:
+            return False
+        
+        if not type(units) == np.ndarray:
+            units = np.array(units)
+        units_not_on_team = np.setdiff1d(units, self.team_to_unit_dict[team_id])
+        units_on_team = np.intersect1d(units, self.team_to_unit_dict[team_id])
+        self.team_to_unit_dict[team_id] = np.setdiff1d(self.team_to_unit_dict[team_id], units)
+        
+        for unit in units_on_team:
+            self.unit_to_team_dict[unit] = "free"
+
+        # add released units to free list
+        self.free.update(units_on_team)
+
+        return units_not_on_team.tolist()
     
     def update_state(self):
+        us = self.player.us
+        self.prev_state.update_using_state(self.cur_state)
+        #our_units
+        self.cur_state.update(self.player.our_unit_ids, self.player.float_unit_pos[us], self.player.map_states)
+        
+        new_deaths = self.cur_state.new_deaths(prev_state=self.prev_state)
+        new_units = self.cur_state.new_units(prev_state=self.prev_state)
+        self.casualties.update(new_deaths)
+        self.free.update(new_units)         # add new units to free
 
-        pass
+        for unit in new_units:
+            self.unit_to_team_dict[unit] = "free"
+        
+        self.delta_dict = {}
 
-    def get_positions(self, units: List[Uid]) -> List[List[float]]:
-        pass
+        ### remove casualties from free and teams
+        for unit in new_deaths:
+            team = self.unit_to_team_dict[unit]
+            
+            # update deaths this round dictionary (delta_dict)
+            if team not in self.delta_dict:
+                self.delta_dict[team] = np.array([])
+            self.delta_dict[team] = np.concatenate((self.delta_dict[team], np.array([unit])))
+            
+            if team == "free":
+                self.free.remove(unit)
+            else:
+                self.team_to_unit_dict[team] = np.setdiff1d(self.team_to_unit_dict[team], np.array([unit]))
+                
+            self.unit_to_team_dict[unit] = "dead"
+        
+        ## DONE
+
+    def get_positions(self, units) -> List[List[float]]:
+        if not type(units) == np.ndarray:
+            units = np.array(units)
+        cur_unit_id = np.array(self.cur_state.unit_id)
+        cur_pos = np.array(self.cur_state.unit_pos)
+
+        idxs = []
+
+        for unit in units:
+            idxs.extend(np.where(cur_unit_id == unit)[0].tolist())
+        
+        return [cur_pos[i] for i in idxs]
 
 
 # -----------------------------------------------------------------------------
@@ -384,10 +533,16 @@ class DefaultSoldier(RoleTemplate):
             return self._move_radially(pt, forward=False)
 
     def select(self):
-        idx_taken = self.player.scout_team.unit_idx  # TODO: change later
-        self.unit_pos = np.delete(self.player.our_units, idx_taken, axis=0)
+        # NOTE:
+        # will be called after all other teams have made their selection
+        # DefaultSoldiers take any remaining free units, but DO NOT claim them
+        self.unit_ids = self.resource_pool.get_free_units()
+        self.unit_idx = self._get_unit_indices(self.unit_ids)
+        self.unit_pos = np.take(self.player.our_units, self.unit_idx, axis=0)
 
-    def move(self) -> List[Move]:
+        self._debug(f'# units after selection: {len(self.unit_ids)}')
+
+    def move(self) -> List[Umove]:
         dmap = self.player.d
         allies = self.unit_pos
 
@@ -401,8 +556,12 @@ class DefaultSoldier(RoleTemplate):
             for i, plevel in enumerate(pressure_levels)
         ]
 
-        return soldier_moves
-
+        moves = list(zip(self.unit_ids, soldier_moves))
+        self._debug(f'{len(moves)} moves: {moves}')
+        return moves
+    
+    def release(self):
+        pass
 
 class Scouts(RoleTemplate):
     def __init__(self, logger: logging.Logger, player: Player, name: Tid, size: int):
@@ -455,17 +614,37 @@ class Scouts(RoleTemplate):
         """
 
         self._debug("Scouts.select")
-        self.actual_size = min(self.player.our_units.shape[0], self.target_size)
-        self.unit_idx = np.arange(self.actual_size)
-        self.unit_pos = self.player.our_units[self.unit_idx]
 
-    def move(self) -> List[Move]:
+        # update scout team count
+        casualties = len(self.resource_pool.get_team_casualties(self.name))
+        self.actual_size -= casualties
+        units_needed = self.target_size - self.actual_size
+        
+        if units_needed:
+            units_free = self.resource_pool.get_free_units()
+            units_request = units_free[:min(units_needed, len(units_free))]
+            units_unclaimed = self.resource_pool.claim_units(self.name, units_request)
+
+            self._debug(f'units target: {self.target_size}, actual: {self.actual_size} => need {units_needed} units')
+            self._debug(f'requested {units_request}, unclaimed: {units_unclaimed}')
+
+            # update actual_size
+            self.actual_size += (len(units_request) - len(units_unclaimed))
+
+        self.unit_ids = np.array(self.resource_pool.get_team_ids(self.name))
+        self.unit_pos = np.array(self.resource_pool.get_positions(self.unit_ids))
+        self.unit_idx = np.array(self._get_unit_indices(self.unit_ids))
+
+        self._debug(f'unit_ids: {self.unit_ids}')
+
+    def move(self) -> List[Umove]:
 
         self._debug("Scouts.move")
 
         scout_units = self.unit_pos
         ally_units = np.delete(self.player.our_units, self.unit_idx, axis=0)
-        enemy_units = self.player.enemy_units
+        ally_units = np.concatenate([ally_units, self.player.homebase.reshape(1, 2)], axis=0)
+        enemy_units = np.concatenate([self.player.enemy_units, self.player.enemy_bases], axis=0)
 
         # compute ally and enemey distances
         ally_dist = ((scout_units.reshape(-1, 1, 2) - ally_units.reshape(1, -1, 2)) ** 2).sum(axis=2)
@@ -486,8 +665,12 @@ class Scouts(RoleTemplate):
                 enemy_clusters, ally_clusters = self._get_clusters(ally_units)
                 scout_moves[i] = self._explore(scout_units[i], enemy_clusters, ally_clusters)
 
-        return ndarray_to_moves(scout_moves)
+        moves = list(zip(self.unit_ids, ndarray_to_moves(scout_moves)))
+        self._debug(f'{len(moves)} moves: {moves}')
+        return moves
 
+    def release(self):
+        pass
 
 class MacroArmy(RoleTemplate):
 
@@ -495,81 +678,136 @@ class MacroArmy(RoleTemplate):
         super().__init__(logger, player, name)
 
         self.resource = resource
+        self._initialize_params()
+
+    def _initialize_params(self):
         self.unit_ids = None
         self.unit_pos = None
         self.targets = None
+        self.border = None
         self.MAX_UNITS = 500
+        self.MIN_UNITS = 20
 
     def select(self):
         # it would be good if get_free_units() returns an array and claim_units() takes input an array
         free_units = np.array(self.resource.get_free_units(), dtype=int) 
-        self.unit_ids = np.random.choice(free_units, size=min(self.MAX_UNITS, free_units.shape[0]), replace=False)
-        self.resource.claim_units(self.name, self.unit_ids.tolist())
+        request_ids = np.random.choice(free_units, size=min(self.MAX_UNITS, free_units.shape[0]), replace=False)
+        unclaimed_ids = self.resource.claim_units(self.name, request_ids.tolist())
 
-    def move(self) -> List[Move]:
-        if self.move == None:
+        self.unit_ids = np.array(self.resource.get_team_ids(self.name))
+        
+        # not worth doing optimal mapping
+        if self.unit_ids.shape[0] < self.MIN_UNITS:
+            self.release()
+
+        self._debug(f'request   ({len(request_ids)}): {request_ids}')
+        self._debug(f'unclaimed ({len(unclaimed_ids)}): {unclaimed_ids}')
+        self._debug('unit_ids: ', self.unit_ids)
+
+    def move(self) -> List[Umove]:
+        if self.unit_ids is None or self.unit_ids.shape[0] == 0:
+            return []
+        if self.targets is None:
             # Only calculate border and OT assignments once at creation
             self.unit_pos = np.array(self.resource.get_positions(self.unit_ids))
-            border = self.resource.player.get_border()
-            selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
+            self.border = self.resource.player.get_border()
+            selected_border = self.border[np.random.choice(np.arange(self.border.shape[0]), size=min(self.border.shape[0], self.unit_pos.shape[0]), replace=False)]
             self.targets = assign_by_ot(self.unit_pos, selected_border)
         else:
             # remove dead units without changing assignments for other units
-            dead_units = []
-            for i, unit_id in enumerate(self.unit_ids):
-                if self.resource.is_dead(unit_id):
-                    dead_units.append(i)
+            dead_units = [i for i, uid in enumerate(self.unit_ids) if self.resource.is_dead(uid)]
+            self._debug(f'dead unit indices (#: {len(dead_units)}): {dead_units}')
+
             self.unit_ids = np.delete(self.unit_ids, dead_units, axis=0)
-            self.unit_pos = np.delete(self.unit_pos, dead_units, axis=0)
-            self.targets = np.delete(self.targets, dead_units, axis=0)
+            if self.unit_ids.shape[0] == 0:
+                return []
+            self.unit_pos = np.array(self.resource.get_positions(self.unit_ids)) # update unit pos
+            selected_border = self.border[np.random.choice(np.arange(self.border.shape[0]), size=min(self.border.shape[0], self.unit_pos.shape[0]), replace=False)]
+            self.targets = assign_by_ot(self.unit_pos, selected_border)
 
-        return list(zip(self.unit_id, get_moves(self.unit_pos, self.targets)))
+        moves = list(zip(self.unit_ids.tolist(), get_moves(self.unit_pos, self.targets)))
+        self._debug(f'{len(moves)} moves: {moves}')
+        return moves
 
+    def release(self):
+        if not self.unit_ids is None:
+            units_unreleased = self.resource.release_units(self.name, self.unit_ids)
+            self._debug('units_unreleased:', units_unreleased)
+        self._initialize_params()
 
-class SpecialForce:
-    def __init__(self, logger: logging.Logger, player_id, id, team_size: int, unit_idxs: List[int] = [], unit_pos: np.ndarray = np.array([])):
-        self.player_id = player_id
-        self.id = id
+class SpecialForce(RoleTemplate):
+
+    def __init__(self, logger: logging.Logger, player: Player, name: Tid, team_size: int, tolerance: int):
+        self._player = player
+        self._name = name
+        self._logger = logger
+
         self.team_size = team_size
-        self.enemy = None
-        self.logger = logger
-        self.unit_pos_next_step = []
-        if len(unit_idxs) == len(unit_pos):
-            self.unit_idxs = unit_idxs[0:self.team_size]
-            self.unit_pos = unit_pos[0:self.team_size]
-        else:
-            self.logger.info(f"SPECIAL FORCE {self.id}: length of provided unit idxs and unit position list arguments do not match defaulting to intiializing with no units")
-            self.unit_idxs = []
-            self.unit_pos = []
+        self.actual_size = 0
+        self.tolerance = tolerance
 
-        # is team in the correct formation?
-        self.in_formation = False
+        self._initialize_params()
+
         self.formation = self.__create_formation()
 
-        if len(unit_idxs) > self.team_size:
-            self.logger.info(f"SPECIAL FORCE {self.id}: initialized special force team {self.id} with too many units")
+    def _initialize_params(self):
+        self.actual_size = 0
 
-    def add_unit(self, unit_idx: int):
-        if len(self.unit_idxs) >= self.team_size:
-            self.logger.info(f"SPECIAL FORCE {self.id}: cannot add unit {unit_idx} to special force team {self.id}. Too many units")
-            return False
+        self.enemy = None
+        self.unit_pos_next_step = []
+        self.unit_ids = []
+        self.unit_idx = []
+        self.unit_pos = []
+
+        self.attacking = False
+        self.died_while_attacking = 0
+
+    def select(self):
+        self._debug("SpecialForce.select")
+
+        # update scout team count
+        casualties = len(self.resource_pool.get_team_casualties(self.name))
         
-        self.unit_idxs.append(unit_idx)
-        print(self.unit_idxs)
-        return True
+        self.actual_size -= casualties
+        units_needed = self.team_size - self.actual_size
 
-    def get_unit_idxs(self):
-        return self.unit_idxs
+        if units_needed:
+            units_free = sorted(self.resource_pool.get_free_units())
+            units_request = units_free[(-1) * min(units_needed, len(units_free)):len(units_free)]
+            units_unclaimed = self.resource_pool.claim_units(self.name, units_request)
+
+            self._debug(f'units target: {self.team_size}, actual: {self.actual_size} => need {units_needed} units')
+            self._debug(f'requested {units_request}, unclaimed: {units_unclaimed}')
+
+            # update actual_size
+            self.actual_size += (len(units_request) - len(units_unclaimed))
+
+        self.unit_ids = np.array(self.resource_pool.get_team_ids(self.name))
+        self.unit_pos = np.array(self.resource_pool.get_positions(self.unit_ids))
+        self.unit_idx = np.array(self._get_unit_indices(self.unit_ids))
+
+        self.in_formation = self.check_in_formation()
+
+        if self.attacking and (not self.in_formation):
+            self.died_while_attacking += casualties
+        else:
+            self.died_while_attacking = 0
+
+        self._debug(f'unit_ids: {self.unit_ids}')
+
+
+    def get_unit_ids(self):
+        return self.unit_ids
     
     def is_team_full(self):
-        return len(self.unit_idxs) >= self.team_size
-
-    def set_target_enemy(self, enemy: List[float]):
-        self.enemy = enemy
+        return len(self.unit_ids) >= self.team_size
     
+    def set_target_enemy(self, enemy: Move):
+        self.enemy = enemy
+
     def __create_formation(self):
         precomp_formation = [[0, 0]]
-        concentric_circle_points = [[1, 0]] # radius, points
+        concentric_circle_points = [[math.sqrt(self.team_size), 0]] # radius, points
 
         for i in range(self.team_size - 1):
             circle_0_radius = concentric_circle_points[0][0]
@@ -622,7 +860,7 @@ class SpecialForce:
                 precomp_formation.append([circle_radius * np.cos(theta), circle_radius * np.sin(theta)])
         
         return np.array(precomp_formation)
-
+    
     def __compute_formation_positions_around_centroid(self, centroid: np.ndarray):
         positions = np.add(centroid, self.formation)
         return np.clip(positions, 0, 100)
@@ -635,45 +873,55 @@ class SpecialForce:
         
         return np.all(np.absolute(np.subtract(self.unit_pos, self.__compute_formation_positions_around_centroid(centroid = self.unit_pos[0])[0: len(self.unit_pos)])) < [0.01, 0.01])
     
+    @property
+    def centroid(self):
+        if len(self.unit_pos) == 0:
+            return [0, 0]
+        
+        return np.average(np.subtract(self.unit_pos, self.formation[0:len(self.unit_pos)]), axis = 0)
+
     def __congregate(self):
         # we define target_team_centroid as the centroid of the meeting location of all soldiers
         if not self.is_team_full():
             # if team not done being built yet, congregate near home base at 1, 1
-            if self.player_id == 0:
+            if self.player.us == 0:
                 target_team_centroid = np.array([1, 1])
-            elif self.player_id == 1:
+            elif self.player.us == 1:
                 target_team_centroid = np.array([1, 99])
-            elif self.player_id == 2:
+            elif self.player.us == 2:
                 target_team_centroid = np.array([99, 99])
             else:
                 target_team_centroid = np.array([99, 1])
         else:
-            target_team_centroid = np.clip(np.average(np.subtract(self.unit_pos, self.formation[0:len(self.unit_pos)]), axis = 0), 1, 99)
+            target_team_centroid = np.clip(self.centroid, 1, 99)
         
-        self.unit_pos_next_step = self.__compute_formation_positions_around_centroid(centroid = target_team_centroid)[0: len(self.unit_idxs)]
+        self.unit_pos_next_step = self.__compute_formation_positions_around_centroid(centroid = target_team_centroid)[0: len(self.unit_ids)]
 
     def __attack_target_enemy(self):
         cur_centroid = np.array(self.unit_pos[0])
         unit_vec_towards_enemy = (np.subtract(self.enemy, cur_centroid)) / np.linalg.norm(self.enemy / cur_centroid)
-        self.unit_pos_next_step = self.__compute_formation_positions_around_centroid(centroid = cur_centroid + unit_vec_towards_enemy)[0: len(self.unit_idxs)]
+        self.unit_pos_next_step = self.__compute_formation_positions_around_centroid(centroid = cur_centroid + unit_vec_towards_enemy)[0: len(self.unit_ids)]
 
-    def move(self):
-        if self.in_formation:
-            print("attacking")
+    def move(self) -> List[Umove]:
+        if len(self.unit_pos) > 0 and (self.in_formation or (self.attacking and self.died_while_attacking <= self.tolerance)):
+            self._debug("attacking")
+            self.attacking = True
             self.__attack_target_enemy()
         else:
-            print("congregateing")
+            self._debug("congregateing")
+            self.attacking = False
             self.__congregate()
         
         if len(self.unit_pos) == 0:
-            return None
+            return []
         # returns [ [unit_idx, (distance, angle)], ... ]
-        return zip(self.unit_idxs, get_moves(self.unit_pos, self.unit_pos_next_step[0:len(self.unit_pos)]))
+        self._debug("special moves: " + str(get_moves(self.unit_pos, self.unit_pos_next_step[0:len(self.unit_pos)])))
+        self._debug(len(get_moves(self.unit_pos, self.unit_pos_next_step[0:len(self.unit_pos)])))
+        return list(zip(self.unit_ids, get_moves(self.unit_pos, self.unit_pos_next_step[0:len(self.unit_pos)])))
 
-    def update_state(self, unit_pos:  np.ndarray):
-        assert(len(unit_pos) == len(self.unit_idxs))
-        self.unit_pos = unit_pos
-        self.in_formation = self.check_in_formation()
+    def release(self):
+        self.resource_pool.release_units(self.name, self.unit_ids)
+        self._initialize_params()
 
 
 # -----------------------------------------------------------------------------
@@ -702,6 +950,13 @@ class Player:
         self.logger = logger
         self.logger.setLevel(LOG_LEVEL)
 
+        self.total_days = total_days
+
+        self.unit_id = []
+        self.our_unit_ids = []
+        self.float_unit_pos = [[], [], [], []]
+        self.map_states = []
+
         self.us = player_idx
         self.homebase = np.array(spawn_point)
         self.enemy_bases = np.delete(np.array([[0.5, 0.5], [0.5, 99.5], [99.5, 99.5], [99.5, 0.5]]), self.us, axis=0)
@@ -716,14 +971,15 @@ class Player:
         self.target_loc = []
 
         self.initial_radius = 35
-        self.num_scouts = 3
+
+        self.set_hyperparam(spawn_days)
 
         base_angles = get_base_angles(player_idx)
         outer_wall_angles = np.linspace(start=base_angles[0], stop=base_angles[1], num=int(self.initial_radius * 2 / 1.4))
         self.counter = 0
         self.midsorted_outer_wall_angles = midsort(outer_wall_angles)
 
-        self.cb_scheduled = np.array([CB_START, CB_START + CB_DURATION])
+        self.cb_scheduled = np.array([self.CB_START, self.CB_START + self.CB_DURATION])
 
         # compute special forces metadata
         self.total_lifetime_units = total_days // spawn_days
@@ -731,6 +987,7 @@ class Player:
         self.sf_units = self.total_lifetime_units / 5
         self.sf_units_per_team = max(self.sf_units // 5, 10)
         self.sf_units_per_team = min(self.sf_units_per_team, self.sf_units)
+
 
         # SAMPLE SQUAD
         '''
@@ -741,11 +998,41 @@ class Player:
         self.sf_teams = self.sf_units // self.sf_units_per_team
 
         # Temporary - Scout, DefaultSoldier
-        self.scout_team = Scouts(self.logger, self, 'scouts1', 3)
+        self.resource_pool = ResourcePool(self)
+
+        self.scout_team = Scouts(self.logger, self, 'scouts1', self.num_scouts)
         self.default_soldiers = DefaultSoldier(self.logger, self, 'default1', self.midsorted_outer_wall_angles)
+        self.macro_army = MacroArmy(self.logger, self, 'macro_army1', self.resource_pool)
+
+        self.special_forces = [SpecialForce(self.logger, self, f'specialforce{i}', 8, 4) for i in range(self.sf_count)]
+        self.special_forces_existing = [0 for _ in range(self.sf_count)]
+        # self.sf_target_ids = [[1,-1] for _ in range(self.sf_count)] #[team, unit_id]
 
     def debug(self, *args):
-        self.logger.info(" ".join(str(a) for a in args))
+        self.logger.debug(" ".join(str(a) for a in args))
+
+    def set_hyperparam(self, spawn_days):
+        self.num_scouts = 3
+
+        self.sf_count = 3
+        self.sf_count = max(math.floor((self.total_days // spawn_days) / 45), 1)
+
+        self.troops_per_sf = 30 # keep sf-total ratio to be under 8-40
+
+        self.CB_START = 35
+        self.CB_DURATION = 5 # days dedicated to border consolidation in each cycle
+
+        if spawn_days < 5:
+            self.COOL_DOWN = 5
+        elif spawn_days <= 5:
+            self.COOL_DOWN = 8
+        elif spawn_days <= 10:
+            self.num_scouts = 1
+            self.COOL_DOWN = 10
+        else:
+            self.num_scouts = 1
+            self.COOL_DOWN = 20
+
 
     def play(self, unit_id: List[List[str]], unit_pos: List[List[Point]], map_states: List[List[int]], current_scores: List[int], total_scores: List[int]) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
@@ -765,95 +1052,189 @@ class Player:
                     List[Tuple[float, float]]: Return a list of tuples consisting of distance and angle in radians to
                                                 move each unit of the player
                 """
+        
+        self.unit_id = unit_id
+        self.float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
 
-        float_unit_pos = [shapely_pts_to_tuples(pts) for pts in unit_pos]
         self.day_n += 1
         self.map_states = np.array(map_states) - 1
+
         self.enemy_offsets = np.array([len(unit_pos[i]) for i in range(4) if i != self.us])
-        self.enemy_units = np.concatenate([float_unit_pos[i] for i in range(4) if i != self.us])
-        self.our_units = np.array(float_unit_pos[self.us])
-        self.d = DensityMap(self.us, float_unit_pos)
+        self.enemy_units = np.concatenate([self.float_unit_pos[i] for i in range(4) if (i != self.us and len(self.float_unit_pos[i]) > 0)])
+        self.our_units = np.array(self.float_unit_pos[self.us])
+        self.d = DensityMap(self.us, self.float_unit_pos)
         self.our_unit_ids = np.array(unit_id[self.us], dtype=int)
+
+        self.resource_pool.update_state()
+
+        # choose enemy target
+        if len(self.enemy_units) > 0:
+            home2enemies = self.enemy_units - self.homebase
+            angles = np.arctan2(home2enemies[:,1], home2enemies[:,0]) + ((np.pi/2) * (self.us))
+            if self.us == 4:
+                angles -= 2 * np.pi
+            
+            angles2enemies = dict()
+            portion = math.pi / (2 * self.sf_count)
+            for i in range(sum(self.special_forces_existing)):
+                lo, hi = portion * i, portion * (i + 1)
+                enemy_idx = np.where((angles >= lo) & (angles < hi))[0]
+                angles2enemies[i] = self.enemy_units[enemy_idx]
+            
+            counter = 0
+            for i in range(self.sf_count):
+                if self.special_forces_existing[i]:
+                    opponent_pos = angles2enemies[counter]
+
+                    # TODO: what if opponent_pos is an empty array?
+                    if len(opponent_pos):
+                        enemy_dist_from_homebase = ((opponent_pos - self.homebase) ** 2).sum(axis=1)
+                        enemy_dist_from_self = ((opponent_pos - np.array(self.special_forces[i].centroid)) ** 2).sum(axis=1)
+
+                        homebase_weight = 0.7
+
+                        total_dist = (homebase_weight * enemy_dist_from_homebase) + ((1-homebase_weight) * enemy_dist_from_self)
+
+                        min_enemy_cord = opponent_pos[total_dist.argmin()]
+                        self.special_forces[i].set_target_enemy(min_enemy_cord)
+                    
+                    counter += 1
 
 
         self.debug()
         self.debug(f'unit_ids: {unit_id[self.us]}')
         self.debug(f'len(unit_pos): {len(unit_pos[self.us])}, len(unit_ids): {len(unit_id[self.us])}')
         self.debug(f'density map: {self.d.dmap.T}')
-        self.debug(f'average neighbor density: {self.d.ndmap.T}')
+        # self.debug(f'average neighbor density: {self.d.ndmap.T}')
 
 
         if self.day_n < self.initial_radius:
             self.debug(f'day {self.day_n}: form initial wall')
 
-            while len(unit_id[self.us]) > len(self.target_loc):
+            self.scout_team.select()
+            scout_moves = [move for _, move in self.scout_team.move()]
+            scout_team_size = self.scout_team.actual_size
+
+            wall_unit_ids = unit_id[self.us][scout_team_size:]
+            wall_unit_pos = unit_pos[self.us][scout_team_size:]
+
+            while len(wall_unit_ids) > len(self.target_loc):
                 # add new target_locations
                 self.target_loc.append(order2coord(
                         self.homebase,
-                        [self.initial_radius, self.midsorted_outer_wall_angles[len(unit_id[self.us]) - 1]]
+                        [self.initial_radius, self.midsorted_outer_wall_angles[len(wall_unit_ids) - 1]]
                 ))
+            wall_moves = get_moves(shapely_pts_to_tuples(wall_unit_pos), self.target_loc)
         
-            return get_moves(shapely_pts_to_tuples(unit_pos[self.us]), self.target_loc)
+            return scout_moves + wall_moves
+            
         elif self.day_n >= self.cb_scheduled[0] and self.day_n < self.cb_scheduled[1]:
             self.debug(f'day {self.day_n}: consoldiate border')
 
-            if self.day_n == self.cb_scheduled[0] or (CB_DURATION >= 10 and self.day_n == self.cb_scheduled[0] + CB_DURATION // 2):
-                self.border = self.get_border()
-
-            if self.day_n == self.cb_scheduled[1] - 1:
-                self.cb_scheduled += (COOL_DOWN + CB_DURATION)
-            
             # allocation phase
             self.scout_team.select()
-            scout_ids = self.scout_team.unit_idx  # TODO: change later
+            self.allocate_sf()  
+            if self.day_n == self.cb_scheduled[0]:
+                self.macro_army.select()
+            self.default_soldiers.select()
 
             # mobilization phase
-            defense_moves = self.send_to_border(scout_ids, self.border)
-            offense_moves = self.scout_team.move()
+            moves = []
+            moves.extend(self.macro_army.move())
+            moves.extend(self.scout_team.move())
+            for i in range(self.sf_count):
+                if self.special_forces_existing[i]:
+                    moves.extend(self.special_forces[i].move())
+            moves.extend(self.default_soldiers.move())
+
+            if self.day_n == self.cb_scheduled[1] - 1:
+                self.cb_scheduled += (self.COOL_DOWN + self.CB_DURATION)
+                self.macro_army.release()
         else:
             # MID_GAME: adjust formation based on opponents' positions
             self.debug(f'day {self.day_n}: cool down')
+            moves = []
 
             # allocation phase
             self.scout_team.select()
+            self.allocate_sf()
             self.default_soldiers.select()
-            scout_ids = self.scout_team.unit_idx  # TODO: change later
 
             # mobilization phase
             start = time.time()
-            defense_moves = self.default_soldiers.move()
+            moves.extend(self.default_soldiers.move())
             self.debug(f'Defense: {time.time()-start}s')
             
             start = time.time()
-            offense_moves = self.scout_team.move()
+            moves.extend(self.scout_team.move())
+            for i in range(self.sf_count):
+                if self.special_forces_existing[i]:
+                    moves.extend(self.special_forces[i].move())
             self.debug(f'Offense: {time.time()-start}s')
 
-        # insert scout moves into all moves
-        all_moves = defense_moves
-        for i, scout in enumerate(scout_ids.tolist()):
-            all_moves = all_moves[:scout] + [offense_moves[i]] + all_moves[scout:]
-        return all_moves
+        # reorder all moves
+        sorted_moves = self.integrate_moves(moves)
+        self.debug(f'all {len(moves)} moves (macro_army, scout, special_forces, default): {moves}')
+        self.debug(f'Sorted moves (#: {len(sorted_moves)}): {sorted_moves}')
+        self.debug(f'resource pool: {self.resource_pool.team_to_unit_dict}')
+        return sorted_moves
 
-    def send_to_border(self, scout_ids, border) -> List[Tuple[float, float]]:
-        """Sends soldiers to consolidate our border."""
-        troops = np.delete(self.our_units, scout_ids, axis=0)
-        selected_border = border[np.random.choice(np.arange(border.shape[0]), size=min(border.shape[0], troops.shape[0]), replace=False)]
-        targets = assign_by_ot(troops, selected_border)
-        return get_moves(troops, targets)
+    def allocate_sf(self):
+        if self.total_days <= 50:
+            return
+        
+        for i in range(self.sf_count):
+            num_free = len(self.resource_pool.get_free_units())
+            affordable = (self.our_units.shape[0] > i * self.troops_per_sf) # we want ratio of sepcial force to total to be at most 8-30
+            higher_bar_affordable = (self.our_units.shape[0] > i + 1 * self.troops_per_sf) # we want ratio of sepcial force to total to be at most 8-30
+
+            if self.total_days <= 100:
+                affordable = True # we want ratio of sepcial force to total to be at most 8-30
+                higher_bar_affordable = True # we want ratio of sepcial force to total to be at most 8-30
+
+            if self.special_forces_existing[i] == 1:
+                if affordable:
+                    self.special_forces[i].select()
+                else:
+                    self.special_forces_existing[i] == 0
+                    self.special_forces[i].release()
+            elif num_free >= 30 and higher_bar_affordable:
+                self.special_forces_existing[i] = 1
+                self.special_forces[i].select()
+
+    def integrate_moves(self, all_moves: List[Umove]) -> List[Move]:
+        return [m for _, m in sorted(all_moves, key=lambda x:x[0])]
 
     def get_border(self):
         """Get border of our territory"""
         # trace along x axis to find the starting point
+        pt = None
         if self.us < 2: # 0, 1
             for i in range(100):
                 if self.map_states[i, 99*self.us] != self.us:
                     pt = (i-1, 99*self.us)
                     break
+            if pt is None:
+                for i in range(100):
+                    if self.map_states[0, 99*self.us-i] != self.us:
+                        pt = (0, 99*self.us-i+1)
+                        break
         else: # 2, 3
             for i in range(100):
                 if self.map_states[99-i, 99*(3-self.us)] != self.us:
                     pt = (99-i+1, 99*(3-self.us))
                     break
+            if pt is None:
+                if self.us == 2:
+                    for i in range(100):
+                        if self.map_states[99, 99-i] != self.us:
+                            pt = (99, 99-i+1)
+                            break
+                else:
+                    for i in range(100):
+                        if self.map_states[99, i] != self.us:
+                            pt = (99, i-1)
+                            break
 
         border = set()
         self._trace_border(pt, border)
@@ -1010,6 +1391,9 @@ def get_moves(unit_pos, target_loc) -> List[Tuple[float, float]]:
         assert unit_pos.shape[0] == target_loc.shape[0], "get_moves: unit_pos and target_loc array length not the same"
         np_unit_pos = unit_pos
         np_target_loc = target_loc
+
+    if len(unit_pos) == 0:
+        return []
 
     cord_diff = np_target_loc - np_unit_pos
     cord_diff_x = cord_diff[:, 0]
