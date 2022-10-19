@@ -88,6 +88,7 @@ class Player:
         self.points =  list(map(np.array,unit_pos[self.player_idx]))
         self.enemy_position = []
         self.map_states = map_states
+        print(self.current_day)
         for i in range(4):
             if i == (self.player_idx-1):
                 continue
@@ -103,7 +104,7 @@ class Player:
                 index += 1
                 distance = 1
                 angle = self.spiral_spread(index)
-            moves.append((distance,angle))
+                moves.append((distance,angle))
         else:
             #check for safety of each point
             #dist_player_enemy = scipy.spatial.distance(point,self.enemy_position) # distance between each of our own unit and the enemy unit
