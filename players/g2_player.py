@@ -635,7 +635,7 @@ class Player:
                 if int(min_home) == 0:
                     break
         if min_home != math.inf:
-            print("calculating")
+            #print("calculating")
             least_pop_region_id = self.least_popular_region_force(map_states)
             least_pop_region_id = least_pop_region_id[0][0]
             if least_pop_region_id is not None:
@@ -848,6 +848,10 @@ class Player:
 
         return team_set, uid_in_region
 
+    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+        dist, rad_ang = dist_ang
+        return (dist, rad_ang - (math.pi/2 * self.player_idx))
+
     def play(self, unit_id, unit_pos, map_states, current_scores, total_scores) -> List[Tuple[float, float]]:
         """Function which based on current game state returns the distance and angle of each unit active on the board
 
@@ -898,10 +902,23 @@ class Player:
         assignable_ally_unit_ids = sorted(list(self.historical_ally_unit_ids), key=int)
 
         # if game length < 50, special plan
-        if self.game_length <= 50 or self.game_length/self.spawn_days < 25:
-            print(assignable_ally_unit_ids)
+        if self.game_length <= 50:
+            #print(assignable_ally_unit_ids)
             moves.update(self.short_game_moves(assignable_ally_unit_ids))
             return list(moves.values())
+
+        if self.game_length/self.spawn_days < 25:
+            moves = []
+            angle_jump = 10
+            angle_start = 45
+            for i in range(len(unit_id[self.player_idx])):
+                distance = 1
+
+                angle = (((i) * (angle_jump) + angle_start ))%90
+
+                moves.append((distance, angle* (math.pi / 180)))
+
+            return [self.transform_move(move) for move in moves]
 
         #seperate fixed formation vs strategic allys
         fixed_formation_ally_unit_ids = assignable_ally_unit_ids[:FIXED_FORMATION_COUNT]
@@ -1021,7 +1038,7 @@ class Player:
         number_regions = len(self.entire_board_regions)
         unit_per_region = np.zeros(number_regions)
         unclaimed_regions = [region_id for region_id in self.scout if self.scout[region_id] is None]
-        print("LESAT POP")
+        #print("LESAT POP")
         if not unclaimed_regions:
             '''
             for index in range(number_regions):
