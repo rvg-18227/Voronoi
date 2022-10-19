@@ -1,6 +1,7 @@
 from collections import defaultdict
 import os
 import pickle
+from turtle import home
 from matplotlib import units
 from matplotlib.pyplot import close
 import numpy as np
@@ -359,6 +360,7 @@ class Player:
         # Platoon variables
         self.platoons = {1: {'unit_ids': [], 'target': None}} # {platoon_id: {unit_ids: [...], target: unit_id}}
         self.defender_platoon_ids = []
+        self.num_defender_platoons = 3
         self.attacker_platoon_ids = []
         self.platoon_ids_waiting_for_replenishment_units = set()
 
@@ -378,9 +380,12 @@ class Player:
         else:
             return Point(99.5, 0.5)
 
-    def transform_move (self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
+    def transform_move(self, dist_ang: Tuple[float, float]) -> Tuple[float, float]:
         dist, rad_ang = dist_ang
         return (dist, rad_ang - (math.pi/2 * self.player_idx))
+
+    def transform_angle(self, ang) -> float:
+        return ang - (math.pi/2 * self.player_idx)
 
     def point_move(self, p1, p2):
         dist = min(1, math.dist(p1,p2))
@@ -429,15 +434,20 @@ class Player:
         y = min(99.99, max(0.01, point.y))
         return Point(x, y)
 
-    def platoon_unit_moves(self, platoon_id, intercept_pos) -> Dict[float, Tuple[float, float]]:
+    def platoon_unit_moves(self, platoon_id, intercept_pos, overshoot=True) -> Dict[float, Tuple[float, float]]:
+        moves = {}
         unit_ids = self.platoons[platoon_id]['unit_ids']
         leader_pos = self.ally_units[unit_ids[0]]
         left_flank_pos = self.ally_units[unit_ids[1]]
         right_flank_pos = self.ally_units[unit_ids[2]] 
-        
+
         # Generate moves based on path from leader to 1m past intercept point
         chaser_to_intersect = LineString([leader_pos, intercept_pos])
         chaser_to_intersect_dist = chaser_to_intersect.length
+
+        if not overshoot and chaser_to_intersect_dist <= 1:
+            return moves
+
         scale_factor = (chaser_to_intersect_dist + 2) / chaser_to_intersect_dist
         scaled_chaser_to_intersect = scale(chaser_to_intersect, xfact=scale_factor, yfact=scale_factor, origin=leader_pos)
         leader_dest_pos = scaled_chaser_to_intersect.interpolate(1)
@@ -460,7 +470,6 @@ class Player:
         if left_flank_pos.distance(left_flank_dest_pos) > 1.2 or right_flank_pos.distance(right_flank_dest_pos) > 1.2:
             leader_dest_pos = leader_pos
 
-        moves = {}
         for idx, uid in enumerate(unit_ids):
             if idx == 0:
                 moves[uid] = (leader_pos.distance(leader_dest_pos), math.atan2(leader_dest_pos.y-leader_pos.y, leader_dest_pos.x-leader_pos.x))
@@ -541,6 +550,16 @@ class Player:
                     if dist < min_dist:
                         min_dist = dist
                         target_id = uid
+
+                # Send waiting defender platoons to waiting positions
+                if target_id == None and pid in self.defender_platoon_ids:
+                    home_to_waiting_point = LineString([home_point, Point(50, 50)])
+                    angles = np.linspace(-35, 35, self.num_defender_platoons)
+                    rot_angle = self.transform_angle(angles[self.defender_platoon_ids.index(pid)])
+                    home_to_waiting_point = rotate(home_to_waiting_point, rot_angle, home_point)
+                    waiting_point = home_to_waiting_point.interpolate(INNER_RADIUS / 2)
+                    moves.update(self.platoon_unit_moves(pid, waiting_point, False))      
+                
                 platoon['target'] = target_id
             
             # Generate moves for units in assigned platoons
@@ -549,8 +568,7 @@ class Player:
                 moves.update(self.platoon_unit_moves(pid, intercept_point))
 
             # Send assigned platoons with lost units back towards home to meet their replenishments
-            # Also send unasigned but already deployed units to a waiting position
-            elif (pid in self.platoon_ids_waiting_for_replenishment_units and len(platoon['unit_ids']) >=1) or (not platoon['target'] and len(platoon['unit_ids']) == 3):
+            elif (pid in self.platoon_ids_waiting_for_replenishment_units and len(platoon['unit_ids']) >=1):
                 point_distances = [self.ally_units[uid].distance(home_point) for uid in platoon['unit_ids']]
                 furthest_dist = max(point_distances)
                 if furthest_dist != 0:
