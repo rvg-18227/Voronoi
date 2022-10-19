@@ -187,7 +187,7 @@ class Attacker:
                 self.points = [(2, 2), (1, 1), (0, 0)]
                 for i in range(1, n_units - len(self.points) + 1):
                     if self.player_idx == 0 or self.player_idx == 2:
-                        self.points.append((self.head[0] - i, self.head[1] + (i if i <= triangleThresh else triangleThresh)))
+                        self.points.append((self.head[0] - (i if i <= triangleThresh else triangleThresh), self.head[1] + i))
                     else:
                         self.points.append((self.head[0] + i, self.head[1] - (i if i <= triangleThresh else triangleThresh)))
             elif direction == "LEFT":
@@ -214,7 +214,6 @@ class Attacker:
         self.threshhold = 10
         self.start = 0
 
-        self.prev_n_units = 0
         self.attack = 0
 
 
@@ -259,6 +258,8 @@ class Attacker:
         head, end, direction_to_center, direction_to_start = self.get_head_hover_point()
         offset = direction_to_start * 5
         self.formation = self.Formation(direction, n, self.player_idx)
+        if self.number_in_circle([(unit[0].x, unit[0].y) for unit in self.unit_locations], head, 15) < 10:
+            self.attack = 0
 
         for i, point in enumerate(self.formation.points):
             if self.attack == 1:
@@ -267,6 +268,7 @@ class Attacker:
                 self.formation.points[i] = head - (point[0] * direction_to_center[0], point[1] * direction_to_center[1]) + offset
             else:
                 self.formation.points[i] = head - (point[0] * direction_to_center[0], point[1] * direction_to_center[1])
+
 
     def update(self, map_state, attackerIdxs, units, enemy_units):
         self.day += 1
@@ -291,13 +293,8 @@ class Attacker:
 
         for i, (unit, idx) in enumerate(self.unit_locations):
             target_point = self.formation.points[i]
-            # moves = distance to target point, x, y
             moves[i] = (np.linalg.norm(target_point - np.array((unit.x, unit.y))), target_point[0] - unit.x, target_point[1] - unit.y)
-        # if self.day > 300 and self.player_idx == 1:
-            # print(self.formation.points)
-            # print(moves)
-            # print([(u[0].x, u[0].y) for u in self.unit_locations])
-        
+
         if self.number_units > self.threshhold:
             for i in range(self.start, self.threshhold):
                 if moves[i][0] > 0.1:
@@ -306,13 +303,14 @@ class Attacker:
             else:
                 self.attack = 1
 
-        if self.prev_n_units + 5 < self.number_units:
-            self.attack = 0
 
-        self.prev_n_units = self.number_units
         return moves
 
-
+    def number_in_circle(self, units, center, radius):
+        units = set([tuple(np.floor(unit)) for unit in units])
+        units.add(tuple(np.floor(center)))
+        return sum([1 if np.linalg.norm(np.floor(np.array(unit)) - np.floor(center)) <= radius else 0 for unit in units])
+    
 
     # def update(self, map_state, attackerIdxs, units, enemy_units, unit_id):
     #     self.map_state = map_state
