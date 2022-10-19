@@ -340,6 +340,8 @@ class Player:
         self.enemy_units_yesterday: Dict[str, Point] = {}
         self.enemy_killed_unit_ids = []
         self.home_coords = self.get_home_coords()
+        self.home_coord_tuple = (self.home_coords.x, self.home_coords.y)
+        self.all_unit_pos_tuples = []
 
         self.regions = create_scissor_regions(OUTER_RADIUS, player_idx, PRIORITY_ID_OUTER, OUTER_SPEED)
         self.regions += create_scissor_regions(INNER_RADIUS, player_idx, PRIORITY_ID_INNER, INNER_SPEED)
@@ -369,6 +371,7 @@ class Player:
 
         #dictionary of entire board broken up into regions
         self.entire_board_regions = get_regions_away_home(20, self.home_coords)
+        self.entire_board_region_centroids = {id: region.centroid for id, region in self.entire_board_regions.items()}
         self.entire_board_region_tuples = {idx: region.bounds for idx, region in self.entire_board_regions.items()}
         #dict of scouts and their current region id occupied
         self.scout = dict.fromkeys(region_id for region_id in self.entire_board_regions)
@@ -485,7 +488,7 @@ class Player:
     
     def platoon_moves(self, unit_ids)  -> Dict[float, Tuple[float, float]]:
         moves = {}
-        home_point = self.get_home_coords()
+        home_point = self.home_coords
 
         # Draft units into platoons
         drafted_unit_ids = [uid for platoon in self.platoons.values() for uid in platoon['unit_ids']]
@@ -622,13 +625,13 @@ class Player:
                 self.scout[least_pop_region_id] = min_unit_id
 
 
-            # Assign movement path towards empty region for scout
+        # Assign movement path towards empty region for scout
         for region in self.scout:
             move_dist = None
             angle = None
             if self.scout[region] is not None:
                 current_scout_pos = self.ally_units[self.scout[region]]
-                region_center_point = self.entire_board_regions[region].centroid #unit_forces[self.scout[region]][3][0][1]
+                region_center_point = self.entire_board_region_centroids[region] #unit_forces[self.scout[region]][3][0][1]
                 region_center_point = (region_center_point.x, region_center_point.y)
                 if current_scout_pos.distance(Point(region_center_point)) == 0:
                     move_dist = 0
@@ -861,6 +864,7 @@ class Player:
         
         self.ally_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.ally_units.items()}
         self.enemy_unit_tuples = {uid: (pt.x, pt.y) for uid, pt in self.enemy_units.items()}
+        self.all_unit_pos_tuples = [pos for pos in list(self.ally_unit_tuples.values()) + list(self.enemy_unit_tuples.values())]
 
         # Detect killed units
         self.ally_killed_unit_ids = [id for id in list(self.ally_units_yesterday.keys()) if id not in list(self.ally_units.keys())]
@@ -1019,7 +1023,7 @@ class Player:
         for index in range(number_regions):
             if index in unclaimed_regions:
                 current_poly_bounds = self.entire_board_region_tuples[index]
-                for ux, uy in list(self.ally_unit_tuples.values()) + list(self.enemy_unit_tuples.values()):
+                for ux, uy in self.all_unit_pos_tuples:
                     minx, miny, maxx, maxy = current_poly_bounds
                     if (ux <= maxx and ux >= minx) and (uy <= maxy and uy >= miny):
                         unit_per_region[index] += 1
@@ -1029,35 +1033,29 @@ class Player:
         #try to find non-occulded path where other
         # try to find non-occulded path
         non_occluded_path = False
+        index_min_region = int(np.argmin(unit_per_region))
+        min_poly_center = self.entire_board_region_centroids[index_min_region]
         for i in range(len(unit_per_region +1)):
-            index_min_region = int(np.argmin(unit_per_region))
-            min_poly = self.entire_board_regions[index_min_region]
-            center = min_poly.centroid
-            if self.path_home(center, map_states):
+            if self.path_home(min_poly_center, map_states):
                 non_occluded_path = True
                 break
         if non_occluded_path:
-            return [(index_min_region, (center.x, center.y))]
+            return [(index_min_region, (min_poly_center.x, min_poly_center.y))]
 
         #otherwise, no occluded path, return sparsest region
-        index_min_region = int(np.argmin(unit_per_region))
-        min_poly = self.entire_board_regions[index_min_region]
-        center = min_poly.centroid
-        return [(index_min_region, (center.x, center.y))]
+        return [(index_min_region, (min_poly_center.x, min_poly_center.y))]
 
     def path_home(self, center, map_states):
         path = True
-        home = self.home_coords
-        home_coords = (home.x, home.y*-1)
         center_coords = (center.x, center.y*-1)
-        m = (home_coords[1] - center_coords[1]) / (home_coords[0] - center_coords[0])
-        b = home_coords[1] - m*home_coords[0]
+        m = (self.home_coord_tuple[1] - center_coords[1]) / (self.home_coord_tuple[0] - center_coords[0])
+        b = self.home_coord_tuple[1] - m*self.home_coord_tuple[0]
 
-        if home_coords[0] > center_coords[0]:
+        if self.home_coord_tuple[0] > center_coords[0]:
             start_x = math.floor(center_coords[0])
-            end_x = math.floor(home_coords[0])
+            end_x = math.floor(self.home_coord_tuple[0])
         else:
-            start_x = math.floor(home_coords[0])
+            start_x = math.floor(self.home_coord_tuple[0])
             end_x = math.floor(center_coords[0])
         if start_x < 0:
             start_x = 0
@@ -1073,14 +1071,14 @@ class Player:
             current_cell_state = map_states[i][floored_y]
             if current_cell_state != self.player_idx+1:
                 path = False
+                return
 
         return path
 
     def get_forces(self, unit_ids, map_states):
         forces = {id: [] for id in unit_ids}
         for unit, current_pos in [(uid, pos) for uid, pos in self.ally_units.items() if uid in unit_ids]:
-            home_coords = self.get_home_coords()
-            forces[unit].append([(home_coords.x, home_coords.y), home_coords.distance(current_pos)])
+            forces[unit].append([self.home_coord_tuple, self.home_coords.distance(current_pos)])
             forces[unit].append(self.wall_forces(current_pos))
             forces[unit].append(self.closest_friend_force(unit))
             forces[unit].append(self.least_popular_region_force(map_states))
