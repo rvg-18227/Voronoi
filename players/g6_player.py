@@ -24,7 +24,6 @@ class Defense:
     def __init__(self, player_idx, spawn_point):
         self.unitType = UnitType.DEFENSE
         self.number_units = 0
-        self.prev_state = None
         self.spawn_point = (spawn_point.x, spawn_point.y)
         self.player_idx = player_idx
         self.day = 0
@@ -32,7 +31,6 @@ class Defense:
 
     def update(self, map_state, defenderIdxs, units, enemy_units):
         self.map_state = map_state
-        #rotate the map state to the bottom left
         self.number_units = len(defenderIdxs)
         self.defenderIdxs = defenderIdxs
         self.unit_locations = [unit for i, unit in enumerate(units) if i in defenderIdxs]
@@ -71,7 +69,7 @@ class Defense:
                 if distance > self.scanner_radius:
                     break
                 offset_weight = 3
-                if cluster_points_left[idx] == 0:# and np.linalg.norm(self.spawn_point - clusters[idx]["centroid"]) < 60:
+                if cluster_points_left[idx] == 0:
                     offset_weight = 4
 
                 if cluster_points_left[idx] > 0 or offset_weight != 3:
@@ -90,7 +88,6 @@ class Defense:
                     goal_direction = 0 if unit.x < 20 else self.spawn_point[0] - unit.x, 0 if unit.y < 20 else self.spawn_point[1] - unit.y
                     offset = (0, 0) if np.linalg.norm(goal_direction) == 0 else goal_direction/np.linalg.norm(goal_direction)
 
-                    #TODO: if formation is ready, offset = 0
                     if self.number_in_circle(self.unit_locations, unit, 1) > self.number_in_circle(self.enemy_units, target_point, 1):
                         offset_weight -= 3
 
@@ -99,10 +96,6 @@ class Defense:
 
                     moves[i] = distance_to_goal, end_direction[0], end_direction[1]
                     break
-            # move adding the offset here
-            # for loop
-            # if cluster not all true
-            # add offset
 
         n_free_units = self.number_units - sum(moved)
         hover_points = self.get_hover_points(n_free_units)
@@ -119,12 +112,6 @@ class Defense:
                     free_units.remove(idx)
                     moves[idx] = distance, point[0] - self.unit_locations[idx].x, point[1] - self.unit_locations[idx].y
                     break
-
-        # if path to homme width is < some X, retreat to hover point
-        
-        # make units the reverse of the cluster (negate then add 2*(closest unit to 0)) - some offset towards home
-        # once all units are in place - (current loc to calc place ~=, for all units in this one match)
-        # self.prev_state = self.map_state
 
         return moves
 
@@ -146,7 +133,7 @@ class Defense:
     
     def get_raycast_to_border(self, angle):
         min_dist = 25
-        max_dist = 142# max, change to be based on how many units 
+        max_dist = 142
         step = 1
         for i in range(min_dist, max_dist, step):
             point = self.spawn_point + np.array((i*math.cos(angle), i*math.sin(angle)))
@@ -599,6 +586,8 @@ class Player:
         self.spawn_days = spawn_days
         self.spawn_point = spawn_point
         self.number_units_total = total_days//spawn_days
+        
+        self.go_left = False
 
         self.current_turn = 0
         if self.spawn_days == 10 or self.spawn_days == 20 or self.total_days <= 100 or self.number_units_total <= 50:
@@ -694,6 +683,13 @@ class Player:
             dist, x, y = attackingMoves[attacking_move_idx]
             moves[real_idx] = (dist if dist <= 1 else 1, np.arctan2(y, x))
 
+        # rightIdx = (self.player_idx + 1) % 4
+        # leftIdx = (self.player_idx - 1) % 4
+        # if self.current_turn == self.total_days//3:
+        #     self.go_left = len(unit_pos[rightIdx]) > len(unit_pos[leftIdx])
+
+
+
         self.attackLeft.update(self.map_states, attackersLeft, unit_pos[self.player_idx], enemy_units)
         attackingMoves = self.attackLeft.get_moves()
         for attacking_move_idx, real_idx in enumerate(attackersLeft):
@@ -757,8 +753,13 @@ class Player:
             else:
                 numberDaysThisPhase = int(self.current_turn - (self.PHASE_ONE_UNITS + self.PHASE_TWO_UNITS) * self.spawn_days - 1)
                 unitToAdd = self.PHASE_THREE_OUTPUT[(numberDaysThisPhase//self.spawn_days)%len(self.PHASE_THREE_OUTPUT)]
-            if unitToAdd == UnitType.ATTACK_RIGHT and self.attackRight.number_units > 56:
-                unitToAdd = UnitType.DEFENSE if self.attackLeft.number_units > 56 else UnitType.ATTACK_LEFT
+            if unitToAdd == UnitType.ATTACK_RIGHT:
+                if self.attackRight.number_units > 56:
+                    unitToAdd = UnitType.DEFENSE if self.attackLeft.number_units > 56 else UnitType.ATTACK_LEFT
+                elif self.go_left:
+                    unitToAdd = UnitType.ATTACK_RIGHT if self.attackLeft.number_units > 56 else UnitType.ATTACK_LEFT
+                    unitToAdd = UnitType.DEFENSE if self.attackRight.number_units > 56 else UnitType.ATTACK_RIGHT
+
             self.unit_types[unitToAdd][unit_ids[len(unit_ids)-1]] = len(unit_ids)-1
 
         for i, unit_id in enumerate(unit_ids):
