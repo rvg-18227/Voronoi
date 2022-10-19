@@ -60,13 +60,13 @@ class Player:
             self.homebase = np.array([99.5, 0.5])
 
         if self.player_idx == 0: # Top left
-            self.initial_angles = [(2 * np.pi/8), (4 * np.pi/8), 0, (3 * np.pi/8), (np.pi/8)]
+            self.initial_angles = [(4 * np.pi/8), 0]
         elif self.player_idx == 1: # Bottom left
-            self.initial_angles = [7*np.pi/4, 3 * np.pi/2, 0, 13 * np.pi/8, 15 * np.pi/8] 
+            self.initial_angles = [3 * np.pi/2, 0] 
         elif self.player_idx == 2: # Bottom right
-            self.initial_angles = [5 * np.pi/4, 3 * np.pi/2, np.pi, 11 * np.pi/8, 9 * np.pi/8] 
+            self.initial_angles = [3 * np.pi/2, np.pi] 
         else: # Top right
-            self.initial_angles = [3 * np.pi/4, np.pi, np.pi/2, 7*np.pi/8, 5*np.pi/8]
+            self.initial_angles = [np.pi, np.pi/2]
     
     def force_vec(self, p1, p2):
         v = p1 - p2
@@ -117,16 +117,14 @@ class Player:
         return np.array([col * self.block_size + self.block_size / 2, row * self.block_size + self.block_size / 2])
 
 
-    def naive_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units):
-        # print(type(unit_id))
-        angle = self.initial_angles[int(unit_id) % 5]
+    def naive_strategy(self):
+        angle = self.initial_angles[0]
         distance = 1
         return distance, angle
         
 
     def border_strategy(self, unit_id, unit_pos, map_states, current_scores, total_scores, own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean, attract_to_closest_border):
         border_x, border_y, border_center, border_dist = closest_border
-        #sparse_row, sparse_col, sparse_center, sparse_dist = closest_sparse
         
         HOME_INFLUENCE = 0.0
         
@@ -141,7 +139,7 @@ class Player:
         #     ENEMY_INFLUENCE = 0.6
         #     BOUNDARY_THRESHOLD = 2
         if mode == "defense":
-            ALLY_INFLUENCE = -0.1
+            ALLY_INFLUENCE = 0.1#-0.1
             ARC_MEAN_INFLUENCE = 0 # oldest 8 units, pushes defensive units
             # use this influence when we're > 20 units away from home base
            
@@ -153,7 +151,7 @@ class Player:
         
         
         ENEMY_INFLUENCE = 0.2
-        BOUNDARY_INFLUENCE = 0.2
+        BOUNDARY_INFLUENCE = 0.0
 
         BOUNDARY_THRESHOLD = 2
         
@@ -310,52 +308,57 @@ class Player:
         homebase_borders_dist.sort(key=lambda x: x[3])
         if len(homebase_borders_dist) == 0:
             homebase_invasion = True
-        elif homebase_borders_dist[0][3] < 20:
+        elif homebase_borders_dist[0][3] < 50:
             homebase_invasion = True
         else:
             homebase_invasion = False
 
         moves = []
 
-        own_units.sort(key=lambda x: x[0])
+        #own_units.sort(key=lambda x: x[0])
         border_assignment_set = set()
         # sparse_assignment_set = set()
         offensive_arc_mean = np.mean([unit_pos for unit_id, unit_pos in own_units[:8]], axis=0)
         for i, (unit_id, unit_pos) in enumerate(own_units):
-
-            if homebase_invasion and len(own_units) - i <= 5:
-                attract_to_closest_border = True
+            if int(unit_id) % 3 == 0:
+                # print("Unit id is ", unit_id)
+                moves.append(self.naive_strategy())
             else:
-                attract_to_closest_border = False
 
-            if i < len(own_units) // 4:
-                mode = "offense"
-            else:
-                mode = "defense"
-            
-            #print(borders)
-            borders_dist = []
-            for (x, y) in borders:
-                border_center = np.array([x+0.5, y+0.5])
-                borders_dist.append((x, y, border_center, np.linalg.norm(border_center - unit_pos)))
-
-            borders_dist.sort(key=lambda x: x[3])
-            closest_border = None
-            for (x, y, center, dist) in borders_dist:
-                if (x, y) not in border_assignment_set:
-                    border_assignment_set.add((x, y))
-                    closest_border = (x, y, center, dist)
-                    break
-
-            if closest_border is None:
-                if len(borders_dist) > 0:
-                    closest_border = borders_dist[0]
+                if homebase_invasion and len(own_units) - i <= 5:
+                    attract_to_closest_border = True
                 else:
-                    closest_border = (50, 50, np.array([50.0, 50.0]),
-                                    np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
+                    attract_to_closest_border = False
 
+                if i < len(own_units) // 4:
+                    mode = "offense"
+                else:
+                    mode = "defense"
+                
+                #print(borders)
+                borders_dist = []
+                for (x, y) in borders:
+                    border_center = np.array([x+0.5, y+0.5])
+                    borders_dist.append((x, y, border_center, np.linalg.norm(border_center - unit_pos)))
 
-            moves.append(self.border_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
+                borders_dist.sort(key=lambda x: x[3])
+                closest_border = None
+                for (x, y, center, dist) in borders_dist:
+                    if (x, y) not in border_assignment_set:
+                        border_assignment_set.add((x, y))
+                        closest_border = (x, y, center, dist)
+                        break
+
+                if closest_border is None:
+                    if len(borders_dist) > 0:
+                        closest_border = borders_dist[0]
+                    else:
+                        closest_border = (50, 50, np.array([50.0, 50.0]),
+                                        np.linalg.norm(np.array([50.0, 50.0]) - unit_pos))
+
+            
+                moves.append(self.border_strategy(unit_id, unit_pos, map_states, current_scores, total_scores,
                         own_units, enemy_units_locations, mode, closest_border, borders_dist, offensive_arc_mean, attract_to_closest_border))
+            
         return moves
 
