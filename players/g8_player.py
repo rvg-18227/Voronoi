@@ -148,10 +148,9 @@ class Player:
             # grab the last three id and insert them into the list
 
         moves = self.spread_points(current_radius, points)
+        # moves = self.agg_strat(current_radius, points)
         for i in range(len(moves)):
             moves[i] = self.transform_move(moves[i])
-
-        # print(self.is_safe(unit_pos, map_states))
 
         return moves
 
@@ -188,7 +187,7 @@ class Player:
         index = 0
         # variable base on the number of points that will be geenrated total
         angle_jump = size/self.total_points*10
-        angle_start = 15  # 45
+        angle_start = 45
         guard_index = 0
         guard_dict = {}
         for guard in self.guard_list:
@@ -307,3 +306,20 @@ class Player:
         else:
             for _ in range(number_points):
                 self.point_formation.append(Point(50, 50))
+
+    def agg_strat(
+            self,
+            radius,
+            points: List[Tuple[float, float]]
+    ) -> List[Tuple[float, float]]:
+
+        moves = []
+        for i in range(len(points)):
+            if i in {0, len(points) % 3}:
+                moves.append((radius, 45 * math.pi / 180))
+            elif i in {len(points) % 3 + 1,  len(points) % 3 * 2}:
+                moves.append((radius, 90 * math.pi / 180))
+            elif i in {len(points) % 3 * 2 + 1, len(points) % 3 * 3}:
+                moves.append((radius, 180 * math.pi / 180))
+
+        return moves
