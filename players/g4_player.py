@@ -1,12 +1,12 @@
 import logging
+import math
 import multiprocessing
 import pdb
 import traceback
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from enum import Enum
 from glob import glob
-from itertools import repeat
-from multiprocessing import parent_process
 from os import makedirs, remove
 from random import randint, uniform
 from typing import Callable, Optional
@@ -27,6 +27,8 @@ from typing_extensions import TypeAlias
 
 from constants import dispute_color, player_color, tile_color
 
+THREADED = False
+
 # ==================
 # Game State Classes
 # ==================
@@ -40,10 +42,30 @@ class GameParameters:
     total_days: int
     spawn_days: int
     player_idx: int
-    spawn_point: tuple[float, float]
+    spawn_point: NDArray[np.float32]
     min_dim: int
     max_dim: int
-    home_base: tuple[float, float]
+    home_base: NDArray[np.float32]
+
+
+class StrategyParameters:
+    min_defenders: int
+    interceptor_strength: int
+
+    def __init__(self, params: GameParameters):
+        self.min_defenders = 20 if params.spawn_days < 5 else 10
+        self.interceptor_strength = 3
+        if params.spawn_days < 2:
+            self.defender_area = 100
+        elif params.spawn_days < 5:
+            self.defender_area = 200
+        else:
+            self.defender_area = 500
+
+        if params.spawn_days < 5:
+            self.scout_ownership = 10
+        else:
+            self.scout_ownership = 20
 
 
 def get_nearest_unit(
@@ -60,9 +82,12 @@ def get_nearest_unit(
 
 # Pool initialization must be below the declaration for get_nearest_unit
 # Pool initialization is global to re-use the same process pool
-THREADED = True
 if THREADED:
     pool = multiprocessing.Pool(multiprocessing.cpu_count())
+
+
+def in_bounds(params: GameParameters, x: int, y: int):
+    return x >= 0 and y >= 0 and x < params.max_dim and y < params.max_dim
 
 
 class StateUpdate:
@@ -82,6 +107,8 @@ class StateUpdate:
         ]
     ]
     cached_clusters: Optional[dict[int, dict[int, list[str]]]]
+    cached_territory_hull: Optional[Polygon]
+    cached_territory_poly: Optional[Polygon]
 
     def __init__(
         self,
@@ -108,6 +135,8 @@ class StateUpdate:
         }
         self.cached_ownership = None
         self.cached_clusters = None
+        self.cached_territory_hull = None
+        self.cached_territory_poly = None
 
     # =============================
     # Role Update Utility Functions
@@ -144,13 +173,13 @@ class StateUpdate:
     def unit_id_to_pos(self, player: int, unit_id: str) -> NDArray[np.float32]:
         return self.player_unit_id_to_pos[(player, unit_id)]
 
-    def unit_idx_to_id(self, player: int, idx: int) -> str:
-        return self.player_unit_idx_to_id[player][idx]
+    def unit_idx_to_id(self, player: int, idx: int) -> Optional[str]:
+        unit_idx_to_id = self.player_unit_idx_to_id[player]
+        return unit_idx_to_id[idx] if idx in unit_idx_to_id else None
 
     def unit_ownership(self):
         """
         Returns tile/unit ownership information `(unit_to_owned, tile_to_unit)`.
-
         `unit_to_owned`: dict of dicts `player_idx -> unit_id -> [(tile_x, tile_y)]`
         `tile_to_unit`: dict of `(tile_x, tile_y) -> (player_idx, unit_id)`
         """
@@ -159,20 +188,16 @@ class StateUpdate:
 
         # player -> unit -> [(x, y)]
         unit_to_owned: dict[int, dict[str, list[tuple[int, int]]]] = {
-            0: {},
-            1: {},
-            2: {},
-            3: {},
+            player: {uid: [] for uid in self.unit_id[player]} for player in range(4)
         }
         # (x, y) -> (player, unit)
         tile_to_unit: dict[tuple[int, int], tuple[int, str]] = {}
 
-        player_unit_idx_to_id = {
-            player: {idx: uid for idx, uid in enumerate(self.unit_id[player])}
+        player_kdtrees = {
+            player: KDTree(self.unit_pos[player])
             for player in range(4)
+            if len(self.unit_pos[player]) > 0
         }
-        player_kdtrees = {player: KDTree(self.unit_pos[player]) for player in range(4)}
-
         work: list[tuple[tuple[int, int], int, KDTree, dict[int, str]]] = []
         for tile_x in range(self.params.max_dim):
             for tile_y in range(self.params.max_dim):
@@ -188,7 +213,7 @@ class StateUpdate:
                         (tile_x, tile_y),
                         owning_player,
                         player_kdtrees[owning_player],
-                        player_unit_idx_to_id[owning_player],
+                        self.player_unit_idx_to_id[owning_player],
                     )
                 )
 
@@ -199,10 +224,7 @@ class StateUpdate:
 
         for result in results:
             pos, owning_player, closest_uid = result
-            if not closest_uid in unit_to_owned[owning_player]:
-                unit_to_owned[owning_player][closest_uid] = []
             unit_to_owned[owning_player][closest_uid].append(pos)
-
             tile_to_unit[pos] = (owning_player, closest_uid)
 
         self.cached_ownership = (unit_to_owned, tile_to_unit)
@@ -214,26 +236,88 @@ class StateUpdate:
 
         enemies = self.enemies()
         enemy_units = self.enemy_units()
-        player_unit_idx_to_id = {
-            enemy: {idx: uid for idx, uid in enumerate(self.unit_id[enemy])}
-            for enemy in enemies
-        }
         dbscans = {
-            enemy: DBSCAN(eps=3, min_samples=2).fit(
+            enemy: DBSCAN(eps=5, min_samples=1).fit(
                 [unit_pos for _, unit_pos in enemy_units[enemy]]
             )
             for enemy in enemies
+            if len(enemy_units[enemy]) > 0
         }
         clusters: dict[int, dict[int, list[str]]] = {enemy: {} for enemy in enemies}
         for enemy in enemies:
+            if not enemy in dbscans:
+                continue
             for unit_idx, label in enumerate(dbscans[enemy].labels_):
                 if label == -1:
                     continue
                 if not label in clusters[enemy]:
                     clusters[enemy][label] = []
-                clusters[enemy][label].append(player_unit_idx_to_id[enemy][unit_idx])
+                clusters[enemy][label].append(
+                    self.player_unit_idx_to_id[enemy][unit_idx]
+                )
         self.cached_clusters = clusters
         return clusters
+
+    def territory_hull(self):
+        if self.cached_territory_hull is not None:
+            return self.cached_territory_hull
+
+        hull_poly = self.territory_poly().convex_hull
+        envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
+        self.cached_territory_hull = hull_poly.union(hull_poly.buffer(1)).intersection(
+            envelope
+        )
+        return self.cached_territory_hull
+
+    def territory_poly(self):
+        if self.cached_territory_poly is not None:
+            return self.cached_territory_poly
+
+        move = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        vertex_off = [(0, 0), (0, 1), (1, 1), (1, 0)]
+        direction = 0
+        spawn_x, spawn_y = map(int, self.params.spawn_point)
+        vertices = []
+        x, y = spawn_x, spawn_y
+        own_territory = [
+            [cell == self.params.player_idx + 1 for cell in col]
+            for col in self.map_states
+        ]
+
+        while len(vertices) < 4 or (x, y) != (spawn_x, spawn_y):
+            vx, vy = vertex_off[direction]
+            vertices.append((x + vx, y + vy))
+
+            try_right_dir = (direction - 1) % 4
+            dx, dy = move[try_right_dir]
+            try_right_x = x + dx
+            try_right_y = y + dy
+
+            dx, dy = move[direction]
+            continue_x = x + dx
+            continue_y = y + dy
+            # Try to turn right
+            if (
+                in_bounds(self.params, try_right_x, try_right_y)
+                and own_territory[try_right_x][try_right_y]
+            ):
+                direction = try_right_dir
+                x = try_right_x
+                y = try_right_y
+            # Continue in same direction
+            elif (
+                in_bounds(self.params, continue_x, continue_y)
+                and own_territory[continue_x][continue_y]
+            ):
+                x = continue_x
+                y = continue_y
+                continue
+            # Turn left
+            else:
+                direction = (direction + 1) % 4
+
+        self.cached_territory_poly = Polygon(vertices)
+        return self.cached_territory_poly
 
 
 # =======================
@@ -257,6 +341,10 @@ def force_vec(p1, p2):
 def to_polar(p):
     x, y = p
     return np.sqrt(x**2 + y**2), np.arctan2(y, x)
+
+
+def to_cartesian(r, theta):
+    return r * np.cos(theta), r * np.sin(theta)
 
 
 def normalize(v):
@@ -290,6 +378,45 @@ def ease_out(x):
         return 1 - ((1 - x) ** EASING_EXP)
 
 
+def near(a, b):
+    return np.abs(a - b) < 0.01
+
+
+def retreat_force(
+    update: StateUpdate, unit_pos: NDArray[np.float32], retreat_threshold: float
+):
+    territory_boundary = update.territory_poly().exterior
+    longest_ray_length = 0
+    longest_ray_theta = 0
+    total_rays = 36
+    short_rays = 0
+    pos_point = Point(unit_pos)
+    # Ray casting
+    for theta in np.linspace(0, 2 * np.pi, 36):
+        dx = 50 * np.cos(theta)
+        dy = 50 * np.sin(theta)
+        ux, uy = unit_pos
+        ray = LineString([(ux, uy), (ux + dx, uy + dy)])
+        strike = ray.intersection(territory_boundary)
+        if strike.is_empty:
+            longest_ray_length = 50
+            longest_ray_theta = theta
+        else:
+            ray_length = pos_point.distance(strike)
+            if ray_length > longest_ray_length:
+                longest_ray_length = ray_length
+                longest_ray_theta = theta
+
+            if ray_length < 20:
+                short_rays += 1
+
+    if (short_rays / total_rays) > retreat_threshold:
+        # Retreat direction of longest ray
+        return np.array(to_cartesian(1, longest_ray_theta))
+    else:
+        return np.array([0, 0])
+
+
 # =================
 # Unit Role Classes
 # =================
@@ -305,19 +432,19 @@ class RoleType(Enum):
 class Role(ABC):
     # Assigned when Role is inserted into RoleGroups
     id: str
-    _logger: logging.Logger
+    __logger: logging.Logger
     _params: GameParameters
-    _allocated_units: list[str]
+    __allocated_units: list[str]
 
     def __init__(self, logger, params):
-        self._logger = logger
+        self.__logger = logger
         self._params = params
 
         self.id = ""
         self.__allocated_units = []
 
     def debug(self, *args):
-        self._logger.info(" ".join(str(a) for a in args))
+        self.__logger.info(" ".join(str(a) for a in args))
 
     # ===========
     # Role Common
@@ -327,8 +454,10 @@ class Role(ABC):
         self.__allocated_units.append(unit_id)
 
     def deallocate_unit(self, unit_id: str):
+        if not unit_id in self.__allocated_units:
+            raise KeyError(f"Unit {unit_id} is not in {self.id}")
         self.__allocated_units = [
-            unit for unit in self.__allocated_units if unit != unit_id
+            uid for uid in self.__allocated_units if uid != unit_id
         ]
 
     @property
@@ -339,23 +468,36 @@ class Role(ABC):
     def params(self):
         return self._params
 
-    def turn_moves(self, update: StateUpdate):
-        # TODO: This should be a play phase before doing anything else
+    def turn_update(self, update: StateUpdate, **kwargs):
         alive_units = set(update.own_units().keys())
         allocated_set = set(self.__allocated_units)
         dead_units = allocated_set - alive_units
         self.__allocated_units = list(allocated_set - dead_units)
 
-        return self._turn_moves(update, dead_units)
+        self._turn_update(update, dead_units)
+
+    def turn_moves(self, update: StateUpdate, **kwargs):
+        return self._turn_moves(update, **kwargs)
+
+    def _closest_unit(self, update: StateUpdate, target_point: NDArray[np.float32]):
+        unit_idx_to_id = {idx: uid for idx, uid in enumerate(self.units)}
+        kdtree = KDTree(
+            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in self.units]
+        )
+        _, unit_idx = kdtree.query(target_point)
+        return unit_idx_to_id[unit_idx]
 
     # ===================
     # Role Specialization
     # ===================
 
     @abstractmethod
-    def _turn_moves(
-        self, update: StateUpdate, dead_units: set[str]
-    ) -> dict[str, NDArray[np.float32]]:
+    def _turn_update(self, update: StateUpdate, dead_units: set[str]):
+        """Initial pass state update: Remove dead units, make any internal state adjustments before processing rules."""
+        pass
+
+    @abstractmethod
+    def _turn_moves(self, update: StateUpdate) -> dict[str, NDArray[np.float32]]:
         """Returns the moves this turn for the units allocated to this role."""
         pass
 
@@ -369,21 +511,36 @@ class Role(ABC):
 
 class LatticeDefender(Role):
     __spawn_jitter: dict[str, NDArray[np.float32]]
-    __radius: float
     counter: int
 
-    def __init__(self, logger, params, radius):
+    def __init__(self, logger, params):
         super().__init__(logger, params)
-        self.__radius = radius
         self.__spawn_jitter = {}
         self.counter = 0
 
-    def inside_radius(self, unit_pos: NDArray[np.float32]):
-        dist = np.linalg.norm(unit_pos - self.params.home_base)
-        if dist > self.__radius:
-            in_vec, _ = force_vec(self.params.home_base, unit_pos)
+    def inside_territory(self, update: StateUpdate, unit_pos: NDArray[np.float32]):
+        pos_point = Point(unit_pos)
+        territory = update.territory_hull()
+        in_vec, _ = force_vec(self.params.home_base, unit_pos)
+        if not pos_point.intersects(territory):
             return in_vec
-        return np.array([0, 0])
+        else:
+            _, nearest_border = nearest_points(pos_point, territory.exterior)
+            border_distance = pos_point.distance(territory.exterior)
+            # Near the walls doesn't count
+            if (
+                near(nearest_border.x, 0)
+                or near(nearest_border.x, self.params.max_dim)
+                or near(nearest_border.y, 0)
+                or near(nearest_border.y, self.params.max_dim)
+            ):
+                return np.array([0, 0])
+            # On the interior of the territory
+            elif border_distance > 10:
+                return np.array([0, 0])
+            # Near the border of the territory
+            else:
+                return in_vec
 
     def get_jitter(self, uid: str):
         # Add decaying random direction bias
@@ -395,7 +552,10 @@ class LatticeDefender(Role):
 
         return jitter_force
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         self.counter += 1
         try:
             envelope = box(0, 0, self.params.max_dim, self.params.max_dim)
@@ -411,17 +571,6 @@ class LatticeDefender(Role):
                 if region_bounded.area > 0:
                     fixed_voronoi_polys.append(region_bounded)
 
-            # Visualize Voronoi regions
-            # plt.clf()
-            # for poly in fixed_voronoi_polys:
-            #     plt.fill(
-            #         *list(zip(*poly.exterior.coords)),
-            #         facecolor="#ffffcc",
-            #         edgecolor="black",
-            #         linewidth=1,
-            #     )
-            # plt.savefig(f"debug/{self.counter}.png")
-
             defender_positions = {
                 id: pos
                 for id, pos in zip(
@@ -432,7 +581,6 @@ class LatticeDefender(Role):
             }
 
             moves = {}
-            found = 0
             for uid, pos in defender_positions.items():
                 jitter_force = self.get_jitter(uid)
 
@@ -440,14 +588,13 @@ class LatticeDefender(Role):
                 target = pos
                 for poly in fixed_voronoi_polys:
                     if poly.contains(unit_point):
-                        found += 1
                         target = np.array([poly.centroid.x, poly.centroid.y])
                         continue
                 moves[uid] = to_polar(
                     normalize(
                         jitter_force
                         + normalize(target - pos)
-                        + (100 * self.inside_radius(pos))
+                        + (100 * self.inside_territory(update, pos))
                     )
                 )
             return moves
@@ -458,14 +605,7 @@ class LatticeDefender(Role):
             }
 
     def deallocation_candidate(self, update, target_point):
-        # TODO: don't need this if dead unit update is its own phase
-        alive_units = set(self.units).intersection(set(update.own_units().keys()))
-
-        kdtree = KDTree(
-            [update.unit_id_to_pos(self.params.player_idx, uid) for uid in alive_units]
-        )
-        _, unit_idx = kdtree.query(target_point)
-        return update.unit_idx_to_id(self.params.player_idx, unit_idx)
+        return self._closest_unit(update, target_point)
 
 
 class Interceptor(Role):
@@ -481,8 +621,12 @@ class Interceptor(Role):
         self.noise = dict()
 
     @property
-    def targets(self):
-        return list(zip(repeat(self.__target_player), self.__targets))
+    def target_player(self):
+        return self.__target_player
+
+    @property
+    def target_units(self):
+        return self.__targets
 
     def get_centroid(self, units):
         """
@@ -496,10 +640,13 @@ class Interceptor(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
         target_enemy_units = set(update.unit_id[self.__target_player])
         # Prune dead targets
         self.__targets = self.__targets.intersection(target_enemy_units)
+
+    def _turn_moves(self, update):
+        # Should never happen due to empty targets Interceptor removal rule
         if len(self.__targets) == 0:
             return {unit: (0.0, 0.0) for unit in self.units}
 
@@ -546,7 +693,6 @@ class Interceptor(Role):
                 noise_force = self.noise_force(attack_force)
                 self.noise[unit_id] = noise_force
 
-            # pdb.set_trace()
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
             noise_influence = 1 / dist_to_avoid * 10
 
@@ -554,6 +700,7 @@ class Interceptor(Role):
                 attack_repulsion_force * AVOID_INFLUENCE
                 + ATTACK_INFLUENCE * attack_force
                 + noise_influence * self.noise[unit_id]
+                # + 100 * retreat_force(update, unit_pos, 0.8)
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -561,7 +708,6 @@ class Interceptor(Role):
 
     def noise_force(self, attack_force):
         # generate noise force roughly in the same direction as attack force
-        # pdb.set_trace()
         r = randint(0, 100)
         vec_perpendicular = attack_force.copy()
         if r > 50:
@@ -595,103 +741,6 @@ class Interceptor(Role):
         pass
 
 
-class RadialDefender(Role):
-    __radius: float
-    # TODO: Currently assuming that newly added units are coming from spawn
-    # But they might be re-allocations from other roles
-    __spawn_jitter: dict[str, NDArray[np.float32]]
-
-    def __init__(self, logger, params, radius):
-        super().__init__(logger, params)
-        self.__radius = radius
-        self.__spawn_jitter = {}
-
-    @property
-    def radius(self):
-        return self.__radius
-
-    def towards_radius(self, unit_pos: NDArray[np.float32]):
-        dist = np.linalg.norm(unit_pos - self.params.home_base)
-        if dist > self.__radius:
-            in_vec, _ = force_vec(self.params.home_base, unit_pos)
-            dr = dist - self.__radius
-            # Easing between radius and 2 * radius, max out beyond 2 * radius
-            return in_vec * ease_out(dr / (self.__radius * 2))
-        else:
-            out_vec, _ = force_vec(unit_pos, self.params.home_base)
-            dr = self.__radius - dist
-            # Easing between 0 and radsiu, maxing out at 0
-            return out_vec * ease_in((self.__radius - dr) / self.__radius)
-
-    def _turn_moves(self, update, dead_units):
-        RADIAL_INFLUENCE = 5
-        ALLY_INFLUENCE = 0.5
-
-        moves = {}
-        own_units = update.own_units()
-
-        for unit_id in self.units:
-            unit_pos = own_units[unit_id]
-
-            # Add decaying random direction bias
-            if not unit_id in self.__spawn_jitter:
-                self.__spawn_jitter[unit_id] = np.array(
-                    (uniform(0.1, 1), uniform(0, 0.9))
-                )
-
-            jitter_force = self.__spawn_jitter[unit_id]
-            self.__spawn_jitter[unit_id] *= 0.5
-
-            ally_forces = [
-                repelling_force(unit_pos, ally_pos)
-                for ally_id, ally_pos in own_units.items()
-                if ally_id != unit_id and ally_id in self.units
-            ]
-            ally_force = np.add.reduce(ally_forces)
-
-            # disable ally repulsion when traveling to designated radius
-            dist_from_home = np.linalg.norm(unit_pos - self.params.home_base)
-            dist_from_radius = np.abs(dist_from_home - self.__radius)
-            if np.abs(dist_from_radius) > 2:
-                ally_force *= 0
-
-            radius_maintenance = self.towards_radius(unit_pos)
-
-            total_force = normalize(
-                ally_force * ALLY_INFLUENCE
-                + radius_maintenance * RADIAL_INFLUENCE
-                + jitter_force
-            )
-
-            moves[unit_id] = to_polar(total_force)
-
-        return moves
-
-    def deallocation_candidate(self, update, target_point):
-        pass
-
-
-class FirstScout(Role):
-    def __init__(self, logger, params, scout_id):
-        super().__init__(logger, params)
-
-    def _turn_moves(self, update, dead_units):
-        own_units = update.own_units()
-        moves = {}
-        for unit_id in self.units:
-            unit_pos = own_units[unit_id]
-            home_force = repelling_force(unit_pos, self.params.home_base)
-            total_force = normalize((home_force * 10))
-            # self._logger.debug("force", total_force)
-            moves[unit_id] = to_polar(total_force)
-            # self._debug(moves)
-
-        return moves
-
-    def deallocation_candidate(self, update, target_point):
-        pass
-
-
 class GreedyScout(Role):
     def __init__(self, logger, params):
         super().__init__(logger, params)
@@ -699,6 +748,7 @@ class GreedyScout(Role):
         self.first_turn = True
 
         # unit_id -> scout_id
+        self.angles = {}
         self.temp_id = {}
         self.id_counter = 0
 
@@ -710,91 +760,86 @@ class GreedyScout(Role):
             closest_dist = min(closest_dist, np.linalg.norm(p - enemy_pos))
         return closest_dist
 
-    def _turn_moves(self, update, dead_units):
+    def _turn_update(self, update, dead_units):
+        pass
+
+    def _turn_moves(self, update):
         for uid in self.units:
             if not uid in self.temp_id:
                 self.temp_id[uid] = self.id_counter
                 self.id_counter += 1
+                self.angles[uid] = -1
 
         HOME_INFLUENCE = 30
         own_units = update.own_units()
         moves = {}
         unit_to_owned, _ = update.unit_ownership()
+        presets = [15, 75, 30, 60, 45]
         for unit_id in self.units:
-            # self._debug("text")
-            # self._debug(f"uid {unit_id}")
-            # self._debug(f"owns {self.ownership}")
-            # self._debug(f"owns 2 {self.ownership[self.params.player_idx]}")
             owns = 0
             if unit_id in unit_to_owned[self.params.player_idx]:
                 owns = len(unit_to_owned[self.params.player_idx][unit_id])
             if not unit_id in self.owned:
                 self.owned[unit_id] = owns
+                owned = owns
             else:
                 owned = self.owned[unit_id]
-                if owned > owns:
-                    self.temp_id[unit_id] += 1
+
             unit_pos = own_units[unit_id]
             home_force = repelling_force(unit_pos, self.params.home_base)
             closest_enemy_d = self.closest_enemy_dist(update, unit_id, own_units)
 
-            if closest_enemy_d < 2:  # RUN AWAY TO HOME
+            retreat = retreat_force(update, unit_pos, 0.8)
+            if np.linalg.norm(retreat) > 0:
+                moves[unit_id] = to_polar(normalize(retreat))
+                continue
 
+            if closest_enemy_d < 2:  # RUN AWAY TO HOME
                 force = to_polar(normalize((home_force * HOME_INFLUENCE)))
-                move = (force[0], force[1] + np.pi)
+                move = (1, force[1] + np.pi)
                 moves[unit_id] = move
             elif closest_enemy_d < 5:  # STAY PUT
                 moves[unit_id] = (0, 0)
             else:
-                ux, uy = unit_pos
-                if self.params.player_idx == 0:
-                    wall_normals = [
-                        (ux, self.params.min_dim),
-                        (self.params.min_dim, uy),
-                    ]
-                elif self.params.player_idx == 1:
-                    wall_normals = [
-                        (ux, self.params.max_dim),
-                        (self.params.min_dim, uy),
-                    ]
-                elif self.params.player_idx == 2:
-                    wall_normals = [
-                        (ux, self.params.max_dim),
-                        (self.params.max_dim, uy),
-                    ]
-                elif self.params.player_idx == 3:
-                    wall_normals = [
-                        (ux, self.params.min_dim),
-                        (self.params.max_dim, uy),
-                    ]
+                if owned > owns:
+                    self.angles[unit_id] = -1
+                if self.angles[unit_id] == -1:
+                    if self.params.player_idx == 0:
+                        offset = 0
+                    elif self.params.player_idx == 1:
+                        offset = 270
+                    elif self.params.player_idx == 2:
+                        offset = 180
+                    elif self.params.player_idx == 3:
+                        offset = 90
+                    if self.temp_id[unit_id] < 5 and owned <= owns:
+                        angle = np.radians(presets[self.temp_id[unit_id]] + offset)
+                    else:
+                        angle = np.radians(np.random.randint(90) + offset)
+
+                    self.angles[unit_id] = (1, angle)
+                    moves[unit_id] = (1, angle)
                 else:
-                    pass
-
-                horizontal_influence = np.random.randint(40) - 10
-                if self.temp_id[unit_id] % 2 == 0:
-                    horizontal_force = repelling_force(unit_pos, wall_normals[0])
-                else:
-                    horizontal_force = repelling_force(unit_pos, wall_normals[1])
-
-                if self.temp_id[unit_id] % 4 <= 1:
-                    horizontal_influence = np.random.randint(30) - 10
-
-                total_force = normalize(
-                    (home_force * HOME_INFLUENCE)
-                    + (horizontal_force * horizontal_influence)
-                )
-                # self._logger.debug("force", total_force)
-                moves[unit_id] = to_polar(total_force)
-                # self._debug(moves)
+                    d, a = self.angles[unit_id]
+                    moves[unit_id] = (d, a)
 
         return moves
 
     def deallocation_candidate(self, update, target_point):
-        pass
+        closest_dist = 500
+        closest_uid = 0
+        own_units = update.own_units()
+        for uid in self.units:
+            unit_pos = own_units[uid]
+            dist = np.linalg.norm(target_point - unit_pos)
+            if dist < closest_dist:
+                closest_uid = uid
+                closest_dist = dist
+        return closest_uid
 
 
+# Attacker stuff==============================================================
 def check_border(my_player_idx, target_player_idx, vertical, horizontal):
-    # pdb.set_trace()
     def check_pair(idx1, idx2, target1, target2):
         if idx1 == target1 and idx2 == target2 or idx1 == target2 and idx2 == target1:
             return True
@@ -829,26 +874,122 @@ def border_detect(map_state, my_player_idx, target_player_idx):
     map_tensor[map_tensor == 2] = 2
     map_tensor[map_tensor == 4] = 8
     map_tensor[map_tensor == 3] = 4
-    # tmp = map_tensor.unique()
-    # pdb.set_trace()
     vertical_edge = torch.abs(F.conv2d(map_tensor, vecrtical_kernel))
     horizontal_edge = torch.abs(F.conv2d(map_tensor, horizontal_kernel))
-    # pdb.set_trace()
-    # plt.imshow(vertical_edge.permute(1,2,0))
-    # plt.savefig("vertical.png")
-    # plt.imshow(horizontal_edge.permute(1,2,0))
-    # plt.savefig("horizontal.png")
+
     return check_border(
         my_player_idx, target_player_idx, vertical_edge, horizontal_edge
     )
 
 
+def target_rank(update, start_point, my_player_idx, num_target):
+    # return heuristic target with len(targets) = num_targets
+    unit_ownership = update.unit_ownership()[0]
+    enemy_units = update.enemy_units()
+    # for each unit, assign a score based on unit it own and distance from base (risk)
+    heuristic_lookup = dict()
+    WEIGHT_TILE = 100
+    WEIGHT_DIST = 50
+    for player_idx in unit_ownership:
+        if my_player_idx == player_idx:
+            continue
+        for unit_id in unit_ownership[player_idx]:
+            tile_owned = len(unit_ownership[player_idx][unit_id])
+            heuristic_lookup[(player_idx, unit_id)] = (
+                tile_owned / 10000 * WEIGHT_TILE
+            )  # normalize it with max tile
+    for player_idx in enemy_units:
+        for unit_id, unit_pos in enemy_units[player_idx]:
+            _, distance_to_start = force_vec(unit_pos, start_point)
+            try:
+                heuristic_lookup[(player_idx, unit_id)] += (
+                    1
+                    / (distance_to_start / math.sqrt(100**2 + 100**2) + EPSILON)
+                    * WEIGHT_DIST
+                )  # normalize it with max distaince on board
+            except KeyError:
+                heuristic_lookup[(player_idx, unit_id)] = -100
+                print("somethings wrong")
+    # rank the heuristic value
+    heuristic_ranking = [(k, v) for k, v in heuristic_lookup.items()]
+    heuristic_ranking.sort(key=lambda x: x[1], reverse=True)
+    top_k = heuristic_ranking[:num_target]
+    targets = []
+    for t, h in top_k:
+        targets.append(update.unit_id_to_pos(t[0], t[1]))
+    # use n unit vec pas target pos as heurist for attacking
+    avoids = []
+    for target_pos in targets:
+        unit_vec, _ = force_vec(start_point, target_pos)
+        avoids.append(target_pos - unit_vec * 10)
+    return avoids, targets
+
+
+def density_heatmap(enemy_unit):
+    # create a heatmap base on enemy density
+    kernel = torch.tensor([[1, 1, 1], [1, 3, 1], [1, 1, 1]], dtype=torch.float)
+    kernel = kernel / torch.norm(kernel, p=2)
+    kernel = kernel.reshape(1, 1, 3, 3)
+    heat_map = torch.zeros(100, 100)
+    for _, unit_pos in enemy_unit:
+        x, y = unit_pos
+        x = int(x)
+        y = int(y)
+        heat_map[x, y] += 1
+    heat_map = heat_map.reshape(1, 100, 100)
+    heat_map = F.conv2d(heat_map, kernel, padding="same")
+    return heat_map
+
+
+def assign_target(update, targets, avoids, role_groups, home_base, my_player_idx):
+    assignment = []
+    role_groups = role_groups.copy()
+    for idx, t in enumerate(targets):
+        group_dist = defaultdict(list)
+        for group in role_groups:
+            if len(group.units) == 0:
+                _, dist = force_vec(t, home_base)
+                group_dist[group].append(dist)
+            else:
+                for u in group.units:
+                    try:
+                        u_pos = update.unit_id_to_pos(my_player_idx, u)
+                    except KeyError:
+                        # dead unit
+                        u_pos = home_base
+                    _, dist = force_vec(t, u_pos)
+                    group_dist[group].append(dist)
+        # select the group that has the lowest distance to target
+        group_dist = [(k, v) for k, v in group_dist.items()]
+        group_dist.sort(key=lambda x: min(x[1]))
+        assignment.append((group_dist[0][0], t, avoids[idx]))
+        role_groups.remove(group_dist[0][0])
+    return assignment
+
+
+def get_avoid_influence(heatmap, target):
+    def clamp(coord):
+        coord = int(coord)
+        new_coord = coord
+        if coord > 99:
+            new_coord = 99
+        elif coord < 0:
+            new_coord = 0
+        return new_coord
+
+    base_influence = 300
+    x, y = target
+    x = clamp(x)
+    y = clamp(y)
+    density_at_target = heatmap[0, int(x), int(y)].item()
+    return density_at_target * base_influence
+
+
 class Attacker(Role):
-    def __init__(self, logger, params, target_player):
+    def __init__(self, logger, params):
         super().__init__(logger, params)
         self.pincer_force = dict()
-        self.pincer_balance_assignment = 0
-        self.target_player = target_player
+        self.pincer_left_side = False
 
     def get_centroid(self, units):
         """
@@ -862,32 +1003,20 @@ class Attacker(Role):
         """
         return nearest_points(line, point)[0]
 
-    def _turn_moves(self, update, dead_units):
-        # pdb.set_trace()
-        # tmp1 = self.params.player_idx
-        # tmp2 = self.target_player
-        # border_exist = border_detect(update.map_states, self.params.player_idx, self.target_player)
-        # pdb.set_trace()
+    def _turn_update(self, update, dead_units):
+        pass
 
-        ATTACK_INFLUENCE = 100
-        AVOID_INFLUENCE = 300
-        SPREAD_INFLUENCE = 30
+    def _turn_moves(self, update, avoid, target, avoid_influence):
+        ATTACK_INFLUENCE = 200
+        AVOID_INFLUENCE = avoid_influence
+        SPREAD_INFLUENCE = 100
 
         moves = {}
         own_units = update.own_units()
-        enemy_units = update.enemy_units()
-        enemy_units = enemy_units[self.target_player]
 
         # get attack force
-        homebase_mode = True
-        # get where to initiate the attack
-        units_array = np.stack([v for k, v in own_units.items()])
-        if homebase_mode:  # attack from homebase
-            start_point = self.params.spawn_point
-        else:
-            start_point = self.get_centroid(units_array)
+        start_point = self.params.spawn_point
         # get attack target and get formation
-        avoid, target = self.find_target_simple(start_point, enemy_units)
         formation = LineString([start_point, target])
         # calcualte force
         for unit_id in self.units:
@@ -898,24 +1027,32 @@ class Attacker(Role):
 
             attack_force = self.attack_point(unit_pos, target, closest_pt_on_formation)
 
-            attack_repulsion_force = repelling_force(unit_pos, avoid)
+            avoid_repulsion_force = repelling_force(unit_pos, avoid)
 
             attack_unit_spread_force = self.attacker_spread_force(
                 unit_pos, unit_id, own_units
             )
 
+            ux, uy = unit_pos
+            wall_normals = [(ux, 0), (ux, 100), (0, uy), (100, uy)]
+            wall_forces = [repelling_force(unit_pos, wall) for wall in wall_normals]
+            wall_force = normalize(np.add.reduce(wall_forces))
+
             if unit_id not in self.pincer_force:
-                pincer_spread_force = self.pincer_spread_force(attack_force)
+                pincer_spread_force = self.pincer_spread_force()
                 self.pincer_force[unit_id] = pincer_spread_force
 
             dist_to_avoid = np.linalg.norm(avoid - unit_pos)
-            PINCER_INFLUENCE = 1 / dist_to_avoid * 30
+            PINCER_INFLUENCE = AVOID_INFLUENCE / (dist_to_avoid)
+            WALL_INFLUENCE = PINCER_INFLUENCE + 30
 
             total_force = normalize(
                 SPREAD_INFLUENCE * attack_unit_spread_force
-                + +AVOID_INFLUENCE * attack_repulsion_force
+                + AVOID_INFLUENCE * avoid_repulsion_force
                 + ATTACK_INFLUENCE * attack_force
-                + PINCER_INFLUENCE * self.pincer_force[unit_id]
+                + PINCER_INFLUENCE
+                * normalize(self.pincer_force[unit_id] * attack_force)
+                + WALL_INFLUENCE * wall_force
             )
 
             moves[unit_id] = to_polar(total_force)
@@ -940,8 +1077,10 @@ class Attacker(Role):
         unit_vec, _ = force_vec(start_point, target_pos)
         return target_pos, target_pos - unit_vec * 10
 
+    def find_target_sophisticated(self, start_point, enemy_units):
+        pass
+
     def attacker_spread_force(self, my_pos, my_id, own_units):
-        # pdb.set_trace()
         attacker_unit_forces = [
             repelling_force(my_pos, ally_pos)
             for unit_id, ally_pos in own_units.items()
@@ -950,12 +1089,16 @@ class Attacker(Role):
         spread_force = np.add.reduce(attacker_unit_forces)
         return normalize(spread_force)
 
-    def pincer_spread_force(self, attack_force):
+    def pincer_spread_force(self):
         # alteranting left and right of the target point
-        vec_perpendicular = attack_force.copy()
-        vec_perpendicular[self.pincer_balance_assignment] *= -1
-        self.pincer_balance_assignment = int(not bool(self.pincer_balance_assignment))
-        return vec_perpendicular
+        dir_vector = None
+        if self.pincer_left_side:
+            dir_vector = np.array([-1, 1])
+            self.pincer_left_side = not self.pincer_left_side
+        else:
+            dir_vector = np.array([1, -1])
+            self.pincer_left_side = not self.pincer_left_side
+        return normalize(dir_vector)
 
     def attack_point(self, unit, target, closest_point):
         """Given a unit, attack the target point following the foramtion.
@@ -976,7 +1119,7 @@ class Attacker(Role):
         attack_vec = unit_vec_closest * weight_closest + unit_vec_target * weight_target
         attack_vec = attack_vec
         attack_vec *= -1
-        return attack_vec[0]
+        return normalize(attack_vec[0])
 
     def deallocation_candidate(self, update, target_point):
         """
@@ -1019,6 +1162,7 @@ class RoleGroups:
 class RuleInputs:
     logger: logging.Logger
     params: GameParameters
+    strategy_params: StrategyParameters
     update: StateUpdate
     role_groups: RoleGroups
 
@@ -1026,11 +1170,13 @@ class RuleInputs:
         self,
         logger: logging.Logger,
         params: GameParameters,
+        strategy_params: StrategyParameters,
         update: StateUpdate,
         role_groups: RoleGroups,
     ):
         self.logger = logger
         self.params = params
+        self.strategy_params = strategy_params
         self.update = update
         self.role_groups = role_groups
 
@@ -1056,8 +1202,13 @@ class SpawnRules:
 
     def apply_rules(self, rule_inputs: RuleInputs, uid: str):
         for rule_func in self.rules:
-            if rule_func(rule_inputs, uid):
-                return
+            try:
+                if rule_func(rule_inputs, uid):
+                    return
+            except Exception as e:
+                rule_inputs.debug(
+                    "Exception processing spawn_rules:", traceback.format_exc()
+                )
         rule_inputs.debug("Failed to apply any rules to", uid)
 
 
@@ -1086,8 +1237,14 @@ class ReallocationRules:
             rounds += 1
             continuing = False
             for rule_func in self.rules:
-                if rule_func(rule_inputs):
-                    continuing = True
+                try:
+                    if rule_func(rule_inputs):
+                        continuing = True
+                except Exception as e:
+                    rule_inputs.debug(
+                        "Exception processing reallocation_rules:",
+                        traceback.format_exc(),
+                    )
 
 
 # =============================
@@ -1100,7 +1257,7 @@ spawn_rules = SpawnRules()
 
 @spawn_rules.rule
 def early_scouts(rule_inputs: RuleInputs, uid: str):
-    if rule_inputs.update.turn < 20:
+    if rule_inputs.update.turn < 30:
         rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
         return True
     return False
@@ -1109,20 +1266,31 @@ def early_scouts(rule_inputs: RuleInputs, uid: str):
 @spawn_rules.rule
 def populate_defenders(rule_inputs: RuleInputs, uid: str):
     defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-    if rule_inputs.update.turn > 30 and len(defender_role.units) < 40:
+    total_interceptors = sum(
+        len(interceptor_role.units)
+        for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
+    )
+    target_density = (
+        rule_inputs.update.territory_hull().area
+        / rule_inputs.strategy_params.defender_area
+    )
+    rule_inputs.debug(f"{len(defender_role.units)}/{target_density} defenders")
+    if len(defender_role.units) + total_interceptors < target_density:
         defender_role.allocate_unit(uid)
         return True
     return False
 
 
 @spawn_rules.rule
-def all_scouts(rule_inputs: RuleInputs, uid: str):
-    rule_inputs.role_groups.of_type(RoleType.SCOUT)[0].allocate_unit(uid)
-    return True
+def low_spawn_no_attackers(rule_inputs: RuleInputs, uid: str):
+    if rule_inputs.params.spawn_days > 5:
+        scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+        scout_role.allocate_unit(uid)
+        return True
+    return False
 
 
-# Disabled for class
-# @spawn_rules.rule
+@spawn_rules.rule
 def even_scouts_attackers(rule_inputs: RuleInputs, uid: str):
     scout_roles = rule_inputs.role_groups.of_type(RoleType.SCOUT)
     attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
@@ -1146,32 +1314,39 @@ reallocation_rules = ReallocationRules()
 
 
 @reallocation_rules.rule
-def reassign_defenders_on_sufficient_density(rule_inputs: RuleInputs):
-    return False
+def reassign_scouts(rule_inputs: RuleInputs):
+    if rule_inputs.update.turn < 30:
+        return False
+
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+    scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+    unit_ownership, _ = rule_inputs.update.unit_ownership()
+    did_something = False
+    for uid in scout_role.units:
+        pos_point = Point(
+            rule_inputs.update.unit_id_to_pos(rule_inputs.params.player_idx, uid)
+        )
+        territory = rule_inputs.update.territory_poly()
+        _, nearest_border = nearest_points(pos_point, territory.exterior)
+        if (
+            pos_point.distance(territory.exterior) < 10
+            and not (
+                near(nearest_border.x, 0)
+                or near(nearest_border.x, rule_inputs.params.max_dim)
+                or near(nearest_border.y, 0)
+                or near(nearest_border.y, rule_inputs.params.max_dim)
+            )
+            and len(unit_ownership[rule_inputs.params.player_idx][uid])
+            < rule_inputs.strategy_params.scout_ownership
+        ):
+            did_something = True
+            scout_role.deallocate_unit(uid)
+            defender_role.allocate_unit(uid)
+    return did_something
 
 
 @reallocation_rules.rule
 def form_interceptors_on_threat(rule_inputs: RuleInputs):
-    # Visualize Clusters
-    # if rule_inputs.params.player_idx == 0 and rule_inputs.update.turn % 10 == 0:
-    #     player_unit_id_to_pos = {
-    #         (player, uid): pos
-    #         for player in range(4)
-    #         for uid, pos in zip(
-    #             rule_inputs.update.unit_id[player], rule_inputs.update.unit_pos[player]
-    #         )
-    #     }
-    #     plt.clf()
-    #     clusters = rule_inputs.update.enemy_clusters()
-    #     for enemy, enemy_clusters in clusters.items():
-    #         for cluster, cluster_units in enemy_clusters.items():
-    #             cluster_positions = [
-    #                 player_unit_id_to_pos[(enemy, unit_id)] for unit_id in cluster_units
-    #             ]
-    #             xs = [x for x, _ in cluster_positions]
-    #             ys = [y for _, y in cluster_positions]
-    #             plt.plot(xs, ys, marker="o")
-    #     plt.savefig(f"debug/{rule_inputs.update.turn}.png")
     per_enemy_clusters = rule_inputs.update.enemy_clusters()
     all_clusters = [
         (
@@ -1182,14 +1357,18 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
         for enemy in rule_inputs.update.enemies()
         for _, cluster_units in per_enemy_clusters[enemy].items()
     ]
+
+    defend_zone = rule_inputs.update.territory_hull()
     for enemy in rule_inputs.update.enemies():
         for cluster_units in per_enemy_clusters[enemy].values():
+            # Skip clusters that have units already targeted by Interceptors
             if any(
-                (enemy, cluster_unit) in interceptor.targets
+                cluster_unit in interceptor.target_units
                 for cluster_unit in cluster_units
                 for interceptor in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR)
             ):
                 continue
+
             target_points = MultiPoint(
                 [
                     Point(rule_inputs.update.unit_id_to_pos(enemy, uid))
@@ -1199,9 +1378,7 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
             nearest_target, _ = nearest_points(
                 target_points, Point(rule_inputs.params.home_base)
             )
-            nearest_target = point_to_floats(nearest_target)
-            # target_center = point_to_floats(target_points.centroid)
-            if np.linalg.norm(rule_inputs.params.home_base - nearest_target) < 50:
+            if defend_zone.contains(nearest_target):
                 rule_inputs.debug(
                     f"Triggered interceptors: {len(cluster_units)} targets"
                 )
@@ -1212,12 +1389,14 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
                     RoleType.INTERCEPTOR, interceptor_role
                 )
                 defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
-                # TODO: Magic number for how many interceptors to allocate
-                for _ in range(20):
-                    if len(defender_role.units) == 0:
+                for _ in range(rule_inputs.strategy_params.interceptor_strength):
+                    if (
+                        len(defender_role.units)
+                        <= rule_inputs.strategy_params.min_defenders
+                    ):
                         break
                     converted_defender = defender_role.deallocation_candidate(
-                        rule_inputs.update, nearest_target
+                        rule_inputs.update, point_to_floats(nearest_target)
                     )
                     defender_role.deallocate_unit(converted_defender)
                     interceptor_role.allocate_unit(converted_defender)
@@ -1226,24 +1405,141 @@ def form_interceptors_on_threat(rule_inputs: RuleInputs):
 
 
 @reallocation_rules.rule
-def reinforce_interceptors(rule_inputs: RuleInputs):
-    return False
+def release_interceptors_on_retreat(rule_inputs: RuleInputs):
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
 
-
-@reallocation_rules.rule
-def reinforce_defenders(rule_inputs: RuleInputs):
-    return False
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        target_positions = [
+            Point(
+                rule_inputs.update.unit_id_to_pos(
+                    interceptor_role.target_player, target
+                )
+            )
+            for target in interceptor_role.target_units
+        ]
+        if all(
+            not rule_inputs.update.territory_hull().contains(target_pos)
+            for target_pos in target_positions
+        ):
+            for uid in interceptor_role.units:
+                defender_role.allocate_unit(uid)
+            rule_inputs.role_groups.remove_group(
+                RoleType.INTERCEPTOR, interceptor_role.id
+            )
+            rule_inputs.debug("Removing interceptor: targets retreated!")
 
 
 @reallocation_rules.rule
 def disband_interceptors_target_gone(rule_inputs: RuleInputs):
-    for interceptors in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
-        if len(interceptors.targets) == 0:
-            rule_inputs.debug("Removing interceptor!")
-            for uid in interceptors.units:
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        if len(interceptor_role.target_units) == 0:
+            rule_inputs.debug("Removing interceptor: targets dead!")
+            for uid in interceptor_role.units:
                 rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0].allocate_unit(uid)
-            rule_inputs.role_groups.remove_group(RoleType.INTERCEPTOR, interceptors.id)
+            rule_inputs.role_groups.remove_group(
+                RoleType.INTERCEPTOR, interceptor_role.id
+            )
     return False
+
+
+@reallocation_rules.rule
+def reinforce_interceptors(rule_inputs: RuleInputs):
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+
+    # Sort Interceptor groups by target tile ownership
+    unit_ownership, _ = rule_inputs.update.unit_ownership()
+    interceptors_weighted = []
+    total_interceptor_units = 0
+    for interceptor_role in rule_inputs.role_groups.of_type(RoleType.INTERCEPTOR):
+        total_interceptor_units += len(interceptor_role.units)
+        total_target_ownership = sum(
+            len(unit_ownership[interceptor_role.target_player][target_unit])
+            for target_unit in interceptor_role.target_units
+        )
+        interceptors_weighted.append((interceptor_role, total_target_ownership))
+
+    prioritized_interceptors = [
+        interceptor_role
+        for interceptor_role, _ in sorted(
+            interceptors_weighted, key=lambda t: t[1], reverse=True
+        )
+    ]
+
+    did_reallocations = False
+    for interceptor_role in prioritized_interceptors:
+        target_positions = [
+            Point(
+                rule_inputs.update.unit_id_to_pos(
+                    interceptor_role.target_player, target
+                )
+            )
+            for target in interceptor_role.target_units
+        ]
+        nearest_target_position, _ = nearest_points(
+            MultiPoint(target_positions), Point(rule_inputs.params.home_base)
+        )
+        nearest_target_position = point_to_floats(nearest_target_position)
+        current_interceptors = len(interceptor_role.units)
+        if current_interceptors < rule_inputs.strategy_params.interceptor_strength:
+            for _ in range(
+                rule_inputs.strategy_params.interceptor_strength - current_interceptors
+            ):
+                if (
+                    len(defender_role.units)
+                    <= rule_inputs.strategy_params.min_defenders
+                ):
+                    return did_reallocations
+
+                converted_defender = defender_role.deallocation_candidate(
+                    rule_inputs.update, nearest_target_position
+                )
+                defender_role.deallocate_unit(converted_defender)
+                interceptor_role.allocate_unit(converted_defender)
+                did_reallocations = True
+    return did_reallocations
+
+
+@reallocation_rules.rule
+def deploy_excess_defenders(rule_inputs: RuleInputs):
+    defender_role = rule_inputs.role_groups.of_type(RoleType.DEFENDER)[0]
+    target_density = (
+        rule_inputs.update.territory_hull().area
+        / rule_inputs.strategy_params.defender_area
+    )
+    did_reallocations = False
+    excess_defenders = len(defender_role.units) - (1.5 * target_density)
+    if excess_defenders > 0:
+        if rule_inputs.params.spawn_days <= 5:
+            scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+            attacker_roles = rule_inputs.role_groups.of_type(RoleType.ATTACKER)
+            for _ in range(int(excess_defenders)):
+                converted_defender = defender_role.deallocation_candidate(
+                    rule_inputs.update, rule_inputs.params.spawn_point
+                )
+                defender_role.deallocate_unit(converted_defender)
+
+                total_scouts = len(scout_role.units)
+                total_attackers = sum(
+                    len(attackers.units) for attackers in attacker_roles
+                )
+                if total_scouts >= total_attackers:
+                    global attack_roll
+                    attacker_roles[attack_roll % 3].allocate_unit(converted_defender)
+                    attack_roll += 1
+                else:
+                    scout_role.allocate_unit(converted_defender)
+                did_reallocations = True
+        else:
+            scout_role = rule_inputs.role_groups.of_type(RoleType.SCOUT)[0]
+            for _ in range(int(excess_defenders)):
+                converted_defender = defender_role.deallocation_candidate(
+                    rule_inputs.update, rule_inputs.params.spawn_point
+                )
+                defender_role.deallocate_unit(converted_defender)
+                scout_role.allocate_unit(converted_defender)
+                did_reallocations = True
+
+    return did_reallocations
 
 
 # ======
@@ -1293,20 +1589,26 @@ class Player:
         self.params.total_days = total_days
         self.params.spawn_days = spawn_days
         self.params.player_idx = player_idx
-        self.params.spawn_point = (float(spawn_point.x), float(spawn_point.y))
+        self.params.spawn_point = point_to_floats(spawn_point)
         self.params.min_dim = min_dim
         self.params.max_dim = max_dim
-        self.params.home_base = [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
+        self.params.home_base = np.array(
+            [(-1, -1), (-1, 101), (101, 101), (101, -1)][player_idx]
+        )
+
+        self.strategy_params = StrategyParameters(self.params)
 
         self.role_groups = RoleGroups()
         self.role_groups.add_group(
-            RoleType.DEFENDER, LatticeDefender(self.logger, self.params, 40)
+            RoleType.DEFENDER, LatticeDefender(self.logger, self.params)
         )
-        enemy_player = set([0, 1, 2, 3]) - set([player_idx])
-        for enemy_idx in enemy_player:
+
+        num_attack_group = 3
+        for _ in range(num_attack_group):
             self.role_groups.add_group(
-                RoleType.ATTACKER, Attacker(self.logger, self.params, enemy_idx)
+                RoleType.ATTACKER, Attacker(self.logger, self.params)
             )
+
         self.role_groups.add_group(
             RoleType.SCOUT, GreedyScout(self.logger, self.params)
         )
@@ -1380,29 +1682,74 @@ class Player:
         if len(idle_units) > 0:
             self.debug(f"{len(idle_units)} idle units!")
 
-        # Phase 1: apply spawn rules
+        # Display Group Composition
+        for role in RoleType:
+            role_groups = self.role_groups.of_type(role)
+            total_role_units = sum(len(role_group.units) for role_group in role_groups)
+            self.debug(f"{role}: {total_role_units} in {len(role_groups)} groups")
+        self.debug("----------")
+
+        # Phase 1: inform roles of turn update, remove dead units
+        # -------------------------------------------------------
+        for role in RoleType:
+            for role_group in self.role_groups.of_type(role):
+                role_group.turn_update(update)
+
+        # Phase 2: apply spawn rules
         # --------------------------
-        rule_inputs = RuleInputs(self.logger, self.params, update, self.role_groups)
+        rule_inputs = RuleInputs(
+            self.logger, self.params, self.strategy_params, update, self.role_groups
+        )
         for uid in just_spawned:
             spawn_rules.apply_rules(rule_inputs, uid)
 
-        # Phase 2: apply reallocation rules
+        # Phase 3: apply reallocation rules
         # ---------------------------------
         reallocation_rules.apply_rules(rule_inputs)
 
-        # Phase 3: gather moves from roles
+        # Phase 4: gather moves from roles
         # --------------------------------
         moves: list[tuple[float, float]] = []
         role_moves = {}
         for role in RoleType:
-            for role_group in self.role_groups.of_type(role):
-                if len(role_group.units) > 0:
-                    try:
-                        role_moves.update(role_group.turn_moves(update))
-                    except Exception as e:
-                        self.debug(
-                            "Exception processing role moves:", traceback.format_exc()
-                        )
+            try:
+                if role == RoleType.ATTACKER:
+                    heatmap = density_heatmap(update.all_enemy_units())
+                    # calculate heuristic
+                    start_point = self.params.home_base
+                    targets, avoids = target_rank(
+                        update, start_point, self.player_idx, 3
+                    )
+                    # for each target, find a attack team best suitable for the task
+                    assigned_target = assign_target(
+                        update,
+                        targets,
+                        avoids,
+                        self.role_groups.of_type(role),
+                        self.params.home_base,
+                        self.player_idx,
+                    )
+                    for role_group, target, avoid in assigned_target:
+                        if len(role_group.units) > 0:
+                            # for each target, also calculate its density based on heatmap
+                            avoid_influence = get_avoid_influence(heatmap, target)
+                            role_moves.update(
+                                role_group.turn_moves(
+                                    update,
+                                    target=target,
+                                    avoid=avoid,
+                                    avoid_influence=avoid_influence,
+                                )
+                            )
+                else:
+                    for role_group in self.role_groups.of_type(role):
+                        if len(role_group.units) > 0:
+                            role_moves.update(role_group.turn_moves(update))
+            except Exception as e:
+                self.debug(
+                    "Exception processing role moves:",
+                    traceback.format_exc(),
+                )
         for unit_id in unit_id[self.params.player_idx]:
             if not unit_id in role_moves:
                 moves.append((0, 0))
@@ -1411,126 +1758,3 @@ class Player:
 
         self.turn += 1
         return moves
-
-
-def visualize_risk(risks, enemy_units_locations, own_units, turn):
-    DISPLAY_EVERY_N_ROUNDS = 30
-    HEAT_MAP = False
-
-    if HEAT_MAP and turn % DISPLAY_EVERY_N_ROUNDS == 0:
-
-        c = []
-        for r in risks:
-            c.append(r[1])
-        plt.rcParams["figure.autolayout"] = True
-        x = np.array(enemy_units_locations)[:, 0]
-        y = np.array(enemy_units_locations)[:, 1]
-        c = np.array(c)
-
-        df = pd.DataFrame({"x": x, "y": y, "c": c})
-
-        fig, ax = plt.subplots()  # 1,1, figsize=(20,6))
-        cmap = plt.cm.hot
-        norm = colors.Normalize(vmin=0.0, vmax=100.0)
-        mp = ax.scatter(df.x, df.y, color=cmap(norm(df.c.values)))
-        ax.set_xticks(df.x)
-
-        fig.subplots_adjust(right=0.9)
-        sub_ax = plt.axes([0.8, 0.4, 0.1, 0.4])
-
-        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-        plt.colorbar(sm, cax=sub_ax)
-        ax.invert_yaxis()
-
-        for p in range(1):
-            for num, pos in own_units:
-                ax.scatter(pos[0], pos[1], color="blue")
-
-        np.meshgrid(list(range(100)), list(range(100)))
-        plt.title(f"Day {turn}")
-        plt.tight_layout()
-        plt.savefig(f"risk_{turn}.png")
-
-
-unit_colors = {}
-
-
-def visualize_ownership(turn: int, update: StateUpdate):
-    plt.clf()
-    ax = plt.gca()
-
-    cmap = colors.ListedColormap([dispute_color] + tile_color)
-    bounds = [-1, 1, 2, 3, 4, 5]
-    norm = colors.BoundaryNorm(bounds, cmap.N)
-    X, Y = np.meshgrid(list(range(100)), list(range(100)))
-    plt.pcolormesh(
-        X + 0.5,
-        Y + 0.5,
-        np.transpose(update.map_states),
-        cmap=cmap,
-        norm=norm,
-    )
-
-    # Units
-    for p in range(4):
-        for x, y in update.unit_pos[p]:
-            plt.plot(
-                x,
-                y,
-                color=player_color[p],
-                marker="o",
-                markersize=4,
-                markeredgecolor="black",
-            )
-
-    # Ownership
-    unit_to_owned, _ = update.unit_ownership()
-    lines = {}
-    line_colors = {}
-    for player in range(4):
-        lines[player] = []
-        line_colors[player] = []
-        for unit_id, owned in unit_to_owned[player].items():
-            if not (player, unit_id) in unit_colors:
-                unit_colors[(player, unit_id)] = (
-                    randint(0, 255),
-                    randint(0, 255),
-                    randint(0, 255),
-                )
-            unit_idx = update.unit_id[player].index(unit_id)
-            unit_x, unit_y = update.unit_pos[player][unit_idx]
-            for tile_x, tile_y in owned:
-                lines[player].append(
-                    [
-                        (int(unit_x) + 0.5, int(unit_y) + 0.5),
-                        (tile_x + 0.5, tile_y + 0.5),
-                    ]
-                )
-                line_colors[player].append(unit_colors[(player, unit_id)])
-    for player in range(4):
-        plt.gca().add_collection(
-            LineCollection(
-                lines[player], linewidth=1, alpha=0.2, colors=line_colors[player]
-            )
-        )
-
-    plt.xticks(np.arange(0, 100, 10))
-    plt.yticks(np.arange(0, 100, 10))
-    plt.grid(color="black", alpha=0.1)
-    ax.set_xticklabels([])
-    ax.set_yticklabels([])
-    ax.xaxis.set_ticks_position("none")
-    ax.yaxis.set_ticks_position("none")
-
-    ax.set_aspect(1)
-    ax.set_xlim([0, 100])
-    ax.set_ylim([0, 100])
-    ax.invert_yaxis()
-    plt.title(f"Day {turn}")
-    plt.savefig(f"debug/{turn}.png", dpi=300)
-
-
-makedirs("debug", exist_ok=True)
-existing = glob("debug/*.png")
-for f in existing:
-    remove(f)
